@@ -1,7 +1,8 @@
-// TOTK_DUMP=<frame>: a frame dump for the Vulkan back end, which RenderDoc cannot capture (it hides
-// VK_EXT_external_memory_host). Between presents frame-1 and frame, the replay's command buffers also copy, after each
-// render pass, its colour and depth targets and, after each dispatch, the storage images it writes into host buffers;
-// the completion thread turns them into 8-bit PNGs once the submission is done. 3D textures (LUTs, volumes) sampled or
+// TOTK_DUMP=<frame>, or TOTK_DUMP=key for the frame after F9 is pressed in the game window: a frame dump for the Vulkan
+// back end, which RenderDoc cannot capture (it hides VK_EXT_external_memory_host). Between presents frame-1 and frame,
+// the replay's command buffers also copy, after each render pass, its colour and depth targets and, after each
+// dispatch, the storage images it writes into host buffers; the completion thread turns them into 8-bit PNGs once the
+// submission is done. 3D textures (LUTs, volumes) sampled or
 // written in the frame are copied once each, slices side by side. Files in TOTK_DUMP_DIR (default "dump"):
 //   pass_<seq>_t<i>_<w>x<h>_<vkformat>_<name>.png   colour target i (td: depth; img<slot>: storage image; lut<id>: 3D;
 //                                                    a BC target drawn through a block view: its blocks as that view)
@@ -14,13 +15,14 @@
 // swizzle. Copies and texture clears are logged as "copy/clear after pass N". TOTK_DUMP_LOG=<from> also logs the
 // frames from..frame-1 to passes.txt, with PNGs only of targets up to 64K texels. TOTK_DUMP_BUF=<addr>:<size>[:...]
 // snapshots one GPU buffer range after every logged pass (buf_<pass>.bin and bufs.txt, see buf_snap).
-// PNGs are opaque (alpha dropped). Integer formats are scaled by the image maximum, depth by its min..max range, SNORM
-// as x/2+1/2, UNORM and sRGB bytes written as stored. Caps: MAX_PASSES passes copied, PNG_CAP bytes of PNGs.
+// PNGs are opaque (alpha dropped; a UNORM target with varying alpha also gets <name>_a.png). Integer formats are scaled
+// by the image maximum, depth by its min..max range, SNORM as x/2+1/2, UNORM and sRGB bytes written as stored. Caps:
+// MAX_PASSES passes copied, PNG_CAP bytes of PNGs.
 // TOTK_DUMP_TEX=<id>|<w>x<h>[,...]: those texture slots, or 2D textures of that size, are copied where first sampled,
 // whatever their format.
-// TOTK_DUMP_UBO=1: each listed pipeline also prints the first 16 vec4 of its user uniform blocks (c3 and up), read from
-// guest memory when the entry is listed. A block the submission rewrites with UpdateUniformBuffer shows its value from
-// before the submission (vk_exec_draw.c upd_note).
+// TOTK_DUMP_UBO=1 (or a row count): each listed pipeline also prints the first 16 (or that many) vec4 of its user
+// uniform blocks (c3 and up), read from guest memory when the entry is listed. A block the submission rewrites with
+// UpdateUniformBuffer shows its value from before the submission (vk_exec_draw.c upd_note).
 // TOTK_DUMP_SKIP_RUNS=1: a render pass with the same targets as the render pass before it is logged but not copied
 // (the terrain decals draw one pass each into the G-buffer and would use up both caps).
 #include <math.h>
@@ -35,6 +37,9 @@
 #include "vk.h"
 #include "vk_exec.h"
 #include "platform/platform.h"
+#ifdef _WIN32
+#include <windows.h>   // TOTK_DUMP=key reads F9 and the foreground window (vk_dump_present)
+#endif
 
 #define MAX_PASSES 400
 #define PNG_CAP (2ull << 30)
@@ -45,6 +50,7 @@
 
 int vk_dump_armed;
 static uint64_t dump_frame, log_from;   // log_from: TOTK_DUMP_LOG, first frame logged to passes.txt without images
+static int dump_key;                    // TOTK_DUMP=key: dump_frame stays UINT64_MAX until F9 (vk_dump_present)
 static char dir[400];
 static FILE *passes_f, *images_f;
 static int seq, finished, copied;      // copied: passes and dispatches of the dump frame whose images were copied
@@ -255,6 +261,17 @@ static void write_images(const Job *j) {
         }
         char path[600];
         snprintf(path, sizeof path, "%s/%s%s.png", dir, j->name, pass ? "_tm" : "");
+        rt_write_png(path, out, pw, ph);
+    }
+    // The PNGs above are opaque, so a UNORM target whose alpha varies (TotK keeps the sun shadow in the alpha of its
+    // half-size light mask) also gets its alpha as a grey <name>_a.png.
+    if (mode == M_UNORM && j->f->nc == 4 && mn[3] < mx[3]) {
+        for (uint64_t i = 0; i < n; i++) {
+            uint8_t a = u8(px[4 * i + 3]);
+            out[4 * i] = out[4 * i + 1] = out[4 * i + 2] = a, out[4 * i + 3] = 255;
+        }
+        char path[600];
+        snprintf(path, sizeof path, "%s/%s_a.png", dir, j->name);
         rt_write_png(path, out, pw, ph);
     }
     uint64_t all = distinct(j, 0, j->h), top = distinct(j, 0, j->h / 4 ? j->h / 4 : 1);
@@ -576,7 +593,7 @@ static void describe_bindings(Str *b, const VkExec *ex, const VkPipeInfo *info) 
             if (u->addr && vk_mem_resolve(u->addr, 1, &ms)) {
                 uint64_t n = u->size && u->size < ms.avail ? u->size : ms.avail;
                 const float *f = (const float *)(uintptr_t)u->addr;
-                for (uint64_t k = 0; k < 16 && (k + 1) * 16 <= n; k++)
+                for (uint64_t k = 0; k < (uint64_t)dump_ubo && (k + 1) * 16 <= n; k++)
                     sp(b, "%s[%llu] %g %g %g %g", k % 4 ? " " : "\n      ", (unsigned long long)k, f[4 * k], f[4 * k + 1],
                        f[4 * k + 2], f[4 * k + 3]);
             } else {
@@ -862,15 +879,28 @@ out:
 
 static void make_dirs(char *path) { plat_file_mkdir_p(path); }
 
+// The dump folder and its passes.txt and images.txt, truncated.
+static void open_files(void) {
+    make_dirs(dir);
+    char path[600];
+    snprintf(path, sizeof path, "%s/passes.txt", dir);
+    passes_f = fopen(path, "w");
+    snprintf(path, sizeof path, "%s/images.txt", dir);
+    images_f = fopen(path, "w");
+    if (!passes_f || !images_f) rt_fatal("vk_dump: cannot write to %s", dir);
+}
+
 void vk_dump_init(void) {
     const char *e = cfg_get("TOTK_DUMP");
-    if (!e || !*e || !(dump_frame = strtoull(e, NULL, 10))) return;
+    if (e && !strcmp(e, "key")) dump_key = 1, dump_frame = UINT64_MAX;
+    if (!e || !*e || (!dump_key && !(dump_frame = strtoull(e, NULL, 10)))) return;
     const char *lf = cfg_get("TOTK_DUMP_LOG");
     if (lf && *lf) log_from = strtoull(lf, NULL, 10);
     const char *sr = cfg_get("TOTK_DUMP_SKIP_RUNS");
     skip_runs = sr && *sr && *sr != '0';
     const char *du = cfg_get("TOTK_DUMP_UBO");
-    dump_ubo = du && *du && *du != '0';
+    dump_ubo = du && *du && *du != '0' ? atoi(du) : 0;   // the vec4 rows printed per block; 1 stands for 16
+    if (dump_ubo == 1) dump_ubo = 16;
     const char *wt = cfg_get("TOTK_DUMP_TEX");
     for (char *q = (char *)wt; q && *q && nwant_tex < 16; q += *q == ',') {
         uint32_t *w = want_tex[nwant_tex++];
@@ -879,13 +909,8 @@ void vk_dump_init(void) {
     }
     const char *d = cfg_get("TOTK_DUMP_DIR");
     snprintf(dir, sizeof dir, "%s", d && *d ? d : "dump");
-    make_dirs(dir);
+    if (!dump_key) open_files();   // key mode: when F9 is pressed, so a run without F9 leaves the last dump alone
     char path[600];
-    snprintf(path, sizeof path, "%s/passes.txt", dir);
-    passes_f = fopen(path, "w");
-    snprintf(path, sizeof path, "%s/images.txt", dir);
-    images_f = fopen(path, "w");
-    if (!passes_f || !images_f) rt_fatal("vk_dump: cannot write to %s", dir);
     const char *bf = cfg_get("TOTK_DUMP_BUF");
     if (bf && *bf) {
         char *q;
@@ -900,10 +925,24 @@ void vk_dump_init(void) {
         if (bd_size && !(bufs_f = fopen(path, "w"))) bd_size = 0;
     }
     vk_dump_armed = 1;
-    rt_log("vk_dump: frame %llu goes to %s", (unsigned long long)dump_frame, dir);
+    if (dump_key) rt_log("vk_dump: the frame after F9 goes to %s", dir);
+    else rt_log("vk_dump: frame %llu goes to %s", (unsigned long long)dump_frame, dir);
 }
 
 void vk_dump_present(uint64_t frame) {
+    if (dump_key && dump_frame == UINT64_MAX) {   // F9 while one of this process's windows has the focus (Windows)
+#ifdef _WIN32
+        DWORD pid = 0;
+        HWND fg = GetForegroundWindow();
+        if (fg) GetWindowThreadProcessId(fg, &pid);
+        if (pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_F9) & 0x8000)) {
+            open_files();
+            __atomic_store_n(&dump_frame, frame + 1, __ATOMIC_RELEASE);   // the whole next frame
+            rt_log("vk_dump: F9 at frame %llu", (unsigned long long)frame);
+        }
+#endif
+        return;
+    }
     if (frame != dump_frame) return;
     plat_mutex_lock(&rec_lock);
     finished = 1;
