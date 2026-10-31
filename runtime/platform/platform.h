@@ -212,6 +212,12 @@ typedef struct {
     uint64_t addr;             // its address when access >= 0
 } PlatCrash;
 void plat_crash_hook(void (*fn)(const PlatCrash *c));
+// A debugging aid: a hardware data breakpoint (the CPU's debug register DR0) on writes to the len bytes at addr (len 1,
+// 2, 4 or 8, addr aligned to it), in every thread of the process and in each thread plat_thread_new starts afterwards.
+// After each write fn gets the next instruction's address and its offset in the executable, on the writing thread from
+// inside the exception handler: it must not wait for a lock the writer could hold. One watch at a time; a second call
+// moves it. 1 when armed; 0 where it is not supported (Linux).
+int plat_watch_write(uint64_t addr, int len, void (*fn)(uintptr_t rip, uintptr_t offset));
 int plat_mem_read(uint64_t addr, void *out, size_t n);    // copies n bytes, 0 instead of faulting on unmapped memory
 int plat_mem_readable(uint64_t addr, uint64_t n);         // every page of [addr, addr + n) can be read; no fault
 void *plat_aligned_alloc(size_t size, size_t align);      // free with plat_aligned_free; NULL on failure

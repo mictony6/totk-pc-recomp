@@ -240,6 +240,70 @@ static void crash_handler(const PlatCrash *x) {
     plat_exit(71);
 }
 
+// ---- write watch: which code writes a value (plat_watch_write). TOTK_WATCH=<address>[:<bytes>] arms it at boot, the
+// address in hex (0x...) or module-relative (main+0x...), 4 bytes unless given; rt_watch arms it from diagnostic code
+// for an address only known at run time (a heap object). Each write logs the new value, the lifted function the writing
+// code lies in (the nearest one below it, so host code that writes guest memory is misnamed) and the guest link
+// register. A (writer, value) pair is logged once, the first WATCH_MAX of them.
+enum { WATCH_MAX = 64 };
+static uint64_t watch_at, watch_seen[WATCH_MAX];
+static int watch_len;
+static volatile int32_t watch_n;
+
+static void watch_hit(uintptr_t rip, uintptr_t offset) {
+    uint64_t v = 0;
+    memcpy(&v, (const void *)(uintptr_t)watch_at, (size_t)watch_len);
+    uint64_t key = (uint64_t)offset * 0x9e3779b97f4a7c15ull ^ v;
+    int32_t n = __atomic_load_n(&watch_n, __ATOMIC_ACQUIRE);
+    for (int32_t i = 0; i < n && i < WATCH_MAX; i++)
+        if (watch_seen[i] == key) return;
+    n = plat_inc32(&watch_n) - 1;
+    if (n >= WATCH_MAX) {
+        if (n == WATCH_MAX) rt_log("watch: %d writers and values logged; no more", WATCH_MAX);
+        return;
+    }
+    watch_seen[n] = key;
+    char f[160], lr[160];
+    uint64_t fn = lifted_function(rip);
+    Cpu *c = kern_cpu();
+    rt_log("watch: %#llx = %#llx, written in f_%llx = %s (host totk+%#llx), guest lr %s", (unsigned long long)watch_at,
+           (unsigned long long)v, (unsigned long long)fn, fn ? ldr_describe(fn, f, sizeof f) : "?",
+           (unsigned long long)offset, c ? ldr_describe(c->x[30], lr, sizeof lr) : "(a host thread)");
+}
+
+int rt_watch(uint64_t addr, int len) {
+    lifted_function(0);   // builds its table now: the handler must not allocate
+    watch_at = addr, watch_len = len;
+    int ok = plat_watch_write(addr, len, watch_hit);
+    if (ok) rt_log("watch: writes to the %d bytes at %#llx are logged", len, (unsigned long long)addr);
+    else rt_log("watch: cannot watch %d bytes at %#llx (aligned 1, 2, 4 or 8 bytes; Windows only)", len,
+                (unsigned long long)addr);
+    return ok;
+}
+
+void rt_watch_init(void) {
+    const char *e = cfg_get("TOTK_WATCH");
+    if (!e || !*e) return;
+    const char *plus = strchr(e, '+');
+    char *end;
+    uint64_t addr = 0;
+    if (plus) {
+        for (int i = 0; i < ldr_count(); i++) {
+            const RtLoaded *m = ldr_module(i);
+            if (strlen(m->name) == (size_t)(plus - e) && !strncmp(m->name, e, (size_t)(plus - e))) addr = m->base;
+        }
+        if (!addr) {
+            rt_log("watch: TOTK_WATCH=%s names no loaded module", e);
+            return;
+        }
+        addr += strtoull(plus + 1, &end, 16);
+    } else {
+        addr = strtoull(e, &end, 16);
+    }
+    int len = *end == ':' ? atoi(end + 1) : 4;
+    rt_watch(addr, len);
+}
+
 // ---- self-test: layout, dispatch table, host-function registry, without game files
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("  FAIL: " __VA_ARGS__); putchar('\n'); } } while (0)

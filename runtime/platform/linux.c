@@ -960,6 +960,12 @@ void plat_crash_hook(void (*fn)(const PlatCrash *c)) {
     fault_install();
 }
 
+// Not supported: Linux sets debug registers through ptrace or perf_event_open breakpoints, not from the process itself.
+int plat_watch_write(uint64_t addr, int len, void (*fn)(uintptr_t rip, uintptr_t offset)) {
+    (void)addr, (void)len, (void)fn;
+    return 0;
+}
+
 void plat_reexec(void) {
     static char args[16384];
     char *argv[256];

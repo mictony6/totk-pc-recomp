@@ -109,7 +109,7 @@ Every guest thread is a host thread. TotK assumes Horizon's scheduler: three app
 - Occlusion queries never block the CPU; a result that is not ready counts as visible.
 - ASTC textures are uploaded as they are where the device reports `textureCompressionASTC_LDR`, and decoded by a compute shader everywhere else (`vk_astc.c`, `TOTK_ASTC`). The CPU decoder (`tex_astc*.c`) is the fallback and the test oracle.
 - Draw state. A draw whose program, bound state and textures repeat reuses the previous draw's shaders and skips rebuilding its descriptor sets; descriptor sets are written through update templates (`vk_exec_draw.c`, `vk_pipeline.c`).
-- Allocation: Vulkan Memory Allocator. Debugging: Vulkan validation layers, per-pass frame dumps (`TOTK_DUMP`, `vk_dump.c`) and a flight recorder (`TOTK_FLIGHT`). RenderDoc cannot capture, because it hides `VK_EXT_external_memory_host` from the application.
+- Allocation: Vulkan Memory Allocator. Debugging: Vulkan validation layers, per-pass frame dumps (`TOTK_DUMP`, `vk_dump.c`) a flight recorder (`TOTK_FLIGHT`), and a hardware write watch (`TOTK_WATCH=main+0x...` or an address, `rt_watch` from code; Windows) that logs the guest function behind each write to a value, which is how the shadow allocator was found. RenderDoc cannot capture, because it hides `VK_EXT_external_memory_host` from the application.
 
 Maxwell behaviour the back end has to match, and the TotK bugs other ports fixed: [maxwell.md](maxwell.md).
 
