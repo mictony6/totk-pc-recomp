@@ -469,6 +469,12 @@ static void row_shadow_range(void) {
     opt_choice_list("TOTK_SHADOW_RANGE", UI_MENU_SHADOW_RANGE, vals, names, 4, UI_MENU_SHADOW_RANGE_DESC);
 }
 
+static void row_aa(void) {
+    static const char *const vals[] = {"game", "off", "smaa"};
+    const char *names[] = {menu_text(UI_MENU_AA_GAME), menu_text(UI_MENU_AA_OFF), menu_text(UI_MENU_AA_SMAA)};
+    opt_choice_list("TOTK_AA", UI_MENU_AA, vals, names, 3, UI_MENU_AA_DESC);
+}
+
 static void row_shadow_res(void) {
     static const char *const vals[] = {"game", "960", "1536", "2048"};
     static const char *names[] = {NULL, "960", "1536", "2048"};
@@ -565,6 +571,7 @@ static void tab_screen(float scale) {
     opt_group(UI_MENU_GRAPHICS);
     row_output_res();
     row_render_scale();
+    row_aa();
     row_shadow_res();
     static const UiTextId up[] = {UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR};
     opt_choice("TOTK_UPSCALER", UI_MENU_UPSCALER, up, 2, UI_MENU_UPSCALER_DESC);

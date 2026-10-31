@@ -59,6 +59,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_RENDER_SCALE_DESC] = "Size of the 3D scene relative to the game resolution; the game's FSR scales it to "
                                   "that size. Above 100 % smooths jagged edges (supersampling) at a high GPU cost.",
     [UI_MENU_RENDER_SCALE_GAME] = "Game (83 %)",
+    [UI_MENU_AA] = "Anti-aliasing",
+    [UI_MENU_AA_DESC] = "Smooths jagged edges. Game: the game's FXAA (unless a mod turns it off). SMAA: sharper, cleaner "
+                        "edges than FXAA, run before the HUD so text stays crisp. Takes effect at the next start.",
+    [UI_MENU_AA_GAME] = "Game (FXAA)", [UI_MENU_AA_OFF] = "Off", [UI_MENU_AA_SMAA] = "SMAA",
     [UI_MENU_SHADOW_RES] = "Sun shadow resolution",
     [UI_MENU_SHADOW_RES_DESC] = "Size of the sun's shadow maps. The game's own drop from 960 to as low as 400 with GPU "
                                 "load and distance; a set size stays fixed. Sharper shadow edges, more video memory. "
@@ -326,6 +330,11 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_RENDER_SCALE_DESC] = "Размер 3D-сцены относительно разрешения игры; FSR игры доводит её до этого размера. "
                                   "Выше 100 % сглаживает лесенки на краях (суперсэмплинг) ценой большой нагрузки на GPU.",
     [UI_MENU_RENDER_SCALE_GAME] = "Как в игре (83 %)",
+    [UI_MENU_AA] = "Сглаживание",
+    [UI_MENU_AA_DESC] = "Сглаживает лесенки на краях. Как в игре: FXAA игры (если мод его не выключил). SMAA: края "
+                        "чётче и чище, чем с FXAA, считается до интерфейса, текст не размывается. Действует после "
+                        "перезапуска.",
+    [UI_MENU_AA_GAME] = "Как в игре (FXAA)", [UI_MENU_AA_OFF] = "Выкл.", [UI_MENU_AA_SMAA] = "SMAA",
     [UI_MENU_SHADOW_RES] = "Разрешение теней от солнца",
     [UI_MENU_SHADOW_RES_DESC] = "Размер карт теней от солнца. Свои игра уменьшает с 960 до 400 по нагрузке на GPU и "
                                 "расстоянию; заданный размер постоянен. Края теней чётче, расход видеопамяти больше. "

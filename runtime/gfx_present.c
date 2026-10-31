@@ -720,6 +720,7 @@ void gfx_window_release_vk(void) {
         menu_vk_release();
         vk_fsr_release();
         vk_contact_release();
+        vk_aa_release();
         free_capture();
         free_thumbs();
         for (int i = 0; i < FRAMES; i++) {

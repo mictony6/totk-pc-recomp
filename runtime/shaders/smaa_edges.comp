@@ -1,0 +1,17 @@
+#version 450
+// SMAA pass 1 (vk_aa.c): luma edge detection on the sRGB-encoded copy of the scene.
+#extension GL_GOOGLE_include_directive : require
+#define SMAA_INCLUDE_VS 1
+#define SMAA_INCLUDE_PS 1
+#include "smaa_common.glsl"
+layout(binding = 0) uniform sampler2D colorTex;
+layout(binding = 3, rg8) uniform writeonly image2D edges;
+
+void main() {
+    vec2 uv;
+    ivec2 p = smaa_pixel(uv);
+    if (p.x < 0) return;
+    vec4 off[3];
+    SMAAEdgeDetectionVS(uv, off);
+    imageStore(edges, p, vec4(SMAALumaEdgeDetectionPS(uv, off, colorTex), 0.0, 0.0));
+}

@@ -104,6 +104,8 @@ int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, 
 void vk_fsr_release(void);   // before the device goes away
 // vk_contact.c: screen-space contact shadows on the game's composed scene colour (TOTK_CONTACT_SHADOWS)
 int vk_contact_strength(void);   // percent, 0 = off
+int vk_aa_smaa_on(void);         // TOTK_AA=smaa (vk_aa.c): scene colours get STORAGE usage
+void vk_aa_release(void);        // before the device goes away
 void vk_contact_release(void);   // before the device goes away
 void vk_present_flip(void);
 // Every submission to ctx->gfx_queue (and xfer_queue when shared) takes this lock; vk_present_image and the swapchain

@@ -178,6 +178,13 @@ VkImageView vk_exec_target_view(const VkTexImage *img, VkFormat format, VkImageV
 // vk_exec_xfer.c: OP_COPY_B2B, OP_COPY_B2T, OP_COPY_T2B, OP_COPY_T2T, OP_CLEAR_TEX, OP_SIGNAL_EVENT, OP_REPORT_COUNTER,
 // OP_RESET_COUNTER, OP_RENDER_ENABLE, OP_RENDER_COND, OP_CLEAR_BUF.
 void vk_exec_op_xfer(VkExec *ex, uint32_t op, const void *payload);
+// vk_exec_draw.c: FNV-1a of the bound program's fragment shader guest code (memoised per program), 0 without one.
+uint64_t vk_exec_fs_hash(VkExec *ex, uint32_t *len);
+// vk_aa.c: a draw about to be recorded in the open pass (returns 1 to skip it); a pass about to begin or a dispatch or
+// copy about to be recorded (SMAA after the tonemap); the present of a frame.
+int vk_aa_draw(VkExec *ex);
+void vk_aa_flush(VkExec *ex);
+void vk_aa_present(uint64_t frame);
 // vk_contact.c: a pass about to begin (its targets resolved, no pass open), and a dispatch or copy about to be recorded
 void vk_contact_pass_begin(VkExec *ex);
 void vk_contact_flush(VkExec *ex);

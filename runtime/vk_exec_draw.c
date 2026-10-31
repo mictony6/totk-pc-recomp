@@ -704,6 +704,28 @@ static void answers_for(VkExec *ex, int st, const uint8_t *ctl, uint32_t mask, G
     if (locked) vk_texture_unlock();
 }
 
+// FNV-1a of the bound program's fragment shader guest code, per program serial; 0 without one. *len: its length.
+#define FSH_N 256
+static struct { uint64_t serial, h; uint32_t len; } fsh[FSH_N];
+
+uint64_t vk_exec_fs_hash(VkExec *ex, uint32_t *len) {
+    const uint8_t *ctl, *code;
+    uint32_t n;
+    *len = 0;
+    if (!ex->prog || !ex->prog->serial) return 0;
+    typeof(fsh[0]) *m = &fsh[ex->prog->serial * 0x9E3779B97F4A7C15ull >> 56];
+    if (m->serial != ex->prog->serial) {
+        m->serial = ex->prog->serial, m->h = 0, m->len = 0;
+        if (find_stage(ex->prog, NVN_STAGE_FS, &ctl, &code, &n)) {
+            uint64_t h = 0xcbf29ce484222325ull;
+            for (uint32_t i = 0; i < n; i++) h = (h ^ code[i]) * 0x100000001b3ull;
+            m->h = h, m->len = n;
+        }
+    }
+    *len = m->len;
+    return m->h;
+}
+
 // *present: the program has this stage. Returns NULL when it has not or the translation failed. pending (graphics
 // stages, vk_pipeline_async_on): a shader not translated yet is queued and NULL returned with *pending = 1. await: a
 // shader queued earlier is waited for (gfx_shader_await) instead.
@@ -2035,6 +2057,7 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     VkRect2D sc = vk_exec_scissor(ex);
     if (!sc.extent.width || !sc.extent.height) return 0;
     if (!ex->prog) return warn_once(W_PROGRAM, "a draw without a bound program is skipped"), 0;
+    if (vk_aa_draw(ex)) return 0;   // the game's FXAA when another anti-aliasing replaces it
     int has_vs, has_fs, vs_wait = 0, fs_wait = 0, memo = shader_memo_on();
     const GfxShader *vs, *fs;
     uint32_t gen = memo ? vk_texture_slots_gen() : 0;   // before shader_for, whose lookups may bump it
@@ -2269,6 +2292,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     if (d->x <= 0 || d->y <= 0 || d->z <= 0) return;
     if (!ex->prog) return warn_once(W_PROGRAM, "a dispatch without a bound program is skipped");
     vk_contact_flush(ex);
+    vk_aa_flush(ex);
     cb_res(ex);
     dummies_init();
     int present;
