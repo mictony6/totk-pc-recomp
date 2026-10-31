@@ -10,6 +10,7 @@ this file only draws. The window text is in installer/text/<en|ru>.json under "u
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -58,8 +59,12 @@ class App:
 
         root.title(self.cat('ui.title'))
         icon = layout.runtime / 'totk.ico'
+        png = layout.runtime / 'totk.png'   # Tk loads no .ico off Windows; the Linux release converts it
         if os.name == 'nt' and icon.is_file():
             root.iconbitmap(default=str(icon))
+        elif png.is_file():
+            self.icon = tk.PhotoImage(file=str(png))
+            root.iconphoto(True, self.icon)
         root.protocol('WM_DELETE_WINDOW', self.on_close)
         style = ttk.Style(root)
         style.configure('Title.TLabel', font=('Segoe UI', 15, 'bold'))
@@ -266,8 +271,9 @@ class App:
         state = form.installed_state()
         if state is not None:
             self.update_hint.configure(text=self.cat('ui.update_mode'))
-            if state.get('lang') in ini.LANGUAGES and not self.lang_touched:
-                self.vars['lang'].set(self.lang_label(state['lang']))
+            recorded = ini.canonical_language(state.get('lang'))
+            if recorded in ini.LANGUAGES and not self.lang_touched:
+                self.vars['lang'].set(self.lang_label(recorded))
         else:
             self.update_hint.configure(text='')
         self.fit()
@@ -477,7 +483,11 @@ class App:
     def open_folder(self):
         dest = self.model.dest
         if dest and Path(dest).is_dir():
-            os.startfile(dest)
+            if os.name == 'nt':
+                os.startfile(dest)
+            else:
+                subprocess.Popen(['xdg-open', dest], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
 
 
 # ---- self test ---------------------------------------------------------------------------------------------------

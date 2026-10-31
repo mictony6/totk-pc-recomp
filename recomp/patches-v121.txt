@@ -64,6 +64,17 @@ site scene main cc3f68 5e21d900 @page:x9    # scvtf s0, s8 -> adrp x9, page
 site scene main cc3f70 bd0cc660 2d420520    # str s0, [x19, #0xcc4] -> ldp s0, s1, [x9, #16]
 site scene main cc3f74 5e21d921 bd0cc660    # scvtf s1, s9 -> str s0, [x19, #0xcc4]
 
+# Camera aspect ratio for a game resolution that is not 16:9 (upstream game_patches.c, the 1.2.1 sites of aspect_install;
+# runtime/resolution.c res_init writes the output's width / height to page +56 and switches the set on). The same four
+# sites as patches-v143.txt, with the same original words: two camera sites (update and setup) load the camera's copy of
+# DefaultAspect 1.777778, two viewport routines divide width by height. The replacement loads the ratio from the page
+# instead (Hor+). x10 is kept on the stack, so no register liveness is assumed.
+set aspect   TOTK_ASPECT_PATCH   0
+site aspect main cb4b10 bd414260 f81f0fea @page:x10 bd403940 f84107ea   # ldr s0, [x19, #0x140] (camera update)
+site aspect main 12521cc bd414260 f81f0fea @page:x10 bd403940 f84107ea  # ldr s0, [x19, #0x140] (camera setup)
+site aspect main 19b36f0 1e211800 f81f0fea @page:x10 bd403940 f84107ea  # fdiv s0, s0, s1 (viewport)
+site aspect main 1ecdf68 1e211800 f81f0fea @page:x10 bd403940 f84107ea  # fdiv s0, s0, s1 (viewport)
+
 # Spin waits, from tools/spin_waits.py --exefs build/extracted/v121/exefs --patches recomp/patches-v121.txt: loops that only
 # another thread can end; their back-edges pass rt_spin_gate (runtime/kernel.c), TOTK_SPIN=0 keeps the core.
 spin main ac600 ac620 ac630   # 13 instructions; loads

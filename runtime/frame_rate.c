@@ -24,7 +24,7 @@
 //
 // The world clock (frame_step_world_us) sums the steps from the first present that finds the player actor away from
 // the origin, where the title screen keeps it: the end of the first save load. Recorded and scripted input
-// (input_win.c) runs on it, so a replay presses at the same game time at any frame rate and after a first load of any
+// (input.c) runs on it, so a replay presses at the same game time at any frame rate and after a first load of any
 // length; a later load (fast travel) still shifts what follows by its length.
 //
 // TOTK_TRACE=perf adds a line per 120 presents: fps, the game seconds stepped against wall seconds, and with
@@ -90,7 +90,7 @@ void frame_step_init(void) {
 
 int frame_step_realtime(void) { return step_word != NULL; }
 
-// The frame limit (menu, TOTK_FPS_LIMIT, live): 30, 60, 120, 144, any whole rate from 30 to 360, or display (the
+// The frame limit (menu, TOTK_FPS_LIMIT, live): 30, 60, 90, 120, 144, any whole rate from 30 to 360, or display (the
 // refresh rate of the window's monitor). Unset, the older TOTK_FPS60=0 still means 30. A limit of 30 switches the set
 // fps60 off (the shipping minimum interval 2), every other limit switches it on; the controller reads its minimum
 // interval from the patched sites each frame. With the real-time step the pacer holds frames to the limit; above 60

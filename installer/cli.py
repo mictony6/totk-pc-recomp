@@ -28,6 +28,11 @@ class Parser(argparse.ArgumentParser):
         sys.exit(2)
 
 
+# The temp folder inside the install folder when the layout names none (the Linux release); the check step does not
+# count it when it requires an empty install folder
+TEMP_IN_DEST = '.setup-temp'
+
+
 def temp_folder(base, dest):
     """One temp folder per install folder, so two installs never share generated files."""
     tag = hashlib.sha256(str(dest).lower().encode()).hexdigest()[:8]
@@ -46,8 +51,8 @@ def main(argv=None):
     ap.add_argument('--lang', help='game language, a Switch language code (en-US, en-GB, ja, de, ru, ...)')
     ap.add_argument('--dest', type=Path, required=True, help='install folder')
     ap.add_argument('--root', type=Path, help='release folder or repository (default: the folder above installer/)')
-    ap.add_argument('--temp', type=Path, help='temp folder (default: temp/ of the release, build/install-temp in a '
-                                              'repository)')
+    ap.add_argument('--temp', type=Path, help='temp folder (default: temp/ of the release on Windows, .setup-temp in '
+                                              'the install folder on Linux, build/install-temp in a repository)')
     ap.add_argument('--verify', action='store_true', help='hash every kept file, also those this release made')
     args = ap.parse_args(argv)
 
@@ -58,7 +63,8 @@ def main(argv=None):
             signal.signal(getattr(signal, name), cancel)
     layout = layouts.find(args.root)
     dest = args.dest.resolve()
-    temp = temp_folder((args.temp or layout.temp).resolve(), dest)
+    base = args.temp or layout.temp
+    temp = temp_folder(base.resolve(), dest) if base else dest / TEMP_IN_DEST
     log = temp / 'logs' / time.strftime('install-%Y%m%d-%H%M%S.log')
     rep = Reporter(log_path=log)
     t0 = time.monotonic()
