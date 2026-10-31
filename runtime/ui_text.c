@@ -78,9 +78,11 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_ANISO_DESC] = "Keeps ground and walls seen at a steep angle sharp. The game's own level is the Switch's; "
                            "16x costs little on a desktop GPU.",
     [UI_MENU_ANISO_GAME] = "The game's",
-    [UI_MENU_SHADOW_SCALE] = "Shadow resolution",
-    [UI_MENU_SHADOW_SCALE_DESC] = "Draws the sun's shadow maps this many times larger on each side than the game's 960x960: "
-                                  "sharper shadow edges and leaf shadows. Takes effect at the next start.",
+    [UI_MENU_SHADOW_SCALE] = "Shadow map upscale",
+    [UI_MENU_SHADOW_SCALE_DESC] = "Draws the shadow maps this many times larger than the game asked for, without telling the "
+                                  "game. Its soft-shadow filter then samples too close together, so sun shadows get a hard "
+                                  "edge with a faint second band. Use Sun shadow resolution instead and keep this at 1x. "
+                                  "Takes effect at the next start.",
     [UI_MENU_PCSS] = "Soft shadows",
     [UI_MENU_PCSS_DESC] = "Sun shadows sharp where an object meets the ground and softer the further the shadow falls "
                           "(PCSS). 0 keeps the game's filter. Takes effect at the next start.",
@@ -345,9 +347,11 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_ANISO_DESC] = "Сохраняет чёткость земли и стен под острым углом. Уровень самой игры — как на Switch; "
                            "16x почти ничего не стоит настольной видеокарте.",
     [UI_MENU_ANISO_GAME] = "Как в игре",
-    [UI_MENU_SHADOW_SCALE] = "Разрешение теней",
-    [UI_MENU_SHADOW_SCALE_DESC] = "Карты теней от солнца рисуются во столько раз больше по каждой стороне, чем 960x960 "
-                                  "самой игры: края теней и тени листвы чётче. Действует после перезапуска.",
+    [UI_MENU_SHADOW_SCALE] = "Увеличение карт теней",
+    [UI_MENU_SHADOW_SCALE_DESC] = "Карты теней рисуются во столько раз больше, чем просила игра, без её ведома. Её фильтр "
+                                  "мягких теней тогда берёт отсчёты слишком близко, и у теней от солнца появляется резкий "
+                                  "край со второй бледной полосой. Лучше задать разрешение теней от солнца, а здесь "
+                                  "оставить 1x. Действует после перезапуска.",
     [UI_MENU_PCSS] = "Мягкие тени",
     [UI_MENU_PCSS_DESC] = "Тени от солнца резкие там, где предмет касается земли, и мягче, чем дальше падает тень "
                           "(PCSS). 0 оставляет фильтр игры. Действует после перезапуска.",

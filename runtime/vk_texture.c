@@ -297,7 +297,9 @@ static void init_image(Tex *e, VkCommandBuffer cb) {
 // larger here: render passes into them scale the game's viewports and scissors (vk_exec.c resolve_rt, pass_scale),
 // copies scale their regions (vk_exec_xfer.c sub_resolve), and shaders sample them with normalised coordinates, so the
 // game sees nothing of it. A map whose storage the CPU writes (mirrored) or that aliases pool memory keeps its size,
-// as its texels must match the guest layout.
+// as its texels must match the guest layout. Above 1 the sun shadows double: the game's 4-tap PCF steps one texel of the
+// size it allocated, which on the larger map is a fraction of a texel (docs/maxwell.md, section 6); TOTK_SHADOW_RES
+// (resolution.c res_shadow_res) gives the game a larger size it filters correctly.
 static int shadow_scale(void) {
     static int scale = -1;
     if (scale < 0) {

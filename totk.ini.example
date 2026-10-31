@@ -148,8 +148,10 @@
 # Keeps ground and walls seen at a steep angle sharp. Depth-compare (shadow) and nearest-filtered samplers keep the
 # game's setting. Read at start.
 # aniso = 16
-# Shadow map resolution: the game's sun cascades are 960x960 (and its static shadow maps 1440 and 720) whatever the game
-# resolution; 2 to 4 draws them that many times larger on each side, for sharper shadows. 1 = the game's. Read at start.
+# Shadow map upscale: 2 to 4 draws the game's shadow maps that many times larger on each side than it made them, without
+# the game knowing. Its soft-shadow filter spaces its samples one texel of the size it chose, so on a larger map they
+# bunch together and sun shadows get a hard edge with a faint second band beside it. For sharper sun shadows use
+# shadow_res, which the game sizes and filters itself, and keep this at 1 (the game's). Read at start.
 # shadow_scale = 1
 # Sun shadow cascade range in percent of the game's (its cascades end at 20, 40, 80 and 160 m), 50 to 400: higher moves
 # the steps where shadows turn softer further away, and spreads the shadow map over more ground. Read at start.
