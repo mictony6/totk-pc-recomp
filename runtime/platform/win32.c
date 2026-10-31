@@ -9,6 +9,7 @@
 #include <psapi.h>
 #include <shellapi.h>
 #include <timeapi.h>
+#include <tlhelp32.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
@@ -26,6 +27,9 @@ struct PlatThread {
     PlatThreadFn fn;
     void *arg;
 };
+
+static volatile uint64_t watch_addr;   // plat_watch_write, below
+static int watch_arm(HANDLE t);
 
 static DWORD WINAPI thread_main(LPVOID p) {
     PlatThread *t = p;
@@ -49,6 +53,7 @@ PlatThread *plat_thread_new_ex(PlatThreadFn fn, void *arg, const char *name, siz
         wchar_t w[64];
         if (MultiByteToWideChar(CP_UTF8, 0, name, -1, w, 64)) SetThreadDescription(t->h, w);
     }
+    if (watch_addr) watch_arm(t->h);   // plat_watch_write
     ResumeThread(t->h);
     return t;
 }
@@ -585,6 +590,67 @@ static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
 void plat_crash_hook(void (*fn)(const PlatCrash *c)) {
     crash_fn = fn;
     AddVectoredExceptionHandler(0, crash_veh);
+}
+
+// ---- write watch: DR0 holds the address; DR7 enables it (L0, bit 0) for data writes (R/W0 = 01, bits 16-17) of LEN0
+// bytes (bits 18-19: 00 = 1, 01 = 2, 11 = 4, 10 = 8). The CPU raises a single-step exception after the writing
+// instruction and sets DR6 bit 0. Debug registers belong to each thread, so every thread is armed: the running ones
+// from a helper thread (a thread cannot set its own context), new ones in plat_thread_new_ex before they run.
+static uint64_t watch_dr7;
+static uintptr_t watch_base;
+static void (*watch_fn)(uintptr_t rip, uintptr_t offset);
+
+static LONG CALLBACK watch_veh(EXCEPTION_POINTERS *ep) {
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP || !(ep->ContextRecord->Dr6 & 1))
+        return EXCEPTION_CONTINUE_SEARCH;
+    ep->ContextRecord->Dr6 = 0;
+    uintptr_t rip = (uintptr_t)ep->ContextRecord->Rip;
+    watch_fn(rip, rip - watch_base);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static int watch_arm(HANDLE t) {
+    CONTEXT x = {.ContextFlags = CONTEXT_DEBUG_REGISTERS};
+    if (!GetThreadContext(t, &x)) return 0;
+    x.Dr0 = watch_addr;
+    x.Dr7 = (x.Dr7 & ~0xf0003ull) | watch_dr7;
+    return SetThreadContext(t, &x) != 0;
+}
+
+static DWORD WINAPI watch_arm_all(void *arg) {
+    int *armed = arg;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    THREADENTRY32 te = {.dwSize = sizeof te};
+    DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid || te.th32ThreadID == me) continue;
+        HANDLE t = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+        if (!t) continue;
+        if (SuspendThread(t) != (DWORD)-1) {
+            *armed += watch_arm(t);
+            ResumeThread(t);
+        }
+        CloseHandle(t);
+    }
+    CloseHandle(snap);
+    return 0;
+}
+
+int plat_watch_write(uint64_t addr, int len, void (*fn)(uintptr_t rip, uintptr_t offset)) {
+    static const uint64_t lens[9] = {[1] = 0, [2] = 1, [4] = 3, [8] = 2};
+    if (len < 1 || len > 8 || (len & (len - 1)) || (addr & (uint64_t)(len - 1)) || !fn) return 0;
+    if (!watch_fn) AddVectoredExceptionHandler(1, watch_veh);
+    watch_fn = fn;
+    watch_base = (uintptr_t)GetModuleHandleW(NULL);
+    watch_dr7 = 1 | 1ull << 16 | lens[len] << 18;
+    watch_addr = addr;
+    int armed = 0;
+    HANDLE h = CreateThread(NULL, 0, watch_arm_all, &armed, 0, NULL);
+    if (!h) return 0;
+    WaitForSingleObject(h, INFINITE);
+    CloseHandle(h);
+    return armed > 0;
 }
 
 // A fresh process gets a fresh layout: Windows places DLLs, heaps and thread stacks at random addresses. The parent
