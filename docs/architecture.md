@@ -101,6 +101,10 @@ Every guest thread is a host thread. TotK assumes Horizon's scheduler: three app
   wide size there keeps the 16:9 view. The `aspect` setting (`fit`, the default; `stretch`) decides what the present does
   when the window's shape differs from the output's: `fit` letterboxes, where a 16:9 game in a wider window used to be
   stretched.
+- Sun shadow resolution. The game's shadow allocator sizes the sun cascades from 960 down to 800 with GPU load and
+  halves that with distance, so they change between 400 and 960 while it runs. `shadow_res` (1.4.3) switches on the
+  `shadowres` patch set, which gives them a fixed side from the patch page; `resolution.c` grows the texture heap by
+  one cascade array of that size. The game picks the size itself, so its filter taps stay one texel apart.
 - Occlusion queries never block the CPU; a result that is not ready counts as visible.
 - ASTC textures are uploaded as they are where the device reports `textureCompressionASTC_LDR`, and decoded by a compute shader everywhere else (`vk_astc.c`, `TOTK_ASTC`). The CPU decoder (`tex_astc*.c`) is the fallback and the test oracle.
 - Draw state. A draw whose program, bound state and textures repeat reuses the previous draw's shaders and skips rebuilding its descriptor sets; descriptor sets are written through update templates (`vk_exec_draw.c`, `vk_pipeline.c`).

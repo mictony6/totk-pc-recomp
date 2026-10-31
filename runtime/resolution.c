@@ -12,7 +12,8 @@
 //
 // Patch page: +16 the scene size {w, h} as floats, +32 the output size and +48 the swapchain size as {w, h} in one
 // 64-bit word, +40 the renderer (1.2.1) or display configuration (1.4.3) the patched code stores there.
-// +56 the camera's aspect ratio as a float when the output is not 16:9 (1.4.3, set aspect).
+// +56 the camera's aspect ratio as a float when the output is not 16:9 (1.4.3, set aspect). +88 the sun shadow
+// cascades' side and +92 the start of the shadow table row it replaces, both floats (1.4.3, set shadowres).
 // 1.4.3 scales the scene it reads by output width / 1920 (a 2560x1440 output renders its 1600x900 scene at 2128x1200;
 // MacNativeGames measured the same), so its page holds the wanted size divided by that factor and the game's 5/6 needs
 // no scene patch. 1.2.1 renders the size it reads (1600x900 on a 2560x1440 output): its page holds the wanted size, and
@@ -24,7 +25,8 @@
 // pixel ratio above 1920x1080 plus the scene's above 1600x900 (MacNativeGames' measurement: a 3440x1440 canvas with a
 // 4620x1935 scene crashed at +258 MiB and loaded at +400 MiB; this formula gives +750 MiB there). romfs.c serves the
 // rewritten table (res_heapdef_build) in place of the original; memory.c adds the amount to the application pool, so
-// no other heap shrinks. Without the rewritten table (a RomFS that lacks it, a format this code does not know) the
+// no other heap shrinks. A fixed sun shadow map size (TOTK_SHADOW_RES) grows them by one cascade array of that size.
+// Without the rewritten table (a RomFS that lacks it, a format this code does not know) the
 // patch sets stay off and the game keeps its own sizes.
 #include <math.h>
 #include <stdint.h>
@@ -49,6 +51,7 @@ static struct {
     int scene_set;             // the scene differs from the game's 5/6 of the output
     int heapdef_ok;            // romfs.c serves the grown HeapDef
     int on;                    // res_init switched the patch sets on
+    unsigned shadow;           // TOTK_SHADOW_RES: the sun cascades' side, 0 = the game's
 } R;
 
 static void decide(void) {
@@ -82,6 +85,13 @@ static void decide(void) {
     if (fit < 1.0) R.scene_set = 1;
     R.sw = (unsigned)(sw * fit + 0.5);
     R.sh = (unsigned)(sh * fit + 0.5);
+    const char *sr = cfg_value("TOTK_SHADOW_RES");
+    if (strcmp(sr, "game")) {
+        char *end;
+        long v = strtol(sr, &end, 10);
+        if (end != sr && !*end && v >= 256 && v <= 4096) R.shadow = (unsigned)(v + 7) & ~7u;
+        else rt_log("resolution: TOTK_SHADOW_RES=%s is not game or a size 256..4096; game", sr);
+    }
 }
 
 static int bigger(void) {
@@ -89,12 +99,20 @@ static int bigger(void) {
     return R.ow != BASE_W || R.oh != BASE_H || R.scene_set;
 }
 
+// The sun cascades (a DEPTH16 array of 4 layers) come from the same heap. A fixed size grows it by a whole array of that
+// size, in MiB steps, on top of the room the shipped heap keeps for the game's own (960 a side at most).
+static uint64_t shadow_extra_kib(void) {
+    decide();
+    return R.shadow ? ((uint64_t)R.shadow * R.shadow * 2 * 4 + (1u << 20) - 1) >> 20 << 10 : 0;
+}
+
 uint64_t res_heap_extra_kib(void) {
-    if (!bigger()) return 0;
+    uint64_t shadow = shadow_extra_kib();
+    if (!bigger()) return shadow;
     double grow = fmax(0.0, (double)R.ow * R.oh / (BASE_W * BASE_H) - 1.0) +
                   fmax(0.0, (double)R.sw * R.sh / (SCENE_W * SCENE_H) - 1.0);
-    if (grow <= 0) return 0;
-    return (uint64_t)ceil(DTA_KIB * (1.0 + grow) / 1024.0) * 1024 - DTA_KIB;
+    if (grow <= 0) return shadow;
+    return (uint64_t)ceil(DTA_KIB * (1.0 + grow) / 1024.0) * 1024 - DTA_KIB + shadow;
 }
 
 uint64_t res_heap_extra_bytes(void) { return ((res_heap_extra_kib() << 10) + 0x1fffff) & ~0x1fffffull; }
@@ -192,7 +210,33 @@ void res_heapdef_served(void) { R.heapdef_ok = 1; }
 // ---- start: the patch page and the sets
 static uint64_t pack(unsigned w, unsigned h) { return (uint64_t)h << 32 | w; }
 
+// TOTK_SHADOW_RES (game, or 256 to 4096): the side of the sun's shadow cascades. The game's shadow allocator sizes them
+// from 960 down to 800 by GPU load and halves that with distance, so they change between 400 and 960 while it runs;
+// the shadowres patch set (recomp/patches-v143.txt) gives them the side from page +88 instead, at any load and
+// distance. The game picks that size itself, so its filter taps and texel sizes follow it.
+static void res_shadow_res(void) {
+    if (!R.shadow) return;
+    int set = rt_patch_set("shadowres");
+    if (set < 0) {
+        rt_log("resolution: this game version has no shadowres patch set; the game sizes its shadow maps");
+        return;
+    }
+    if (!R.heapdef_ok) {
+        rt_log("resolution: no grown HeapDef table; the game sizes its shadow maps");
+        return;
+    }
+    float side[2] = {(float)R.shadow, 960.0f};   // the side, and the start of the table row it replaces
+    memcpy((uint8_t *)rt_patch_page() + 88, side, sizeof side);
+    rt_patch_switch(set, 1);
+    rt_log("resolution: sun shadow cascades %ux%u; texture heap +%llu KiB for them", R.shadow, R.shadow,
+           (unsigned long long)shadow_extra_kib());
+}
+
 void res_init(void) {
+    if (shadow_extra_kib()) {
+        fs_init();   // romfs.c serves the grown HeapDef from here on (res_heapdef_served)
+        res_shadow_res();
+    }
     if (!bigger()) {
         rt_log("resolution: the game's own (output 1920x1080, scene 1600x900)");
         return;
