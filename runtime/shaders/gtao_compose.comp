@@ -1,0 +1,28 @@
+#version 450
+// GTAO's last pass (runtime/vk_gtao.c): the half-resolution AO mask the game's lighting reads in place of its own
+// quarter-resolution one. Every channel is the game's finished mask, sampled bilinearly as the lighting would; blue,
+// the AO, is GTAO's visibility after a second denoise, to the strength setting's power, except where the game's value is
+// kept (characters).
+#extension GL_GOOGLE_include_directive : require
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D ao;       // gtao_denoise.comp: visibility / OCCLUSION_TERM_SCALE, kept flag
+layout(binding = 1) uniform sampler2D edges;    // gtao_main.comp: packed edges
+layout(binding = 2) uniform sampler2D mask;     // the game's finished AO mask, quarter resolution (linear sampler)
+layout(binding = 3, rgba8) uniform writeonly image2D out_mask;
+
+layout(push_constant) uniform Params {
+    vec4 opt;   // x: blur beta, y: strength (power of the visibility)
+} pc;
+
+#include "gtao_denoise.glsl"
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = textureSize(ao, 0);
+    if (any(greaterThanEqual(p, size))) return;
+    vec4 m = textureLod(mask, (vec2(p) + 0.5) / vec2(size), 0.0);
+    vec2 v = denoise(p, pc.opt.x);
+    if (v.y < 0.5) m.b = pow(clamp(v.x * OCCLUSION_TERM_SCALE, 0.0, 1.0), pc.opt.y);
+    imageStore(out_mask, p, m);
+}

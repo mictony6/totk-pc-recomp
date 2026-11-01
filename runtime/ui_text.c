@@ -90,6 +90,19 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_PCSS] = "Soft shadows",
     [UI_MENU_PCSS_DESC] = "Sun shadows sharp where an object meets the ground and softer the further the shadow falls "
                           "(PCSS). 0 keeps the game's filter. Takes effect at the next start.",
+    [UI_MENU_AO] = "Ambient occlusion",
+    [UI_MENU_AO_DESC] = "Darkens corners, creases and the ground under objects. Game: the game's SSAO, mostly thin "
+                        "outlines. GTAO: ground-truth AO over a wider radius; characters keep the game's.",
+    [UI_MENU_AO_GAME] = "Game", [UI_MENU_AO_GTAO] = "GTAO",
+    [UI_MENU_AO_STRENGTH] = "GTAO strength",
+    [UI_MENU_AO_STRENGTH_DESC] = "How dark GTAO's occlusion is; 100 % is the measured amount.",
+    [UI_MENU_AO_RADIUS] = "GTAO radius",
+    [UI_MENU_AO_RADIUS_DESC] = "How far around a point GTAO looks for occluders, in metres. Larger reaches deeper "
+                               "into corners and under furniture.",
+    [UI_MENU_AO_FOLIAGE] = "GTAO on foliage",
+    [UI_MENU_AO_FOLIAGE_DESC] = "How much grass, leaves and other thin things darken what is behind them. Minimal is "
+                                "close to the game, which gives foliage no AO; Full darkens fields and trees.",
+    [UI_MENU_AO_FOLIAGE_MINIMAL] = "Minimal", [UI_MENU_AO_FOLIAGE_FULL] = "Full",
     [UI_MENU_CONTACT_SHADOWS] = "Contact shadows",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Small sun shadows the shadow maps miss: at feet, under stones, in grass and creases. "
                                      "Traced on the screen after lighting. Takes effect at the next start.",
@@ -363,6 +376,19 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PCSS] = "Мягкие тени",
     [UI_MENU_PCSS_DESC] = "Тени от солнца резкие там, где предмет касается земли, и мягче, чем дальше падает тень "
                           "(PCSS). 0 оставляет фильтр игры. Действует после перезапуска.",
+    [UI_MENU_AO] = "Фоновое затенение",
+    [UI_MENU_AO_DESC] = "Затемняет углы, складки и землю под предметами. Как в игре: SSAO игры, в основном тонкие "
+                        "контуры. GTAO: точное затенение в большем радиусе; персонажи остаются как в игре.",
+    [UI_MENU_AO_GAME] = "Как в игре", [UI_MENU_AO_GTAO] = "GTAO",
+    [UI_MENU_AO_STRENGTH] = "Сила GTAO",
+    [UI_MENU_AO_STRENGTH_DESC] = "Насколько тёмным получается затенение GTAO; 100 % — рассчитанная величина.",
+    [UI_MENU_AO_RADIUS] = "Радиус GTAO",
+    [UI_MENU_AO_RADIUS_DESC] = "Как далеко вокруг точки GTAO ищет заслоняющие предметы, в метрах. Больший радиус "
+                               "достаёт глубже в углы и под мебель.",
+    [UI_MENU_AO_FOLIAGE] = "GTAO на листве",
+    [UI_MENU_AO_FOLIAGE_DESC] = "Насколько трава, листья и другие тонкие предметы затеняют то, что за ними. Минимально "
+                                "— близко к игре, где у листвы нет затенения; полностью — поля и деревья темнее.",
+    [UI_MENU_AO_FOLIAGE_MINIMAL] = "Минимально", [UI_MENU_AO_FOLIAGE_FULL] = "Полностью",
     [UI_MENU_CONTACT_SHADOWS] = "Контактные тени",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Мелкие тени от солнца, которых нет на картах теней: у ног, под камнями, в траве и "
                                      "складках. Считаются по экрану после освещения. Действует после перезапуска.",

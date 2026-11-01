@@ -1,0 +1,269 @@
+#version 450
+// GTAO main pass (runtime/vk_gtao.c): the ground-truth ambient occlusion at half the screen resolution, from the game's
+// full-resolution linear depth. Adapted from XeGTAO's XeGTAO_MainPass, XeGTAO_CalculateEdges,
+// XeGTAO_PackEdges and XeGTAO_CalculateNormal (XeGTAO.hlsli, GameTechDev/XeGTAO a5b1686):
+//
+//   Copyright (C) 2016-2021, Intel Corporation
+//   SPDX-License-Identifier: MIT
+//   XeGTAO is based on GTAO/GTSO "Jimenez et al. / Practical Real-Time Strategies for Accurate Indirect Occlusion".
+//   Implementation: Filip Strugar, Steve Mccalla.
+//
+// Changes: GLSL; full precision; no depth MIP chain (every sample reads the full-resolution depth at its pixel); edges
+// compared in 1/z, which is linear across a plane in screen space where z is not (XeGTAO's slope test on z rejects the
+// neighbours of walls seen at a grazing angle, beside the camera, and the normal and the denoise then change at a fixed
+// place on the screen); the normal from the depth, built from the nearer neighbour on each axis (depth_normal), turned
+// towards the G-buffer's shading normal averaged over 3x3 points by at most MAX_TILT (search_normal); a small
+// view-independent darkening where the normal map tilts (MICRO_AO); noise from interleaved
+// gradient noise instead of the Hilbert curve, as there is no temporal filter after it; XeGTAO's thin-object heuristic
+// on (opt2.x); vegetation, which TotK's own AO leaves almost untouched, receives and casts less occlusion (opt2.y,
+// below); characters keep the game's AO and occlude little (below).
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D lin_depth;     // the game's linear depth: (view z - near) / (far - near) (1: sky)
+layout(binding = 2) uniform sampler2D material;      // G-buffer target 0: green is the material class, 32 vegetation
+layout(binding = 5) uniform sampler2D albedo;        // G-buffer target 1: base colour
+layout(binding = 6) uniform sampler2D gnormal;       // G-buffer target 3: shading normal (shading_normal)
+// x: visibility / OCCLUSION_TERM_SCALE; y: 1 where the game's value is kept (characters; gtao_compose.comp)
+layout(binding = 3, rg8) uniform writeonly image2D ao_out;
+layout(binding = 4, r8) uniform writeonly image2D edges_out;   // 2 bits per edge, left right top bottom
+
+layout(push_constant) uniform Params {
+    vec4 proj;    // projection x scale, y scale, far - near plane, effect radius in metres
+    vec4 size;    // AO width, height, 1/width, 1/height
+    vec4 dsize;   // depth width, height, 1/width, 1/height
+    vec4 opt;     // slices, steps per slice, falloff range (fraction of the radius), final value power
+    vec4 opt2;    // thin occluder compensation (0: off, XeGTAO's range 0..0.7), vegetation fade (0: none, 1: no AO),
+                  // G-buffer normals (1: read), near plane
+} pc;
+
+#define PI 3.1415926535897932
+#define PI_HALF 1.5707963267948966
+#define OCCLUSION_TERM_SCALE 1.5
+#define SAMPLE_DISTRIBUTION_POWER 2.0
+#define RADIUS_MULTIPLIER 1.457
+
+// View z in metres at a screen position (0..1), read from the full-resolution depth; the sky reads very far. The near
+// plane is added back: without it every point sits 0.1 m too close along its ray, which bends a flat wall right beside
+// the camera into a bowl that occludes itself, a dark band where such a wall meets the edge of the screen.
+float depth_at(vec2 uv) {
+    ivec2 p = clamp(ivec2(uv * pc.dsize.xy), ivec2(0), ivec2(pc.dsize.xy) - 1);
+    float d = texelFetch(lin_depth, p, 0).x;
+    return (d >= 0.999 ? 1e4 : d) * pc.proj.z + pc.opt2.w;
+}
+
+// View-space position, x right, y up, z forward (XeGTAO's convention), from a screen position and its view distance.
+vec3 view_pos(vec2 uv, float z) {
+    return vec3((uv.x * 2.0 - 1.0) * z / pc.proj.x, (1.0 - uv.y * 2.0) * z / pc.proj.y, z);
+}
+
+// The G-buffer's view-space shading normal in XeGTAO's convention (x right, y up, z away from the camera). TotK stores
+// it sphere-map encoded (Lambert azimuthal): red and green are |x| and |y| of the encoded pair, bits 1 and 0 of blue
+// their signs; f = x^2 + y^2, n.xy = 2 * enc * sqrt(1 - f), n.z = 1 - 2f towards the camera (as the game's lighting
+// shader decodes it).
+vec3 gbuffer_normal(vec2 uv) {
+    ivec2 p = clamp(ivec2(uv * pc.dsize.xy), ivec2(0), ivec2(pc.dsize.xy) - 1);
+    vec4 t = texelFetch(gnormal, p, 0);
+    uint bits = uint(t.z * 255.0 + 0.5);
+    vec2 e = t.xy * vec2((bits & 2u) != 0u ? 1.0 : -1.0, (bits & 1u) != 0u ? 1.0 : -1.0);
+    float f = dot(e, e);
+    return normalize(vec3(2.0 * e * sqrt(max(0.0, 1.0 - f)), -(1.0 - 2.0 * f)));
+}
+
+// The shading normal averaged over 3x3 points two AO pixels apart. The shading normal is smooth across the flat facets
+// of curved walls, where normals from depth step and bands appear on walls beside the camera.
+vec3 shading_normal(vec2 uv) {
+    vec3 g = vec3(0.0);
+    for (int j = -1; j <= 1; j++)
+        for (int i = -1; i <= 1; i++) g += gbuffer_normal(uv + vec2(i, j) * 4.0 * pc.dsize.zw);
+    return dot(g, g) > 1e-6 ? normalize(g) : vec3(0.0, 0.0, -1.0);
+}
+
+// The shading normal of the 2x2 screen pixels under an AO pixel
+vec3 pixel_normal(ivec2 px) {
+    vec3 g = vec3(0.0);
+    for (int j = 0; j < 2; j++)
+        for (int i = 0; i < 2; i++) g += gbuffer_normal((vec2(px * 2 + ivec2(i, j)) + 0.5) * pc.dsize.zw);
+    return dot(g, g) > 1e-6 ? normalize(g) : vec3(0.0, 0.0, -1.0);
+}
+
+// The horizon search measures occluders in the depth, so its normal must describe the same surface. The shading normal
+// also carries the normal maps: a stylised pebble tilted 30 degrees against a flat floor in the depth makes the whole
+// floor within the radius rise above it, nearly black, and which pebbles turn black changes with the view (flicker).
+// The normal from the depth, turned towards the shading normal by at most MAX_TILT, keeps the smooth shape of curved
+// walls and the gentle normal-map slopes and stops the steep ones.
+#define MAX_TILT 0.31   // radians, about 18 degrees
+vec3 search_normal(vec3 nd, vec3 ng) {
+    float c = dot(nd, ng);
+    if (c >= cos(MAX_TILT)) return ng;
+    vec3 t = ng - nd * c;
+    float l = length(t);
+    return l > 1e-4 ? nd * cos(MAX_TILT) + t / l * sin(MAX_TILT) : nd;
+}
+
+// The normal map's own small-scale occlusion (crevices between pebbles, cracks), which the search above cannot see:
+// darker by up to MICRO_AO with the angle between the shading normal under the AO pixel and the averaged one around it
+// (shading_normal), the same from every view. Not against the normal from the depth: on walls seen at a grazing angle
+// that one is noisy and the noise shows as stripes.
+#define MICRO_AO 0.10
+float micro_visibility(vec3 smooth_n, vec3 ng) {
+    return 1.0 - clamp((1.0 - dot(smooth_n, ng)) * 0.75, 0.0, MICRO_AO);
+}
+
+// 1 where the G-buffer says character (material class 253 of 255), else 0
+float character(vec2 uv) {
+    ivec2 p = clamp(ivec2(uv * pc.dsize.xy), ivec2(0), ivec2(pc.dsize.xy) - 1);
+    return abs(texelFetch(material, p, 0).g * 255.0 - 253.0) < 0.5 ? 1.0 : 0.0;
+}
+
+// 1 inside the screen, 0 outside: past the edge the depth only repeats the edge column, which is no occluder
+float on_screen(vec2 uv) {
+    return all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))) ? 1.0 : 0.0;
+}
+
+// 1 where the G-buffer says vegetation, else 0: material class 32 of 255 (trees, tall plants), or class 0 (terrain)
+// with a clearly green base colour: TotK's field grass writes the terrain class, and bare dirt, rock and paths are
+// brown or grey
+float vegetation(vec2 uv) {
+    ivec2 p = clamp(ivec2(uv * pc.dsize.xy), ivec2(0), ivec2(pc.dsize.xy) - 1);
+    float c = texelFetch(material, p, 0).g * 255.0;
+    if (abs(c - 32.0) < 0.5) return 1.0;
+    if (c > 0.5) return 0.0;
+    vec3 a = texelFetch(albedo, p, 0).rgb;
+    return a.g > 1.2 * a.r && a.g > 1.2 * a.b ? 1.0 : 0.0;
+}
+
+// XeGTAO_CalculateEdges on 1/z: 1 for a neighbour on the same surface, 0 across a depth edge
+vec4 calculate_edges(float c, float l, float r, float t, float b) {
+    vec4 e = 1.0 / vec4(l, r, t, b) - 1.0 / c;
+    float slope_lr = (e.y - e.x) * 0.5, slope_tb = (e.w - e.z) * 0.5;
+    vec4 adj = e + vec4(slope_lr, -slope_lr, slope_tb, -slope_tb);
+    e = min(abs(e), abs(adj));
+    return clamp(1.25 - e / (0.011 / c), 0.0, 1.0);
+}
+
+float pack_edges(vec4 e) {
+    e = round(clamp(e, 0.0, 1.0) * 2.9);
+    return dot(e, vec4(64.0 / 255.0, 16.0 / 255.0, 4.0 / 255.0, 1.0 / 255.0));
+}
+
+// The surface normal from the full-resolution depth around a point: on each axis the tangent towards the neighbour
+// whose 1/z continues the centre's best (the other one may lie across an edge); no thresholds, so no seams.
+vec3 depth_normal(vec2 uv, float z) {
+    vec2 du = vec2(pc.dsize.z, 0), dv = vec2(0, pc.dsize.w);
+    float zl = depth_at(uv - du), zr = depth_at(uv + du), zt = depth_at(uv - dv), zb = depth_at(uv + dv);
+    vec3 c = view_pos(uv, z);
+    vec3 tx = abs(1.0 / zl - 1.0 / z) < abs(1.0 / zr - 1.0 / z) ? c - view_pos(uv - du, zl) : view_pos(uv + du, zr) - c;
+    vec3 ty = abs(1.0 / zt - 1.0 / z) < abs(1.0 / zb - 1.0 / z) ? c - view_pos(uv - dv, zt) : view_pos(uv + dv, zb) - c;
+    return normalize(cross(tx, ty));
+}
+
+float fast_acos(float x) {   // input -1..1, output 0..pi
+    float a = abs(x), r = (-0.156583 * a + PI_HALF) * sqrt(1.0 - a);
+    return x >= 0.0 ? r : PI - r;
+}
+
+float ign(vec2 px) {
+    return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715))));
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= int(pc.size.x) || px.y >= int(pc.size.y)) return;
+    // The centre of the first full-resolution pixel under this AO pixel, and every lookup below whole full-resolution
+    // pixels from it. The AO pixel's own centre lies on the border between two full-resolution pixels, where rounding
+    // picks one side or the other column by column; the neighbours of the depth normal then lie 0 or 2 pixels away
+    // instead of 1, and on walls seen at a grazing angle, where the depth climbs steeply, the normal swings into stripes
+    // that the denoise turns into a band fixed on the screen.
+    vec2 uv = (vec2(px) * 2.0 + 0.5) * pc.dsize.zw;
+    float z = depth_at(uv);
+    // edges against the neighbouring AO pixels (the denoise in gtao_denoise.glsl keeps to them)
+    float zl = depth_at(uv - vec2(2.0 * pc.dsize.z, 0)), zr = depth_at(uv + vec2(2.0 * pc.dsize.z, 0));
+    float zt = depth_at(uv - vec2(0, 2.0 * pc.dsize.w)), zb = depth_at(uv + vec2(0, 2.0 * pc.dsize.w));
+    vec4 edges = calculate_edges(z, zl, zr, zt, zb);
+    imageStore(edges_out, px, vec4(pack_edges(edges)));
+    // Characters keep the game's AO: it gives them a fixed value and keeps their look with it; GTAO would light Link
+    // and other characters more brightly than the game means them.
+    if (character(uv) > 0.5) {
+        imageStore(ao_out, px, vec4(0.0, 1.0, 0.0, 0.0));
+        return;
+    }
+    if (z >= 0.999 * pc.proj.z || z <= pc.opt2.w) {   // the sky, or nothing drawn: unoccluded
+        imageStore(ao_out, px, vec4(1.0 / OCCLUSION_TERM_SCALE, 0.0, 0.0, 0.0));
+        return;
+    }
+    vec3 pos = view_pos(uv, z * 0.99999);
+    vec3 view_vec = normalize(-pos);
+    // a normal facing away from the camera (depth noise along silhouettes) is turned around
+    vec3 n = depth_normal(uv, z);
+    if (dot(n, view_vec) < 0.0) n = -n;
+    float micro = 1.0;
+    if (pc.opt2.z > 0.5) {
+        vec3 smooth_n = shading_normal(uv);
+        micro = micro_visibility(smooth_n, pixel_normal(px));
+        n = search_normal(n, smooth_n);
+    }
+
+    float effect_radius = pc.proj.w * RADIUS_MULTIPLIER;
+    float falloff_range = pc.opt.z * effect_radius;
+    float falloff_from = effect_radius * (1.0 - pc.opt.z);
+    float falloff_mul = -1.0 / falloff_range, falloff_add = falloff_from / falloff_range + 1.0;
+
+    // the size of one AO pixel in view space at this depth
+    float pixel_size = z * 2.0 / pc.proj.x * pc.size.z;
+    // in AO pixels, at most 6 % of the screen's width: a wall right beside the camera would otherwise spread the samples
+    // over hundreds of pixels and past the screen's edge, and the pixels within that reach of the edge, which lose samples
+    // there, form a band fixed on the screen
+    float screen_radius = min(effect_radius / pixel_size, 0.06 * pc.size.x);
+    float visibility = clamp((10.0 - screen_radius) / 100.0, 0.0, 1.0) * 0.5;   // fade out for small screen radii
+    const float too_close = 1.3;
+    float min_s = too_close / screen_radius;
+
+    float slices = pc.opt.x, steps = pc.opt.y;
+    vec2 noise = vec2(ign(vec2(px)), ign(vec2(px) + vec2(47.0, 17.0)));
+    for (float slice = 0.0; slice < slices; slice++) {
+        float phi = (slice + noise.x) / slices * PI;
+        float cos_phi = cos(phi), sin_phi = sin(phi);
+        vec2 omega = vec2(cos_phi, -sin_phi) * screen_radius;   // in AO pixels; screen y runs down
+        vec3 dir = vec3(cos_phi, sin_phi, 0.0);
+        vec3 ortho_dir = dir - dot(dir, view_vec) * view_vec;
+        vec3 axis = normalize(cross(ortho_dir, view_vec));
+        vec3 proj_n = n - axis * dot(n, axis);
+        float sign_n = sign(dot(ortho_dir, proj_n));
+        float proj_n_len = length(proj_n);
+        float cos_n = clamp(dot(proj_n, view_vec) / proj_n_len, 0.0, 1.0);
+        float nn = sign_n * fast_acos(cos_n);
+        float low0 = cos(nn + PI_HALF), low1 = cos(nn - PI_HALF);
+        float h0c = low0, h1c = low1;
+        for (float step = 0.0; step < steps; step++) {
+            float step_noise = fract(noise.y + (slice + step * steps) * 0.6180339887498948);
+            float s = pow((step + step_noise) / steps, SAMPLE_DISTRIBUTION_POWER) + min_s;
+            vec2 off = round(s * omega) * 2.0 * pc.dsize.zw;   // whole AO pixels: full-resolution pixel centres
+            vec2 uv0 = uv + off, uv1 = uv - off;
+            vec3 d0 = view_pos(uv0, depth_at(uv0)) - pos, d1 = view_pos(uv1, depth_at(uv1)) - pos;
+            float l0 = length(d0), l1 = length(d1);
+            // XeGTAO's thickness heuristic: the depth part of the distance counts 1 + compensation times, so a sample
+            // well in front of or behind the pixel (a thin blade, a leaf) falls off sooner than one beside it
+            float thin = 1.0 + pc.opt2.x;
+            float w0 = clamp(length(vec3(d0.xy, d0.z * thin)) * falloff_mul + falloff_add, 0.0, 1.0);
+            float w1 = clamp(length(vec3(d1.xy, d1.z * thin)) * falloff_mul + falloff_add, 0.0, 1.0);
+            // characters shade the ground around them only a little (TotK's AO hardly at all), and off-screen samples not
+            w0 *= on_screen(uv0) * (1.0 - 0.75 * character(uv0)), w1 *= on_screen(uv1) * (1.0 - 0.75 * character(uv1));
+            // vegetation occludes less: blades and leaves in front of the ground do not shade it like a wall
+            if (pc.opt2.y > 0.0) w0 *= 1.0 - pc.opt2.y * vegetation(uv0), w1 *= 1.0 - pc.opt2.y * vegetation(uv1);
+            float shc0 = mix(low0, dot(d0 / l0, view_vec), w0);
+            float shc1 = mix(low1, dot(d1 / l1, view_vec), w1);
+            h0c = max(h0c, shc0);
+            h1c = max(h1c, shc1);
+        }
+        proj_n_len = mix(proj_n_len, 1.0, 0.05);   // XeGTAO's fudge against over-darkening on steep slopes
+        float h0 = -fast_acos(h1c), h1 = fast_acos(h0c);
+        float iarc0 = (cos_n + 2.0 * h0 * sin(nn) - cos(2.0 * h0 - nn)) / 4.0;
+        float iarc1 = (cos_n + 2.0 * h1 * sin(nn) - cos(2.0 * h1 - nn)) / 4.0;
+        visibility += proj_n_len * (iarc0 + iarc1);
+    }
+    visibility /= slices;
+    visibility = max(0.03, pow(visibility, pc.opt.w)) * micro;
+    // and is occluded less itself
+    if (pc.opt2.y > 0.0) visibility = mix(visibility, 1.0, pc.opt2.y * vegetation(uv));
+    imageStore(ao_out, px, vec4(clamp(visibility / OCCLUSION_TERM_SCALE, 0.0, 1.0), 0.0, 0.0, 0.0));
+}

@@ -159,6 +159,9 @@ void vk_dump_pass_end(VkExec *ex);       // after vkCmdEndRendering
 void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeInfo *info);   // after a draw's binds
 void vk_dump_dispatch(VkExec *ex, const GfxShader *cs, VkPipeline p, const VkPipeInfo *info, const p_dispatch *d);
 void vk_dump_copy(VkExec *ex, uint32_t op, const void *payload);   // before a copy or texture clear is replayed
+// An image of the port's own passes (vk_gtao.c), in VK_IMAGE_LAYOUT_GENERAL and outside a render pass: copied at this
+// point of the dump frame to pass_<seq>_<label>_<w>x<h>_<vkformat>_<format>.png and listed in passes.txt
+void vk_dump_image(VkExec *ex, VkImage image, VkFormat vf, uint32_t w, uint32_t h, const char *label);
 void vk_dump_present(uint64_t frame);    // vk_be_present: waits for the dump frame's copies and closes the logs
 
 // c0, the NVN driver constant bank of one stage (vk_exec_draw.c; TOTK_FIX_C0=0 binds zeros instead): bank is
@@ -185,6 +188,16 @@ uint64_t vk_exec_fs_hash(VkExec *ex, uint32_t *len);
 int vk_aa_draw(VkExec *ex);
 void vk_aa_flush(VkExec *ex);
 void vk_aa_present(uint64_t frame);
+// vk_gtao.c: the same hooks for GTAO in place of the game's SSAO: a draw about to be recorded in the open pass; a pass
+// about to begin (its targets resolved, no pass open); a dispatch or copy about to be recorded; the present of a frame.
+void vk_gtao_draw(VkExec *ex);
+void vk_gtao_pass_begin(VkExec *ex);
+void vk_gtao_flush(VkExec *ex);
+void vk_gtao_present(uint64_t frame);
+// vk_gtao.c: while set, the game's AO mask vk_gtao_swap_img is sampled through vk_gtao_swap_view, GTAO's
+// half-resolution mask (vk_exec_draw.c tex_info).
+extern const VkTexImage *vk_gtao_swap_img;
+extern VkImageView vk_gtao_swap_view;
 // vk_contact.c: a pass about to begin (its targets resolved, no pass open), and a dispatch or copy about to be recorded
 void vk_contact_pass_begin(VkExec *ex);
 void vk_contact_flush(VkExec *ex);

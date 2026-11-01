@@ -1396,9 +1396,11 @@ static Twin *twin_update(VkExec *ex, const VkTexImage *img) {
 }
 
 // The image descriptor of slot h; in a dispatch, a compare-sampled colour image the driver cannot compare is swapped
-// for its depth twin.
+// for its depth twin; the game's AO mask, while GTAO replaces it, for GTAO's (vk_gtao.c).
 static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage, int separate, VkDescriptorImageInfo *out) {
     tex_info_lookup(ex, r, h, storage, separate, out);
+    if (vk_gtao_swap_img && h && !storage && vk_texture_by_id_locked((int)(h & 0xfffff), NULL, NULL) == vk_gtao_swap_img)
+        out->imageView = vk_gtao_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     if (!twin_dispatch || storage || separate || !h || !(r->type & 0x400)) return;
     VkImageViewType vt = res_view_type(r->type);
     if (vt != VK_IMAGE_VIEW_TYPE_2D && vt != VK_IMAGE_VIEW_TYPE_2D_ARRAY) return;
@@ -2058,6 +2060,7 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     if (!sc.extent.width || !sc.extent.height) return 0;
     if (!ex->prog) return warn_once(W_PROGRAM, "a draw without a bound program is skipped"), 0;
     if (vk_aa_draw(ex)) return 0;   // the game's FXAA when another anti-aliasing replaces it
+    vk_gtao_draw(ex);
     int has_vs, has_fs, vs_wait = 0, fs_wait = 0, memo = shader_memo_on();
     const GfxShader *vs, *fs;
     uint32_t gen = memo ? vk_texture_slots_gen() : 0;   // before shader_for, whose lookups may bump it
@@ -2293,6 +2296,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     if (!ex->prog) return warn_once(W_PROGRAM, "a dispatch without a bound program is skipped");
     vk_contact_flush(ex);
     vk_aa_flush(ex);
+    vk_gtao_flush(ex);
     cb_res(ex);
     dummies_init();
     int present;

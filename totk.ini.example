@@ -167,6 +167,15 @@
 # where an object meets the ground and softer the further its shadow falls. Done in the translated shaders (translator
 # patch 0010), so the shader cache is rebuilt once after an update. Read at start.
 # pcss = 0
+# Ambient occlusion (1.4.3): game (its SSAO, a quarter of the screen per axis, mostly thin outlines along edges) or
+# gtao: ground-truth AO (Intel's XeGTAO) at half the screen resolution from the full-resolution depth, which the
+# lighting uses in place of the game's AO; characters keep the game's value. ao_strength in percent (0 to 300) darkens or lightens it,
+# ao_radius is how far it looks for occluders, in metres (0.25 to 5). ao_foliage: minimal (grass, leaves and other thin
+# things add little occlusion, close to the game, which gives foliage none) or full. Changes apply at once.
+# ao = game
+# ao_strength = 100
+# ao_radius = 1.5
+# ao_foliage = minimal
 
 [language]
 # Language: a Windows locale such as de-DE, or a Switch code (en-US, ja, zh-Hant, ...). Default: the Windows locale.

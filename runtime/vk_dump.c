@@ -7,6 +7,8 @@
 //   pass_<seq>_t<i>_<w>x<h>_<vkformat>_<name>.png   colour target i (td: depth; img<slot>: storage image; lut<id>: 3D;
 //                                                    a BC target drawn through a block view: its blocks as that view)
 //   ..._tm.png                                       float formats: x/(1+x) of the same image (the plain one clamps)
+//   pass_<seq>_<label>_<w>x<h>_<vkformat>_<name>.png  an image of the port's own passes (vk_dump_image; vk_gtao.c:
+//                                                    ao_game_mask and ao_gtao_mask, AO in blue)
 //   passes.txt   per pass or dispatch: targets, draws, each distinct pipeline + texture set with its shaders' SPIR-V
 //                hashes (sh_<hash>.spv written once) and the bound textures with their samplers
 //   images.txt   per image: channel min/max, distinct texel values over the image and over its top quarter
@@ -822,6 +824,20 @@ void vk_dump_dispatch(VkExec *ex, const GfxShader *cs, VkPipeline p, const VkPip
     buf_snap(ex, n);
     fflush(passes_f);
 out:
+    plat_mutex_unlock(&rec_lock);
+}
+
+void vk_dump_image(VkExec *ex, VkImage image, VkFormat vf, uint32_t w, uint32_t h, const char *label) {
+    plat_mutex_lock(&rec_lock);
+    if (active() && !ex->in_pass) {
+        int n = seq++;
+        char fn[16], name[160];
+        snprintf(name, sizeof name, "pass_%04d_%s_%ux%u_%d_%s", n, label, w, h, (int)vf, fmt_name(vf, fn));
+        const char *why = copy_out(ex, image, vf, VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, w, h, 1, name);
+        fprintf(passes_f, "pass %04d: port image %s -> %s.png%s%s\n", n, label, name, why ? " skipped: " : "",
+                why ? why : "");
+        fflush(passes_f);
+    }
     plat_mutex_unlock(&rec_lock);
 }
 
