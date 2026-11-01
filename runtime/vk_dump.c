@@ -21,10 +21,13 @@
 // by the image maximum, depth by its min..max range, SNORM as x/2+1/2, UNORM and sRGB bytes written as stored. Caps:
 // MAX_PASSES passes copied, PNG_CAP bytes of PNGs.
 // TOTK_DUMP_TEX=<id>|<w>x<h>[,...]: those texture slots, or 2D textures of that size, are copied where first sampled,
-// whatever their format.
+// whatever their format, every mip level (..._L<level> after level 0) of layer TOTK_DUMP_TEX_LAYER (default 0; when
+// set, only textures that have that layer).
 // TOTK_DUMP_UBO=1 (or a row count): each listed pipeline also prints the first 16 (or that many) vec4 of its user
 // uniform blocks (c3 and up), read from guest memory when the entry is listed. A block the submission rewrites with
 // UpdateUniformBuffer shows its value from before the submission (vk_exec_draw.c upd_note).
+// TOTK_DUMP_FROM=<pass>: the passes and dispatches before that one are listed but not copied (the caps would end the
+// copies before the late passes of a frame).
 // TOTK_DUMP_SKIP_RUNS=1: a render pass with the same targets as the render pass before it is logged but not copied
 // (the terrain decals draw one pass each into the G-buffer and would use up both caps).
 #include <math.h>
@@ -59,6 +62,8 @@ static int seq, finished, copied;      // copied: passes and dispatches of the d
 static int skip_runs, dump_ubo;        // TOTK_DUMP_SKIP_RUNS, TOTK_DUMP_UBO
 static uint32_t want_tex[16][2];       // TOTK_DUMP_TEX: slot id and 0, or width and height
 static int nwant_tex;
+static uint32_t want_layer;            // TOTK_DUMP_TEX_LAYER
+static int dump_from;                  // TOTK_DUMP_FROM: passes before this one are listed, not copied
 static uint64_t last_targets;          // targets_sig of the last render pass; 0 after a dispatch
 static const char *pass_skip;          // why the current pass copies nothing, or NULL
 static volatile int64_t png_bytes, inflight;
@@ -509,19 +514,21 @@ static uint64_t shader_hash(const GfxShader *s) {
 typedef struct { VkPipeline p; uint64_t th; int draws; char *text; } Ent;
 static Ent ents[MAX_ENTS];
 static int nents, ents_over, pass_draws;
-typedef struct { VkImage image; VkFormat format; uint32_t w, h, d; int id, is2d; } Lut;
+typedef struct { VkImage image; VkFormat format; uint32_t w, h, d, levels, layer; int id, is2d; } Lut;
 static Lut luts[MAX_LUTS];          // queued for the next pass end or dispatch
 static int nluts;
 static VkImage luts_done[MAX_LUTS];
 static int nluts_done;
 
-static void queue_lut(const VkTexImage *t, int id) {
+// levels > 1: also the smaller mip levels of that layer (TOTK_DUMP_TEX)
+static void queue_lut(const VkTexImage *t, int id, uint32_t levels, uint32_t layer) {
     if (frame_now() != dump_frame) return;
     for (int i = 0; i < nluts_done; i++)
         if (luts_done[i] == t->image) return;
     if (nluts_done == MAX_LUTS) return;
     luts_done[nluts_done++] = t->image;
-    luts[nluts++] = (Lut){t->image, t->format, t->width, t->height, t->type == VK_IMAGE_TYPE_3D ? t->depth : 1, id,
+    luts[nluts++] = (Lut){t->image, t->format, t->width, t->height, t->type == VK_IMAGE_TYPE_3D ? t->depth : 1,
+                          levels < t->levels ? levels : t->levels, layer < t->layers ? layer : 0, id,
                           t->type != VK_IMAGE_TYPE_3D};
 }
 
@@ -543,11 +550,20 @@ static void flush_luts(VkExec *ex, int n) {
         VkFormat bf = block_format(l->format);
         snprintf(name, sizeof name, "pass_%04d_%s%d_%ux%ux%u_%d_%s%s", n, l->is2d ? "tex" : "lut", l->id, l->w, l->h, l->d,
                  (int)l->format, fmt_name(l->format, fn), bf ? "_blocks" : "");
-        const char *why = bf ? copy_region(ex, l->image, bf, VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 0,
+        const char *why = bf ? copy_region(ex, l->image, bf, VK_IMAGE_ASPECT_COLOR_BIT, 0, l->layer, 0,
                                            (VkExtent3D){l->w, l->h, l->d}, (l->w + 3) / 4, (l->h + 3) / 4, l->d, name)
-                             : copy_out(ex, l->image, l->format, VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, l->w, l->h, l->d, name);
-        fprintf(passes_f, "  %s tex %d -> %s.png%s%s\n", l->is2d ? "2D" : "3D", l->id, name, why ? " skipped: " : "",
-                why ? why : "");
+                             : copy_out(ex, l->image, l->format, VK_IMAGE_ASPECT_COLOR_BIT, 0, l->layer, l->w, l->h, l->d,
+                                        name);
+        fprintf(passes_f, "  %s tex %d layer %u -> %s.png%s%s\n", l->is2d ? "2D" : "3D", l->id, l->layer, name,
+                why ? " skipped: " : "", why ? why : "");
+        for (uint32_t lv = 1; lv < l->levels && !bf; lv++) {   // the smaller mip levels of a wanted texture
+            uint32_t w = l->w >> lv ? l->w >> lv : 1, h = l->h >> lv ? l->h >> lv : 1;
+            char lname[176];
+            snprintf(lname, sizeof lname, "%s_L%u", name, lv);
+            why = copy_out(ex, l->image, l->format, VK_IMAGE_ASPECT_COLOR_BIT, lv, l->layer, w, h, 1, lname);
+            fprintf(passes_f, "  2D tex %d layer %u level %u -> %s.png%s%s\n", l->id, l->layer, lv, lname,
+                    why ? " skipped: " : "", why ? why : "");
+        }
     }
     nluts = 0;
 }
@@ -659,13 +675,15 @@ static void describe_bindings(Str *b, const VkExec *ex, const VkPipeInfo *info) 
             for (int k = 0; k < nwant_tex; k++)
                 wanted |= want_tex[k][1] ? want_tex[k][0] == t->width && want_tex[k][1] == t->height
                                          : want_tex[k][0] == (uint32_t)NVN_HANDLE_TEX(h);
-            if (t->type == VK_IMAGE_TYPE_3D) queue_lut(t, NVN_HANDLE_TEX(h));
-            else if (wanted && t->type == VK_IMAGE_TYPE_2D && t->samples == 1) queue_lut(t, NVN_HANDLE_TEX(h));
+            if (want_layer && t->layers <= want_layer) wanted = 0;   // a layer was asked for: arrays that have it
+            if (t->type == VK_IMAGE_TYPE_3D) queue_lut(t, NVN_HANDLE_TEX(h), 1, 0);
+            else if (wanted && t->type == VK_IMAGE_TYPE_2D && t->samples == 1)
+                queue_lut(t, NVN_HANDLE_TEX(h), t->levels, want_layer);
             else if (!img && t->type == VK_IMAGE_TYPE_2D && t->samples == 1 && (uint64_t)t->width * t->height <= TEX2D_CAP &&
                      (t->format == VK_FORMAT_R8_UNORM || t->format == VK_FORMAT_R8G8_UNORM ||
                       t->format == VK_FORMAT_R8G8B8A8_UNORM || t->format == VK_FORMAT_R8G8B8A8_SRGB ||
                       t->format == VK_FORMAT_B8G8R8A8_UNORM || t->format == VK_FORMAT_B8G8R8A8_SRGB))
-                queue_lut(t, NVN_HANDLE_TEX(h));
+                queue_lut(t, NVN_HANDLE_TEX(h), 1, 0);
         }
     }
 }
@@ -745,9 +763,10 @@ static uint64_t targets_sig(const VkExec *ex) {
 }
 
 // Sets pass_skip for the pass or dispatch being logged and counts it when it copies.
-static void pass_decide(int same_targets) {
+static void pass_decide(int n, int same_targets) {
     if (frame_now() != dump_frame) copied = 0;
-    pass_skip = copied >= MAX_PASSES ? "pass cap" : same_targets ? "same targets as the previous pass" : NULL;
+    pass_skip = n < dump_from ? "before TOTK_DUMP_FROM" : copied >= MAX_PASSES ? "pass cap" :
+                same_targets ? "same targets as the previous pass" : NULL;
     if (!pass_skip) copied++;
 }
 
@@ -756,7 +775,7 @@ void vk_dump_pass_end(VkExec *ex) {
     if (!active()) goto out;
     int n = seq++;
     uint64_t sig = targets_sig(ex);
-    pass_decide(skip_runs && sig == last_targets);
+    pass_decide(n, skip_runs && sig == last_targets);
     last_targets = sig;
     fprintf(passes_f, "pass %04d: render pass, draws %d, area %ux%u layers %u, fence %llu, frame %llu\n", n, pass_draws,
             ex->pass_w, ex->pass_h, ex->pass_layers, (unsigned long long)ex->fence, (unsigned long long)frame_now());
@@ -786,7 +805,7 @@ void vk_dump_dispatch(VkExec *ex, const GfxShader *cs, VkPipeline p, const VkPip
     plat_mutex_lock(&rec_lock);
     if (!active()) goto out;
     int n = seq++;
-    pass_decide(0);
+    pass_decide(n, 0);
     last_targets = 0;
     Str b = {0};
     describe_bindings(&b, ex, info);
@@ -912,6 +931,8 @@ void vk_dump_init(void) {
     if (!e || !*e || (!dump_key && !(dump_frame = strtoull(e, NULL, 10)))) return;
     const char *lf = cfg_get("TOTK_DUMP_LOG");
     if (lf && *lf) log_from = strtoull(lf, NULL, 10);
+    const char *df = cfg_get("TOTK_DUMP_FROM");
+    dump_from = df && *df ? atoi(df) : 0;
     const char *sr = cfg_get("TOTK_DUMP_SKIP_RUNS");
     skip_runs = sr && *sr && *sr != '0';
     const char *du = cfg_get("TOTK_DUMP_UBO");
@@ -923,6 +944,8 @@ void vk_dump_init(void) {
         w[0] = (uint32_t)strtoul(q, &q, 10);
         w[1] = *q == 'x' ? (uint32_t)strtoul(q + 1, &q, 10) : 0;
     }
+    const char *wl = cfg_get("TOTK_DUMP_TEX_LAYER");
+    want_layer = wl && *wl ? (uint32_t)strtoul(wl, NULL, 10) : 0;
     const char *d = cfg_get("TOTK_DUMP_DIR");
     snprintf(dir, sizeof dir, "%s", d && *d ? d : "dump");
     if (!dump_key) open_files();   // key mode: when F9 is pressed, so a run without F9 leaves the last dump alone
