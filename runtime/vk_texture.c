@@ -362,9 +362,10 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     if ((d->flags & NVN_TEXTURE_FLAGS_IMAGE) && (ff & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) && samples == 1)
         usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     // contact shadows (vk_contact.c) darken the game's B10G11R11 scene colour in place from a compute shader, and SMAA
-    // (vk_aa.c) writes its blended pixels back into it
+    // (vk_aa.c) writes its blended pixels back into it. Always, so that the anti-aliasing setting can change in play: an
+    // image cannot gain a usage after it was created.
     if (f.vk == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) && samples == 1 &&
-        (ff & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) && w >= 640 && (vk_contact_strength() || vk_aa_smaa_on()))
+        (ff & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) && w >= 640)
         usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     VkImageCreateFlags flags = ds ? 0 : VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;   // format-reinterpreting views
     // Cube compatible only for cube targets: the replay makes cube views of nothing else (vk_exec_draw.c get_view checks

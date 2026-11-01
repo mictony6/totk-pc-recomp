@@ -136,7 +136,7 @@
 # itself. Costs video memory: four layers of 16-bit depth, 18 MiB at 1536. Read at start.
 # shadow_res = game
 # Anti-aliasing: game (the game's own FXAA, unless a RomFS mod turns it off), off, or smaa: SMAA 1x on the tonemapped
-# scene in place of the game's FXAA, before the HUD is drawn, so text stays sharp. 1.4.3. Read at start.
+# scene in place of the game's FXAA, before the HUD is drawn, so text stays sharp. 1.4.3. Changes apply at once.
 # aa = game
 # Scaling to the window when it is larger than the game resolution: fsr (AMD FSR 1) or bilinear, and FSR's sharpening
 # from 0 (off) to 100. Changes while the game runs take effect at once.

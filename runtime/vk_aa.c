@@ -7,8 +7,9 @@
 // SMAA 1x (runtime/shaders/smaa_*.comp, smaa/SMAA.hlsl, MIT, Jorge Jimenez et al.) on the scene colour when the next
 // pass begins or a dispatch or copy comes first: before the HUD, so its text stays sharp. SMAA reads an sRGB-encoded
 // RGBA8 copy (smaa_prep: luma edges in gamma space, blending in linear light through an sRGB view), keeps edges and
-// weights in images of its own, and writes the blended pixels back; the scene images get STORAGE usage when the
-// setting is smaa (vk_texture.c create_tex).
+// weights in images of its own, and writes the blended pixels back; the scene images always get STORAGE usage
+// (vk_texture.c create_tex), so the setting applies in play: it is read again whenever the settings change
+// (cfg_version). SMAA's pipelines and images are made the first time it is on and kept until release.
 //
 // TOTK_AA_LOG=<frame>: every draw of that frame into a full-size B10G11R11 target is logged with its fragment shader's
 // guest hash, in replay order, to find those shaders in another game version.
@@ -43,6 +44,8 @@ typedef struct {
 
 static struct {
     int tried, mode, ok, logged_fxaa;
+    int smaa_tried;                // init_smaa ran (ok: it succeeded)
+    unsigned cfg_ver;              // cfg_version when mode was read
     uint64_t log_frame;            // TOTK_AA_LOG
     uint64_t frame;                // presents so far (vk_aa_present)
     uint32_t logged;
@@ -65,11 +68,6 @@ static struct {
 static int mode(void) {
     const char *m = cfg_value("TOTK_AA");
     return !strcmp(m, "smaa") ? AA_SMAA : !strcmp(m, "off") ? AA_OFF : AA_GAME;
-}
-
-int vk_aa_smaa_on(void) {
-    if (!A.tried) A.mode = mode();
-    return A.mode == AA_SMAA;
 }
 
 static int make_image(VkCtx *c, Img *m, VkFormat f, uint32_t w, uint32_t h, VkImageUsageFlags usage, int srgb) {
@@ -100,15 +98,8 @@ static void free_image(VkCtx *c, Img *m) {
     memset(m, 0, sizeof *m);
 }
 
-static int init(VkCtx *c) {
-    A.tried = 1;
-    A.mode = mode();
-    const char *e = cfg_get("TOTK_AA_LOG");
-    A.log_frame = e && *e ? strtoull(e, NULL, 0) : 0;
-    if (A.mode != AA_SMAA) {
-        if (A.mode == AA_OFF) rt_log("vk: anti-aliasing off (the game's FXAA is skipped)");
-        return 0;
-    }
+static int init_smaa(VkCtx *c) {
+    A.smaa_tried = 1;
     A.push = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(c->device, "vkCmdPushDescriptorSetKHR");
     VkDescriptorSetLayoutBinding b[4];
     for (uint32_t i = 0; i < 4; i++)
@@ -164,11 +155,31 @@ static int init(VkCtx *c) {
     memcpy(info.pMappedData, areaTexBytes, AREATEX_SIZE);
     memcpy((uint8_t *)info.pMappedData + AREATEX_SIZE, searchTexBytes, SEARCHTEX_SIZE);
     vmaFlushAllocation(c->vma, A.staging_alloc, 0, VK_WHOLE_SIZE);
-    rt_log("vk: anti-aliasing SMAA 1x (high preset) in place of the game's FXAA, before the HUD");
     return A.ok = 1;
 fail:
     rt_log("vk: SMAA off: its pipelines or lookup textures could not be created");
     return 0;
+}
+
+// Reads TOTK_AA at the first draw and after each settings change. A change in the middle of a frame is fine: a
+// tonemap already caught still gets its SMAA run, and the FXAA draws are skipped or not from the next one on.
+static void update_mode(void) {
+    unsigned v = cfg_version();
+    if (A.tried && v == A.cfg_ver) return;
+    if (!A.tried) {
+        const char *e = cfg_get("TOTK_AA_LOG");
+        A.log_frame = e && *e ? strtoull(e, NULL, 0) : 0;
+    }
+    int m = mode(), first = !A.tried;
+    A.tried = 1, A.cfg_ver = v;
+    if (m == AA_SMAA && !A.smaa_tried) init_smaa(vk_ctx());
+    if (m == A.mode && !first) return;
+    A.mode = m, A.logged_fxaa = 0;
+    if (m == AA_SMAA)
+        rt_log(A.ok ? "vk: anti-aliasing SMAA 1x (high preset) in place of the game's FXAA, before the HUD"
+                    : "vk: anti-aliasing SMAA unavailable; the game's FXAA is skipped");
+    else
+        rt_log(m == AA_OFF ? "vk: anti-aliasing off (the game's FXAA is skipped)" : "vk: anti-aliasing: the game's own (FXAA unless a mod turns it off)");
 }
 
 static int ensure_images(VkCtx *c, uint32_t w, uint32_t h) {
@@ -297,7 +308,7 @@ static void log_draw(VkExec *ex) {
 
 // A draw about to be recorded, its pass open. Returns 1 when the draw is to be skipped.
 int vk_aa_draw(VkExec *ex) {
-    if (!A.tried) init(vk_ctx());
+    update_mode();
     if (A.log_frame) log_draw(ex);
     if (A.mode == AA_GAME) return 0;
     uint32_t len;

@@ -100,7 +100,7 @@ static const CfgMeta metas[] = {
     {"VK_PRESENT", "mailbox", "mailbox|fifo|immediate", LIVE}, {"GPU_INDEX", "", NULL, RESTART},
     {"PERF_OVERLAY", "off", "off|fps|full", LIVE},
     {"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|67|75|100|125|150|200", RESTART},
-    {"AA", "game", "game|off|smaa", RESTART}, {"SHADOW_RES", "game", "game|960|1536|2048", RESTART},
+    {"AA", "game", "game|off|smaa", LIVE}, {"SHADOW_RES", "game", "game|960|1536|2048", RESTART},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
     {"ANISO", "16", "game|2|4|8|16", RESTART}, {"SHADOW_SCALE", "1", "1..4", RESTART},
     {"SHADOW_RANGE", "100", "50..400", RESTART}, {"CONTACT_SHADOWS", "0", "0..100", RESTART},
