@@ -485,6 +485,14 @@ static void row_ao(void) {
     static const char *const fol[] = {"minimal", "full"};
     const char *fol_names[] = {menu_text(UI_MENU_AO_FOLIAGE_MINIMAL), menu_text(UI_MENU_AO_FOLIAGE_FULL)};
     opt_choice_list("TOTK_AO_FOLIAGE", UI_MENU_AO_FOLIAGE, fol, fol_names, 2, UI_MENU_AO_FOLIAGE_DESC);
+    opt_slider("TOTK_AO_CHAR", UI_MENU_AO_CHAR, 0, 100, UI_MENU_AO_CHAR_DESC, 5, "%.0f %%");
+    opt_slider("TOTK_AO_CREASE", UI_MENU_AO_CREASE, 0, 100, UI_MENU_AO_CREASE_DESC, 5, "%.0f %%");
+}
+
+static void row_light_normals(void) {
+    static const char *const vals[] = {"game", "average"};
+    const char *names[] = {menu_text(UI_MENU_LIGHT_NORMALS_GAME), menu_text(UI_MENU_LIGHT_NORMALS_AVERAGE)};
+    opt_choice_list("TOTK_LIGHT_NORMALS", UI_MENU_LIGHT_NORMALS, vals, names, 2, UI_MENU_LIGHT_NORMALS_DESC);
 }
 
 static void row_shadow_res(void) {
@@ -594,6 +602,7 @@ static void tab_screen(float scale) {
     opt_slider("TOTK_PCSS", UI_MENU_PCSS, 0, 200, UI_MENU_PCSS_DESC, 10, "%.0f %%");
     opt_slider("TOTK_CONTACT_SHADOWS", UI_MENU_CONTACT_SHADOWS, 0, 100, UI_MENU_CONTACT_SHADOWS_DESC, 10, "%.0f %%");
     row_ao();
+    row_light_normals();
     static const UiTextId aspect[] = {UI_MENU_ASPECT_FIT, UI_MENU_ASPECT_STRETCH};
     opt_choice("TOTK_ASPECT", UI_MENU_ASPECT, aspect, 2, UI_MENU_ASPECT_DESC);
     opt_end();

@@ -198,6 +198,18 @@ void vk_gtao_present(uint64_t frame);
 // half-resolution mask (vk_exec_draw.c tex_info).
 extern const VkTexImage *vk_gtao_swap_img;
 extern VkImageView vk_gtao_swap_view;
+extern uint32_t vk_gtao_swap_hits;   // TOTK_AO_TRACE: sampled descriptors given GTAO's mask this frame
+// vk_lightnorm.c: averaged normals for the half-resolution point lights, with the same hooks as GTAO; while
+// vk_lightnorm_watch is set, tex_info reports each image the draw samples (vk_lightnorm_sampled), which finds the game's
+// half-size copy of the normals; while vk_lightnorm_swap_img is set, that copy is sampled through vk_lightnorm_swap_view.
+void vk_lightnorm_draw(VkExec *ex);
+void vk_lightnorm_pass_begin(VkExec *ex);
+void vk_lightnorm_flush(VkExec *ex);
+void vk_lightnorm_present(uint64_t frame);
+void vk_lightnorm_sampled(VkExec *ex, const VkTexImage *img);
+extern int vk_lightnorm_watch;
+extern const VkTexImage *vk_lightnorm_swap_img;
+extern VkImageView vk_lightnorm_swap_view;
 // vk_contact.c: a pass about to begin (its targets resolved, no pass open), and a dispatch or copy about to be recorded
 void vk_contact_pass_begin(VkExec *ex);
 void vk_contact_flush(VkExec *ex);

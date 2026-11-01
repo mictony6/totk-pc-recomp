@@ -174,8 +174,18 @@
 # things add little occlusion, close to the game, which gives foliage none) or full. Changes apply at once.
 # ao = game
 # ao_strength = 100
-# ao_radius = 1.5
+# ao_radius = 1
 # ao_foliage = minimal
+# ao_char: how much characters (Link, enemies) darken what is right around them with GTAO, in percent (0 to 100).
+# ao_char = 25
+# ao_crease: darkens GTAO's corners and creases more than open surfaces, towards the game's own heavier look, in percent
+# (0 to 100; 0 is GTAO's physical amount).
+# ao_crease = 0
+
+# Point light shimmer (1.4.3): game or average. The game lights its point lights (lightroots, Brightbloom seeds,
+# lamps) at half resolution from a copy of the surface normals that keeps one pixel in four, so lit ground and walls
+# shimmer when the camera moves; average gives those lights the average of the four instead. Changes apply at once.
+# light_normals = game
 
 [language]
 # Language: a Windows locale such as de-DE, or a Switch code (en-US, ja, zh-Hant, ...). Default: the Windows locale.

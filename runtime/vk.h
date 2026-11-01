@@ -106,6 +106,7 @@ void vk_fsr_release(void);   // before the device goes away
 int vk_contact_strength(void);   // percent, 0 = off
 void vk_aa_release(void);        // before the device goes away
 void vk_gtao_release(void);      // before the device goes away
+void vk_lightnorm_release(void);  // before the device goes away
 void vk_contact_release(void);   // before the device goes away
 void vk_present_flip(void);
 // Every submission to ctx->gfx_queue (and xfer_queue when shared) takes this lock; vk_present_image and the swapchain

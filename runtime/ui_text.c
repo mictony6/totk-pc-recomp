@@ -103,6 +103,17 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_AO_FOLIAGE_DESC] = "How much grass, leaves and other thin things darken what is behind them. Minimal is "
                                 "close to the game, which gives foliage no AO; Full darkens fields and trees.",
     [UI_MENU_AO_FOLIAGE_MINIMAL] = "Minimal", [UI_MENU_AO_FOLIAGE_FULL] = "Full",
+    [UI_MENU_AO_CHAR] = "GTAO from characters",
+    [UI_MENU_AO_CHAR_DESC] = "How much Link and other characters darken the walls and ground right around them. The "
+                             "game's own AO gives them a wide, soft shadow.",
+    [UI_MENU_AO_CREASE] = "GTAO crease emphasis",
+    [UI_MENU_AO_CREASE_DESC] = "Darkens corners and creases more than open surfaces, towards the game's own heavier "
+                               "look. 0 is GTAO's physical amount.",
+    [UI_MENU_LIGHT_NORMALS] = "Point light shimmer",
+    [UI_MENU_LIGHT_NORMALS_DESC] = "The game lights its point lights (lightroots, Brightbloom seeds, lamps) at half "
+                                   "resolution from one surface detail in four, so lit ground shimmers when the camera "
+                                   "moves. Smooth averages the four; Game keeps the game's look.",
+    [UI_MENU_LIGHT_NORMALS_GAME] = "Game", [UI_MENU_LIGHT_NORMALS_AVERAGE] = "Smooth",
     [UI_MENU_CONTACT_SHADOWS] = "Contact shadows",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Small sun shadows the shadow maps miss: at feet, under stones, in grass and creases. "
                                      "Traced on the screen after lighting. Takes effect at the next start.",
@@ -389,6 +400,18 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_AO_FOLIAGE_DESC] = "Насколько трава, листья и другие тонкие предметы затеняют то, что за ними. Минимально "
                                 "— близко к игре, где у листвы нет затенения; полностью — поля и деревья темнее.",
     [UI_MENU_AO_FOLIAGE_MINIMAL] = "Минимально", [UI_MENU_AO_FOLIAGE_FULL] = "Полностью",
+    [UI_MENU_AO_CHAR] = "GTAO от персонажей",
+    [UI_MENU_AO_CHAR_DESC] = "Насколько Линк и другие персонажи затеняют стены и землю рядом с собой. Собственное "
+                             "затенение игры даёт им широкую мягкую тень.",
+    [UI_MENU_AO_CREASE] = "Усиление углов GTAO",
+    [UI_MENU_AO_CREASE_DESC] = "Затемняет углы и складки сильнее открытых поверхностей, ближе к более тяжёлому виду "
+                               "самой игры. 0 — физическая величина GTAO.",
+    [UI_MENU_LIGHT_NORMALS] = "Мерцание точечного света",
+    [UI_MENU_LIGHT_NORMALS_DESC] = "Игра считает точечные источники (корни света, семена ярцвета, лампы) в половинном "
+                                   "разрешении по одной детали поверхности из четырёх, поэтому освещённая земля "
+                                   "мерцает при движении камеры. Сглаженно: усреднение четырёх; как в игре: без "
+                                   "изменений.",
+    [UI_MENU_LIGHT_NORMALS_GAME] = "Как в игре", [UI_MENU_LIGHT_NORMALS_AVERAGE] = "Сглаженно",
     [UI_MENU_CONTACT_SHADOWS] = "Контактные тени",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Мелкие тени от солнца, которых нет на картах теней: у ног, под камнями, в траве и "
                                      "складках. Считаются по экрану после освещения. Действует после перезапуска.",

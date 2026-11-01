@@ -13,8 +13,11 @@
 // neighbours of walls seen at a grazing angle, beside the camera, and the normal and the denoise then change at a fixed
 // place on the screen); the normal from the depth, built from the nearer neighbour on each axis (depth_normal), turned
 // towards the G-buffer's shading normal averaged over 3x3 points by at most MAX_TILT (search_normal); a small
-// view-independent darkening where the normal map tilts (MICRO_AO); noise from interleaved
-// gradient noise instead of the Hilbert curve, as there is no temporal filter after it; XeGTAO's thin-object heuristic
+// view-independent darkening where the normal map tilts (MICRO_AO); XeGTAO's noise (an R2 sequence along a Hilbert curve
+// over 64x64 pixels, XeGTAO_HilbertIndex and XeGTAO's SpatioTemporalNoise without the temporal part): interleaved
+// gradient noise, correlated along diagonals, made neighbouring pixels sample the same directions and distances, which
+// stamped a thin close occluder such as Link's bow on the wall behind him several times, and white noise stayed grainy
+// after the denoise; XeGTAO's thin-object heuristic
 // on (opt2.x); vegetation, which TotK's own AO leaves almost untouched, receives and casts less occlusion (opt2.y,
 // below); characters keep the game's AO and occlude little (below).
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -34,6 +37,7 @@ layout(push_constant) uniform Params {
     vec4 opt;     // slices, steps per slice, falloff range (fraction of the radius), final value power
     vec4 opt2;    // thin occluder compensation (0: off, XeGTAO's range 0..0.7), vegetation fade (0: none, 1: no AO),
                   // G-buffer normals (1: read), near plane
+    vec4 opt3;    // x: how much characters occlude (0..1)
 } pc;
 
 #define PI 3.1415926535897932
@@ -71,19 +75,35 @@ vec3 gbuffer_normal(vec2 uv) {
 
 // The shading normal averaged over 3x3 points two AO pixels apart. The shading normal is smooth across the flat facets
 // of curved walls, where normals from depth step and bands appear on walls beside the camera.
-vec3 shading_normal(vec2 uv) {
-    vec3 g = vec3(0.0);
+float character(vec2 uv);
+
+// Whether the screen position s shows the same surface as a pixel at view z: no character, and its depth within 5 %.
+// Normals averaged across an outline mix two surfaces: beside Link a wall took a normal tilted towards him, which the
+// horizon search read as the wall rising over itself, a dark smudge hugging his outline.
+bool same_surface(vec2 s, float z) {
+    return character(s) < 0.5 && abs(depth_at(s) - z) <= 0.05 * z;
+}
+
+// The shading normal averaged over those of 3x3 points two AO pixels apart that lie on the centre's surface (z).
+vec3 shading_normal(vec2 uv, float z) {
+    vec3 g = gbuffer_normal(uv);
     for (int j = -1; j <= 1; j++)
-        for (int i = -1; i <= 1; i++) g += gbuffer_normal(uv + vec2(i, j) * 4.0 * pc.dsize.zw);
+        for (int i = -1; i <= 1; i++) {
+            vec2 s = uv + vec2(i, j) * 4.0 * pc.dsize.zw;
+            if ((i != 0 || j != 0) && same_surface(s, z)) g += gbuffer_normal(s);
+        }
     return dot(g, g) > 1e-6 ? normalize(g) : vec3(0.0, 0.0, -1.0);
 }
 
-// The shading normal of the 2x2 screen pixels under an AO pixel
-vec3 pixel_normal(ivec2 px) {
+// The shading normal of those of the 2x2 screen pixels under an AO pixel that lie on the surface at view z
+vec3 pixel_normal(ivec2 px, float z) {
     vec3 g = vec3(0.0);
     for (int j = 0; j < 2; j++)
-        for (int i = 0; i < 2; i++) g += gbuffer_normal((vec2(px * 2 + ivec2(i, j)) + 0.5) * pc.dsize.zw);
-    return dot(g, g) > 1e-6 ? normalize(g) : vec3(0.0, 0.0, -1.0);
+        for (int i = 0; i < 2; i++) {
+            vec2 s = (vec2(px * 2 + ivec2(i, j)) + 0.5) * pc.dsize.zw;
+            if (same_surface(s, z)) g += gbuffer_normal(s);
+        }
+    return dot(g, g) > 1e-6 ? normalize(g) : gbuffer_normal((vec2(px * 2) + 0.5) * pc.dsize.zw);
 }
 
 // The horizon search measures occluders in the depth, so its normal must describe the same surface. The shading normal
@@ -109,10 +129,12 @@ float micro_visibility(vec3 smooth_n, vec3 ng) {
     return 1.0 - clamp((1.0 - dot(smooth_n, ng)) * 0.75, 0.0, MICRO_AO);
 }
 
-// 1 where the G-buffer says character (material class 253 of 255), else 0
+// 1 where the G-buffer says character, else 0: material classes 128 and up. Link's body is 253 and some of his gear
+// another value (160: the arrows at his hip); classes of the world stay below 128 (0, 8, 32, 37, 53, 93 seen). Gear
+// counted as world occluded the wall it was pressed against at full strength: a dark smudge beside his hand.
 float character(vec2 uv) {
     ivec2 p = clamp(ivec2(uv * pc.dsize.xy), ivec2(0), ivec2(pc.dsize.xy) - 1);
-    return abs(texelFetch(material, p, 0).g * 255.0 - 253.0) < 0.5 ? 1.0 : 0.0;
+    return texelFetch(material, p, 0).g * 255.0 >= 127.5 ? 1.0 : 0.0;
 }
 
 // 1 inside the screen, 0 outside: past the edge the depth only repeats the edge column, which is no occluder
@@ -162,8 +184,25 @@ float fast_acos(float x) {   // input -1..1, output 0..pi
     return x >= 0.0 ? r : PI - r;
 }
 
-float ign(vec2 px) {
-    return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715))));
+// XeGTAO_HilbertIndex: the pixel's place along a Hilbert curve over a 64x64 tile
+uint hilbert_index(uint x, uint y) {
+    uint index = 0u;
+    for (uint level = 32u; level > 0u; level /= 2u) {
+        uint rx = (x & level) > 0u ? 1u : 0u, ry = (y & level) > 0u ? 1u : 0u;
+        index += level * level * ((3u * rx) ^ ry);
+        if (ry == 0u) {
+            if (rx == 1u) x = 63u - x, y = 63u - y;
+            uint t = x;
+            x = y, y = t;
+        }
+    }
+    return index;
+}
+
+// Two values in 0..1 per pixel: the R2 sequence at its Hilbert index, evenly spread at every scale
+vec2 spatial_noise(ivec2 px) {
+    uint i = hilbert_index(uint(px.x) & 63u, uint(px.y) & 63u);
+    return fract(0.5 + float(i) * vec2(0.75487766624669276005, 0.5698402909980532659114));
 }
 
 void main() {
@@ -198,8 +237,8 @@ void main() {
     if (dot(n, view_vec) < 0.0) n = -n;
     float micro = 1.0;
     if (pc.opt2.z > 0.5) {
-        vec3 smooth_n = shading_normal(uv);
-        micro = micro_visibility(smooth_n, pixel_normal(px));
+        vec3 smooth_n = shading_normal(uv, z);
+        micro = micro_visibility(smooth_n, pixel_normal(px, z));
         n = search_normal(n, smooth_n);
     }
 
@@ -219,7 +258,7 @@ void main() {
     float min_s = too_close / screen_radius;
 
     float slices = pc.opt.x, steps = pc.opt.y;
-    vec2 noise = vec2(ign(vec2(px)), ign(vec2(px) + vec2(47.0, 17.0)));
+    vec2 noise = spatial_noise(px);
     for (float slice = 0.0; slice < slices; slice++) {
         float phi = (slice + noise.x) / slices * PI;
         float cos_phi = cos(phi), sin_phi = sin(phi);
@@ -246,8 +285,9 @@ void main() {
             float thin = 1.0 + pc.opt2.x;
             float w0 = clamp(length(vec3(d0.xy, d0.z * thin)) * falloff_mul + falloff_add, 0.0, 1.0);
             float w1 = clamp(length(vec3(d1.xy, d1.z * thin)) * falloff_mul + falloff_add, 0.0, 1.0);
-            // characters shade the ground around them only a little (TotK's AO hardly at all), and off-screen samples not
-            w0 *= on_screen(uv0) * (1.0 - 0.75 * character(uv0)), w1 *= on_screen(uv1) * (1.0 - 0.75 * character(uv1));
+            // characters shade what is around them by opt3.x, and off-screen samples not at all
+            float ch = 1.0 - pc.opt3.x;
+            w0 *= on_screen(uv0) * (1.0 - ch * character(uv0)), w1 *= on_screen(uv1) * (1.0 - ch * character(uv1));
             // vegetation occludes less: blades and leaves in front of the ground do not shade it like a wall
             if (pc.opt2.y > 0.0) w0 *= 1.0 - pc.opt2.y * vegetation(uv0), w1 *= 1.0 - pc.opt2.y * vegetation(uv1);
             float shc0 = mix(low0, dot(d0 / l0, view_vec), w0);

@@ -722,6 +722,7 @@ void gfx_window_release_vk(void) {
         vk_contact_release();
         vk_aa_release();
         vk_gtao_release();
+        vk_lightnorm_release();
         free_capture();
         free_thumbs();
         for (int i = 0; i < FRAMES; i++) {

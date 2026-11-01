@@ -24,6 +24,10 @@
 // into a pass of five or more colour targets whose target 0 is RGBA8 at a quarter of the G-buffer's size per axis; a
 // blur writes another image; the finished mask is the next draw, in a later pass, into the raw draw's image.
 //
+// TOTK_AO_TRACE=<frames>: one log line per frame for that many frames after GTAO first runs: the G-buffer passes and
+// resets, the raw AO draw's and the finished mask's pass, whether GTAO ran (else why not), and how many sampled
+// descriptors of the game's mask were given GTAO's (vk_gtao_swap_hits, counted in vk_exec_draw.c tex_info).
+//
 // TOTK_AO_LOG=<frame>: every draw of that frame into an RGBA8 target at most a third as wide as the widest pass seen,
 // in a pass with five or more colour targets, is logged with its fragment shader's guest hash, to check the AO passes
 // in another scene or game version.
@@ -53,12 +57,24 @@ typedef struct {
 
 const VkTexImage *vk_gtao_swap_img;
 VkImageView vk_gtao_swap_view;
+uint32_t vk_gtao_swap_hits;
+
+static struct {   // TOTK_AO_TRACE, this frame
+    uint32_t left, gbuf, resets, raw_pass, fin_pass, ran;
+    const char *why;
+} T;
 
 static struct {
     int tried, mode, ok, init_tried;
     unsigned cfg_ver;
     float strength, radius, thin, fade; // thin: XeGTAO's thin occluder compensation, fade: foliage fade (TOTK_AO_FOLIAGE)
-    uint64_t log_frame, frame;
+    float char_occ;                     // how much characters occlude what is around them (TOTK_AO_CHAR, percent, 25)
+    int denoise;                        // denoise passes, the compose's included (TOTK_AO_DENOISE)
+    float slices, steps;                // horizon directions and samples per direction (TOTK_AO_SLICES, TOTK_AO_STEPS)
+    float crease;                       // crease emphasis (TOTK_AO_CREASE, percent: 0 none, 100 a half-visible corner to a quarter)
+    float kept_ao;                      // the AO characters get: 108/255, as every character pixel of the game's
+                                        // finished mask (1.4.3); TOTK_AO_KEPT (0..255) overrides it for tests
+    uint64_t log_frame, frame, gb_frame;   // gb_frame: the frame whose G-buffer was seen last
     uint32_t logged, max_w;            // max_w: the widest pass seen (TOTK_AO_LOG)
     PFN_vkCmdPushDescriptorSetKHR push;
     VkDescriptorSetLayout dsl;          // sampled at 0, 1, 2, 5, 6; storage at 3, 4 (each pass uses some)
@@ -94,6 +110,8 @@ static void update_mode(void) {
     if (!G.tried) {
         const char *e = cfg_get("TOTK_AO_LOG");
         G.log_frame = e && *e ? strtoull(e, NULL, 0) : 0;
+        const char *tr = cfg_get("TOTK_AO_TRACE");
+        T.left = tr && *tr ? (uint32_t)strtoul(tr, NULL, 0) : 0;
     }
     int m = read_mode(), first = !G.tried;
     G.tried = 1, G.cfg_ver = v;
@@ -101,6 +119,19 @@ static void update_mode(void) {
     G.strength = (float)(s < 0 ? 0 : s > 300 ? 300 : s) / 100.0f;
     double r = cfg_double("TOTK_AO_RADIUS");
     G.radius = (float)(r < 0.25 ? 0.25 : r > 5 ? 5 : r);
+    const char *sl = cfg_get("TOTK_AO_SLICES"), *st = cfg_get("TOTK_AO_STEPS");
+    int nsl = sl && *sl ? atoi(sl) : 3, nst = st && *st ? atoi(st) : 6;   // 6 steps: smooth with per-pixel noise
+    G.slices = (float)(nsl < 1 ? 1 : nsl > 16 ? 16 : nsl), G.steps = (float)(nst < 1 ? 1 : nst > 32 ? 32 : nst);
+    const char *dn = cfg_get("TOTK_AO_DENOISE");
+    int nd = dn && *dn ? atoi(dn) : 6;   // 6: no visible grain from the per-pixel noise (2 left it, 4 nearly)
+    G.denoise = nd < 1 ? 1 : nd > 8 ? 8 : nd;
+    int cr = cfg_int("TOTK_AO_CREASE");
+    G.crease = (float)(cr < 0 ? 0 : cr > 100 ? 100 : cr) / 100.0f;
+    int cp = cfg_int("TOTK_AO_CHAR");
+    G.char_occ = (float)(cp < 0 ? 0 : cp > 100 ? 100 : cp) / 100.0f;
+    const char *kv = cfg_get("TOTK_AO_KEPT");
+    int ka = kv && *kv ? atoi(kv) : 108;
+    G.kept_ao = (float)(ka < 0 ? 0 : ka > 255 ? 255 : ka) / 255.0f;
     // minimal: close to the game's own AO, which leaves vegetation untouched: thin occluders count less (the top of
     // XeGTAO's range), and vegetation (the G-buffer's material class) mostly neither receives nor casts occlusion
     // (gtao_main.comp). full: GTAO's plain result.
@@ -148,7 +179,7 @@ static int init(VkCtx *c) {
     VkDescriptorSetLayoutCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                                            .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
                                            .bindingCount = 7, .pBindings = b};
-    VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 80};
+    VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 96};
     VkPipelineLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
                                      .pSetLayouts = &G.dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pr};
     VkSamplerCreateInfo si = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_NEAREST,
@@ -260,12 +291,20 @@ static void run(VkCommandBuffer cb, int p, const VkImageView in[5], const VkSamp
 void vk_gtao_flush(VkExec *ex) {
     if (!G.pending) return;
     G.pending = 0;
-    if (ex->in_pass || !G.ok || !G.depth || !G.material || !G.albedo || !G.c4) return;
+    T.why = ex->in_pass ? "in a pass" : !G.ok ? "not set up" : !G.depth ? "no depth" : !G.material ? "no material" :
+            !G.albedo ? "no albedo" : !G.c4 ? "no camera" : NULL;
+    if (T.why) return;
     const float *u = (const float *)(uintptr_t)G.c4;
     float px = u[7 * 4 + 0], py = u[8 * 4 + 1], znear = u[14 * 4 + 0], zfar = u[14 * 4 + 1];
-    if (!(px > 0) || !(py > 0) || !(zfar > 1) || !(znear >= 0 && znear < zfar)) return;
+    if (!(px > 0) || !(py > 0) || !(zfar > 1) || !(znear >= 0 && znear < zfar)) {
+        T.why = "camera block not a projection";
+        return;
+    }
     VkCtx *c = vk_ctx();
-    if (!ensure_images(c, (G.dw + 1) / 2, (G.dh + 1) / 2)) return;
+    if (!ensure_images(c, (G.dw + 1) / 2, (G.dh + 1) / 2)) {
+        T.why = "images";
+        return;
+    }
     VkImageView depth = vk_exec_target_view(G.depth, VK_FORMAT_R32_SFLOAT, VK_IMAGE_VIEW_TYPE_2D,
                                             VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1, 0);
     VkImageView mask = vk_exec_target_view(G.mask, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_VIEW_TYPE_2D,
@@ -277,7 +316,11 @@ void vk_gtao_flush(VkExec *ex) {
     VkImageView gnormal = G.gnormal ? vk_exec_target_view(G.gnormal, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_VIEW_TYPE_2D,
                                                           VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1, 0)
                                     : VK_NULL_HANDLE;
-    if (!depth || !mask || !material || !albedo) return;
+    if (!depth || !mask || !material || !albedo) {
+        T.why = "views";
+        return;
+    }
+    T.ran++;
     vk_exec_barrier(ex);   // the mask's writes; images in the feedback layout go back to GENERAL
     VkCommandBuffer cb = ex->cb;
     int n = 1;
@@ -286,21 +329,29 @@ void vk_gtao_flush(VkExec *ex) {
         G.fresh = 0, n += NIMG;
     }
     VkSampler pt[5] = {G.point, G.point, G.point, G.point, G.point};
-    float mpc[20] = {px, py, zfar - znear, G.radius,
+    float mpc[24] = {px, py, zfar - znear, G.radius,
                      (float)G.w, (float)G.h, 1.0f / (float)G.w, 1.0f / (float)G.h,
                      (float)G.dw, (float)G.dh, 1.0f / (float)G.dw, 1.0f / (float)G.dh,
-                     3.0f, 3.0f, 0.615f, 2.2f,    // slices, steps, falloff range, final power: XeGTAO's high preset
-                     G.thin, G.fade, gnormal ? 1.0f : 0.0f, znear};   // TOTK_AO_FOLIAGE; the G-buffer's normals
+                     G.slices, G.steps, 0.615f, 2.2f,   // slices, steps (TOTK_AO_SLICES, TOTK_AO_STEPS), falloff range, power
+                     G.thin, G.fade, gnormal ? 1.0f : 0.0f, znear,   // TOTK_AO_FOLIAGE; the G-buffer's normals
+                     G.char_occ, 0, 0, 0};
     run(cb, P_MAIN, (VkImageView[5]){depth, VK_NULL_HANDLE, material, albedo, gnormal}, pt, G.img[I_AO].view,
         G.img[I_EDGES].view, mpc, sizeof mpc);
+    // denoise passes back and forth between the two visibility images, the compose's own the last: XeGTAO leaves the
+    // rest to a temporal filter, which this has not, so more passes than its two
     float dpc[4] = {1.2f / 5.0f, 0, 0, 0};        // XeGTAO's denoise blur beta, / 5 for a pass that is not the last
-    run(cb, P_DENOISE, (VkImageView[5]){G.img[I_AO].view, G.img[I_EDGES].view, VK_NULL_HANDLE, VK_NULL_HANDLE,
-                                        VK_NULL_HANDLE}, pt,
-        G.img[I_AO2].view, VK_NULL_HANDLE, dpc, sizeof dpc);
-    float cpc[4] = {1.2f, G.strength, 0, 0};      // blur beta, strength as a power
-    run(cb, P_COMPOSE, (VkImageView[5]){G.img[I_AO2].view, G.img[I_EDGES].view, mask, VK_NULL_HANDLE, VK_NULL_HANDLE},
+    int src = I_AO, dst = I_AO2;
+    for (int k = 1; k < G.denoise; k++) {
+        run(cb, P_DENOISE, (VkImageView[5]){G.img[src].view, G.img[I_EDGES].view, VK_NULL_HANDLE, VK_NULL_HANDLE,
+                                            VK_NULL_HANDLE}, pt,
+            G.img[dst].view, VK_NULL_HANDLE, dpc, sizeof dpc);
+        int t = src;
+        src = dst, dst = t;
+    }
+    float cpc[4] = {1.2f, G.strength, G.kept_ao, G.crease};   // blur beta, strength as a power, characters' AO, crease emphasis
+    run(cb, P_COMPOSE, (VkImageView[5]){G.img[src].view, G.img[I_EDGES].view, mask, VK_NULL_HANDLE, VK_NULL_HANDLE},
         (VkSampler[5]){G.point, G.point, G.linear, G.point, G.point}, G.img[I_OUT].view, VK_NULL_HANDLE, cpc, sizeof cpc);
-    ex->recorded += n + 3 * 5;
+    ex->recorded += n + (2 + G.denoise) * 5;
     if (vk_dump_armed) {   // TOTK_DUMP: the game's finished mask and ours, AO in blue, to compare the two AO passes
         vk_dump_image(ex, G.mask->image, VK_FORMAT_R8G8B8A8_UNORM, G.mask->width, G.mask->height, "ao_game_mask");
         vk_dump_image(ex, G.img[I_OUT].img, VK_FORMAT_R8G8B8A8_UNORM, G.w, G.h, "ao_gtao_mask");
@@ -311,11 +362,25 @@ void vk_gtao_flush(VkExec *ex) {
     vk_gtao_swap_img = G.mask, vk_gtao_swap_view = G.img[I_OUT].view;
 }
 
-void vk_gtao_present(uint64_t frame) { __atomic_store_n(&G.frame, frame, __ATOMIC_RELAXED); }
+void vk_gtao_present(uint64_t frame) {
+    __atomic_store_n(&G.frame, frame, __ATOMIC_RELAXED);
+    if (!T.left || G.mode != AO_GTAO || (!G.ok && !T.raw_pass)) return;
+    T.left--;
+    rt_log("vk_gtao trace: frame %llu: G-buffer passes %u (resets %u), raw AO pass %u, finished mask pass %u, GTAO %s%s, "
+           "swapped reads %u", (unsigned long long)frame, T.gbuf, T.resets, T.raw_pass, T.fin_pass,
+           T.ran ? "ran" : "did not run", T.why ? (const char *)"" : "", vk_gtao_swap_hits);
+    if (T.why) rt_log("vk_gtao trace: frame %llu: not run: %s", (unsigned long long)frame, T.why);
+    uint32_t left = T.left;
+    memset(&T, 0, sizeof T);
+    T.left = left;
+    vk_gtao_swap_hits = 0;
+}
 
-// A G-buffer pass: an R32F linear depth and a D32F depth of one size, at least 640 wide; *material is its target 0
-// when that is RGBA8 of the same size (the material classes), *albedo its target 1 when that is RGBA8 sRGB and
-// *gnormal its target 3 when that is RGBA8 (the shading normals), else NULL.
+// A G-buffer pass: a D32F depth and, all of the pass's size (at least 640 wide), the material classes (target 0, RGBA8),
+// the albedo (target 1, RGBA8 sRGB), the shading normals (target 3, RGBA8) and an R32F linear depth; returns that depth
+// and sets the others, else NULL. All of them: a frame can begin with passes into a D32F depth and another R32F image
+// alone (1.4.3, outdoors: 2 draws into an R32F that is not the G-buffer's linear depth), which as GTAO's depth gave
+// blank AO with black blocks.
 static const VkTexImage *gbuffer_depth(const VkExec *ex, const VkTexImage **material, const VkTexImage **albedo,
                                        const VkTexImage **gnormal) {
     *material = *albedo = *gnormal = NULL;
@@ -332,12 +397,14 @@ static const VkTexImage *gbuffer_depth(const VkExec *ex, const VkTexImage **mate
     if (ex->pass_ncolor > 3 && nt->image && !nt->level && nt->width == ex->pass_w && nt->height == ex->pass_h &&
         nt->format == VK_FORMAT_R8G8B8A8_UNORM)
         *gnormal = nt->img;
+    if (!*material || !*albedo || !*gnormal) return *material = *albedo = *gnormal = NULL, NULL;
     for (uint32_t i = 0; i < ex->pass_ncolor && i < 8; i++) {
         const VkExecTarget *t = &ex->color[i];
         if (t->image && !t->level && t->width == ex->pass_w && t->height == ex->pass_h &&
             t->format == VK_FORMAT_R32_SFLOAT)
             return t->img;
     }
+    *material = *albedo = *gnormal = NULL;
     return NULL;
 }
 
@@ -348,8 +415,15 @@ void vk_gtao_pass_begin(VkExec *ex) {
         // the camera block: c4 of the fragment stage, 0x940 bytes, as vk_contact.c finds it
         const p_bind_buf *b = &ex->ubo[1][1];
         if (b->addr && b->size == 0x940) G.c4 = b->addr;
+        // A new frame's G-buffer: the game's AO passes read its own mask again. Only the first G-buffer pass after a
+        // present: a frame can draw into its G-buffer again between the lighting passes (1.4.3, the Depths), and the
+        // lighting after that must keep reading GTAO's mask.
         const VkTexImage *mat, *alb, *gn, *d = gbuffer_depth(ex, &mat, &alb, &gn);
-        if (d) {   // a new frame: the game's AO passes read its own mask again
+        uint64_t f = __atomic_load_n(&G.frame, __ATOMIC_RELAXED);
+        if (d) T.gbuf++;
+        if (d && (f != G.gb_frame || !G.depth)) {
+            T.resets++;
+            G.gb_frame = f;
             G.depth = d, G.material = mat, G.albedo = alb, G.gnormal = gn, G.dw = ex->pass_w, G.dh = ex->pass_h;
             G.raw_seen = G.done = 0;
             swap_off();
@@ -379,11 +453,11 @@ void vk_gtao_draw(VkExec *ex) {
     if (!t->img || t->level || t->format != VK_FORMAT_R8G8B8A8_UNORM || t->width < 64) return;
     if (t->width * 4 + 4 < G.dw || t->width * 4 > G.dw + 4 || t->height * 4 + 4 < G.dh || t->height * 4 > G.dh + 4) return;
     if (!G.raw_seen) {   // the raw AO draw
-        G.raw_seen = 1, G.mask = t->img, G.raw_pass = ex->pass_serial;
+        G.raw_seen = 1, G.mask = t->img, G.raw_pass = ex->pass_serial, T.raw_pass = ex->pass_serial;
         return;
     }
     if (t->img != G.mask || ex->pass_serial == G.raw_pass) return;   // a blur into the other image, or the same pass
-    G.done = 1;   // the finished mask
+    G.done = 1, T.fin_pass = ex->pass_serial;   // the finished mask
     if (!G.init_tried) init(vk_ctx());
     if (G.ok) G.pending = 1;
 }

@@ -1,8 +1,9 @@
 #version 450
 // GTAO's last pass (runtime/vk_gtao.c): the half-resolution AO mask the game's lighting reads in place of its own
 // quarter-resolution one. Every channel is the game's finished mask, sampled bilinearly as the lighting would; blue,
-// the AO, is GTAO's visibility after a second denoise, to the strength setting's power, except where the game's value is
-// kept (characters).
+// the AO, is GTAO's visibility after a second denoise, to the strength setting's power; characters get the value the
+// game's finished mask gives them (CHARACTER_AO): its own mask is a quarter of the screen and blurred, so read per pixel
+// it puts a shifted, smeared silhouette with the ground's contact shading on them.
 #extension GL_GOOGLE_include_directive : require
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -12,17 +13,41 @@ layout(binding = 2) uniform sampler2D mask;     // the game's finished AO mask, 
 layout(binding = 3, rgba8) uniform writeonly image2D out_mask;
 
 layout(push_constant) uniform Params {
-    vec4 opt;   // x: blur beta, y: strength (power of the visibility)
+    vec4 opt;   // x: blur beta, y: strength (power of the visibility), z: the AO of characters, w: crease emphasis
 } pc;
 
 #include "gtao_denoise.glsl"
+
+// The game's finished mask at a half-resolution pixel: a bilinear blend of the four quarter-resolution texels around it,
+// leaving out those of the other kind (character or not; the game gives every character texel the AO 108/255).
+// A plain blend smeared Link's red and alpha onto the first wall pixels around him, which the lighting drew as a thin
+// dark outline; the game's own lighting reads its mask so that his values stay on him.
+vec4 game_mask(vec2 uv, bool kept) {
+    vec2 qs = vec2(textureSize(mask, 0));
+    vec2 t = uv * qs - 0.5;
+    ivec2 b = ivec2(floor(t));
+    vec2 f = t - vec2(b);
+    vec4 s = vec4(0.0);
+    float ws = 0.0;
+    for (int j = 0; j < 2; j++)
+        for (int i = 0; i < 2; i++) {
+            vec4 q = texelFetch(mask, clamp(b + ivec2(i, j), ivec2(0), ivec2(qs) - 1), 0);
+            bool ch = abs(q.b * 255.0 - 108.0) < 0.5;
+            float w = (i == 1 ? f.x : 1.0 - f.x) * (j == 1 ? f.y : 1.0 - f.y);
+            if (ch == kept) s += q * w, ws += w;
+        }
+    return ws > 1e-4 ? s / ws : textureLod(mask, uv, 0.0);
+}
 
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = textureSize(ao, 0);
     if (any(greaterThanEqual(p, size))) return;
-    vec4 m = textureLod(mask, (vec2(p) + 0.5) / vec2(size), 0.0);
     vec2 v = denoise(p, pc.opt.x);
-    if (v.y < 0.5) m.b = pow(clamp(v.x * OCCLUSION_TERM_SCALE, 0.0, 1.0), pc.opt.y);
+    vec4 m = game_mask((vec2(p) + 0.5) / vec2(size), v.y > 0.5);
+    // crease emphasis darkens in proportion to the occlusion already there: open surfaces stay, a corner at half
+    // visibility goes to a quarter at 1 (the game's own AO draws its creases darker than GTAO's physical amount)
+    float vis = pow(clamp(v.x * OCCLUSION_TERM_SCALE, 0.0, 1.0), pc.opt.y);
+    m.b = v.y < 0.5 ? vis * (1.0 - pc.opt.w * (1.0 - vis)) : pc.opt.z;
     imageStore(out_mask, p, m);
 }
