@@ -33,8 +33,8 @@ const VkTexImage *vk_lightao_swap_img;
 VkImageView vk_lightao_swap_view;
 
 // The point lights' light (layer 1, linear luminance) that lifts nothing and that lifts the occlusion completely.
-#define LIGHT_LO 0.03f
-#define LIGHT_HI 0.15f
+#define LIGHT_LO 0.005f
+#define LIGHT_HI 0.04f
 
 static struct {
     int tried, on, ok, init_tried, logged;
