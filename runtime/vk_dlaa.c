@@ -256,6 +256,8 @@ static struct {
     uint64_t mv_frames, mv_none;
     uint64_t why[3];             // history resets: scene size changed, no camera, scene target changed
     int on;                      // the dlaa setting, read at each present (the menu switches it live)
+    int scaler_skipped;          // this frame: the game's scaling draw over DLSS's picture was skipped
+    uint64_t scaler_missed;      // frames DLSS scaled whose scaling draw was not found (vk_dlaa_skip_draw)
 } D = {.mv_ok = -1};
 
 static int dl_active(void) { return N.available && !D.failed && D.on; }
@@ -626,7 +628,10 @@ void vk_dlaa_frame(void) {
     if (D.jit_used && !D.done) D.hold = 60, D.holds++;   // jittered but not resolved: that frame shook
     else if (D.hold) D.hold--;
     if (!D.done) D.jit_ok = 0;
-    D.armed = D.done = D.jit_used = D.gbuf = D.ended = D.up = 0;
+    if (D.up && !D.scaler_skipped && ++D.scaler_missed == 1)
+        rt_log("dlaa: the game's scaling draw over DLSS's picture was not found (its fragment shader is not in FXAA_FS): "
+               "the jittered scene reaches the screen and shakes");
+    D.armed = D.done = D.jit_used = D.gbuf = D.ended = D.up = D.scaler_skipped = 0;
     D.cam_addr = 0;
 }
 
@@ -637,8 +642,10 @@ void vk_dlaa_frame(void) {
 // in-place FXAA has. When DLSS already wrote that target this frame, that scaling draw is skipped here. Shaders are
 // known by the FNV-1a hash of their SPIR-V, as vk_dump.c names them; a translator change gives new hashes and the
 // scaling draw is then not skipped.
-// The stock translator's hash, and the one with tools/xlate patch 0010 (PCSS, PR #89) applied.
-static const uint64_t FXAA_FS[] = {0xf450003ebeb3dc52ull, 0x0a12f4bc2a9a4fbeull};
+// The stock translator's hash, the one with tools/xlate patch 0010 (PCSS, PR #89) applied, and the one with patches
+// 0010 and 0011 (the shadow filter spread) applied. A translator change that gives the shader another hash is reported
+// by vk_dlaa_frame: the game's scaling draw then covers DLSS's picture with the jittered scene, which shakes.
+static const uint64_t FXAA_FS[] = {0xf450003ebeb3dc52ull, 0x0a12f4bc2a9a4fbeull, 0x5c43ae18948d52cbull};
 
 static uint64_t spirv_hash(const GfxShader *s) {
     static struct { const GfxShader *s; uint64_t h; } tab[8192];
@@ -659,7 +666,9 @@ static uint64_t spirv_hash(const GfxShader *s) {
 int vk_dlaa_skip_draw(VkExec *ex, const GfxShader *fs) {
     if (!D.up || !fs || ex->depth.image) return 0;   // nothing to skip: no shader lookup per draw at the defaults
     uint64_t h = spirv_hash(fs);
-    return h == FXAA_FS[0] || h == FXAA_FS[1];   // the scaling pass, which DLSS replaced
+    for (size_t i = 0; i < sizeof FXAA_FS / sizeof FXAA_FS[0]; i++)
+        if (h == FXAA_FS[i]) return D.scaler_skipped = 1;   // the scaling pass, which DLSS replaced
+    return 0;
 }
 
 #else
