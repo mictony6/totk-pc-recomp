@@ -19,6 +19,8 @@ void opt_begin(const char *id, float scale);
 void opt_end(void);
 // The height the next pages leave free under their panes (the menu's bottom row).
 void opt_reserve_bottom(float h);
+// The height opt_reserve_bottom keeps free, for a tab that lays out its own panes (ui/amiibo_page.cpp).
+float opt_bottom(void);
 // The next page's first row takes the controller's cursor (opening the menu, switching tabs).
 void opt_focus_first(void);
 // The row of key (or button id) takes the cursor, scrolled into view, when it is next drawn.
@@ -46,8 +48,10 @@ bool opt_choice_list(const char *key, UiTextId label, const char *const *values,
 // shown on the right ("" none).
 bool opt_button(const char *id, UiTextId label, UiTextId desc, const char *value = "");
 // lo..hi in steps of step (left and right held for a second go ten times as fast); fmt formats the value ("%.0f %%").
+// note: a short line under the value in place of the "default" mark (NULL: none). fallback: the setting that applies
+// while key is unset; the row shows its value then, and a change sets key.
 bool opt_slider(const char *key, UiTextId label, float lo, float hi, UiTextId desc, float step = 1,
-                const char *fmt = "%g");
+                const char *fmt = "%g", const char *note = nullptr, const char *fallback = nullptr);
 
 // Binding rows (remapping on the Controls tab): a label and three cells, each selectable on its own (left / right move between them).
 // opt_bind_header: the column titles above them. opt_bind_row: key is the setting's name without TOTK_ (BIND_A; the

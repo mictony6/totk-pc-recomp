@@ -172,7 +172,13 @@ def startup_package(name):
             name.startswith('Shader/') and name.endswith('.zs'))
 
 
-def inventory(romfs, exefs):
+# The RomFS directories that can hold shaders: the agl and gsys packages, the effects, terrain, the UI layout archives
+# and the game's own shader packs. Every shader of 1.1.1 (27,576) comes from these six; they are 1,996 entries and
+# 147 MiB, 0.9% of a RomFS whose every file the walk below used to read and decompress first (65 s against 2.8 s).
+SHADER_DIRS = ('Shader/', 'Effect/', 'Lib/agl/', 'Lib/Terrain/', 'Lib/gsys/', 'UI/LayoutArchive/')
+
+
+def inventory(romfs, exefs, everything=True):
     """Every unique shader: key -> dict(stage, control, code, source, origin, startup). As in MNG, a shader is a startup
     shader when it comes from an agl package, a game module, or a startup_package() RomFS file; the others come from
     effect and UI layout resources, which MNG translates only for bind states players have met. Also returns the number
@@ -228,6 +234,8 @@ def inventory(romfs, exefs):
                 pos += max(size, 8)
 
         for name in sorted(entries):
+            if not everything and not name.startswith(SHADER_DIRS):
+                continue
             raw = read(name)
             if raw[:4] not in (ZSTD, b'SARC', b'FSHA', b'BNSH', b'BAHS') and b'BNSH\0\0\0\0' not in raw:
                 continue

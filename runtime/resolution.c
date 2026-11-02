@@ -13,8 +13,8 @@
 // Patch page: +16 the scene size {w, h} as floats, +32 the output size and +48 the swapchain size as {w, h} in one
 // 64-bit word, +40 the renderer (1.2.1) or display configuration (1.4.3) the patched code stores there.
 // +56 the camera's aspect ratio as a float when the output is not 16:9 (1.4.3, set aspect). +64 to +76 the sun shadow
-// cascades' end distances (1.4.3, set cascade). +88 the sun shadow cascades' side and +92 the start of the shadow table
-// row it replaces, both floats (1.4.3, set shadowres).
+// cascades' end distances (1.4.3, set cascade). +60 the field-of-view factor (set fov, res_fov_live). +92 the sun
+// shadow map size as an int (set shadow, shadow_init).
 // 1.4.3 scales the scene it reads by output width / 1920 (a 2560x1440 output renders its 1600x900 scene at 2128x1200;
 // MacNativeGames measured the same), so its page holds the wanted size divided by that factor and the game's 5/6 needs
 // no scene patch. 1.2.1 renders the size it reads (1600x900 on a 2560x1440 output): its page holds the wanted size, and
@@ -45,6 +45,7 @@
 #define SCENE_H 900
 #define DTA_KIB 113664u      // DynamicTextureAllocatorMem, shipped
 #define SCENE_MAX 4096       // per side, as MacNativeGames' TOTK_RENDER_RES
+#define SHADOW_BASE 960      // the sun shadow map's base size (its cascades: a D16 array of 4 layers)
 
 static struct {
     int decided;
@@ -52,7 +53,8 @@ static struct {
     int scene_set;             // the scene differs from the game's 5/6 of the output
     int heapdef_ok;            // romfs.c serves the grown HeapDef
     int on;                    // res_init switched the patch sets on
-    unsigned shadow;           // TOTK_SHADOW_RES: the sun cascades' side, 0 = the game's
+    unsigned shadow;           // fixed sun shadow map size (TOTK_SHADOW_RES), 0: the game's own
+    double dlss_k;             // TOTK_DLSS quality/balanced/performance: the scene's share of the output, else 0
 } R;
 
 static void decide(void) {
@@ -71,7 +73,16 @@ static void decide(void) {
     }
     const char *s = cfg_value("TOTK_RENDER_SCALE");
     double k = 5.0 / 6.0;
-    if (strcmp(s, "game")) {
+    const char *m = cfg_value("TOTK_DLSS");   // a DLSS mode other than dlaa sets the scene size
+    static const struct { const char *name; double k; } dlss[] = {
+        {"quality", 2.0 / 3.0}, {"balanced", 0.58}, {"performance", 0.5}};
+    for (int i = 0; i < 3; i++)
+        if (!strcmp(m, dlss[i].name)) R.dlss_k = dlss[i].k;
+    if (R.dlss_k) {
+        k = R.dlss_k;
+        R.scene_set = 1;
+        rt_log("resolution: DLSS %s: the scene at %.0f %% of the output (render_scale ignored)", m, k * 100);
+    } else if (strcmp(s, "game")) {
         char *end;
         double pct = strtod(s, &end);
         if (end != s && !*end && pct >= 25 && pct <= 400) {
@@ -88,32 +99,29 @@ static void decide(void) {
     R.sh = (unsigned)(sh * fit + 0.5);
     const char *sr = cfg_value("TOTK_SHADOW_RES");
     if (strcmp(sr, "game")) {
-        char *end;
-        long v = strtol(sr, &end, 10);
-        if (end != sr && !*end && v >= 256 && v <= 4096) R.shadow = (unsigned)(v + 7) & ~7u;
-        else rt_log("resolution: TOTK_SHADOW_RES=%s is not game or a size 256..4096; game", sr);
+        unsigned n = (unsigned)atoi(sr);
+        if (n >= 256 && n <= 4096 && !(n & 7)) R.shadow = n;
+        else rt_log("resolution: TOTK_SHADOW_RES=%s is not game or a size 256..4096 (a multiple of 8); game", sr);
     }
+}
+
+// Texture heap for a sun shadow map above the base size: the four layers of 2 bytes, three maps in flight (the engine
+// makes the array anew each frame).
+static uint64_t shadow_kib(void) {
+    return R.shadow > SHADOW_BASE ? ((uint64_t)R.shadow * R.shadow - SHADOW_BASE * SHADOW_BASE) * 8 * 3 / 1024 : 0;
 }
 
 static int bigger(void) {
     decide();
-    return R.ow != BASE_W || R.oh != BASE_H || R.scene_set;
-}
-
-// The sun cascades (a DEPTH16 array of 4 layers) come from the same heap. A fixed size grows it by a whole array of that
-// size, in MiB steps, on top of the room the shipped heap keeps for the game's own (960 a side at most).
-static uint64_t shadow_extra_kib(void) {
-    decide();
-    return R.shadow ? ((uint64_t)R.shadow * R.shadow * 2 * 4 + (1u << 20) - 1) >> 20 << 10 : 0;
+    return R.ow != BASE_W || R.oh != BASE_H || R.scene_set || shadow_kib();
 }
 
 uint64_t res_heap_extra_kib(void) {
-    uint64_t shadow = shadow_extra_kib();
-    if (!bigger()) return shadow;
+    if (!bigger()) return 0;
     double grow = fmax(0.0, (double)R.ow * R.oh / (BASE_W * BASE_H) - 1.0) +
                   fmax(0.0, (double)R.sw * R.sh / (SCENE_W * SCENE_H) - 1.0);
-    if (grow <= 0) return shadow;
-    return (uint64_t)ceil(DTA_KIB * (1.0 + grow) / 1024.0) * 1024 - DTA_KIB + shadow;
+    uint64_t kib = grow > 0 ? (uint64_t)ceil(DTA_KIB * (1.0 + grow) / 1024.0) * 1024 - DTA_KIB : 0;
+    return kib + ((shadow_kib() + 1023) & ~1023ull);   // whole MiB
 }
 
 uint64_t res_heap_extra_bytes(void) { return ((res_heap_extra_kib() << 10) + 0x1fffff) & ~0x1fffffull; }
@@ -208,6 +216,25 @@ int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n) {
 
 void res_heapdef_served(void) { R.heapdef_ok = 1; }
 
+// ---- sun shadow map size: each frame the engine sizes its shadow cascades to the area they cover, down to about 400 near
+// the ground, which draws foliage shadows blocky, and each change of size moves the shadow texels, so leaf shadows jump.
+// A fixed size (the shadow set, recomp/patches-v121.txt) keeps them still and sharper. Page +92.
+static void shadow_init(uint8_t *page) {
+    if (!R.shadow) {
+        rt_log("resolution: sun shadow map sized by the game (TOTK_SHADOW_RES=game)");
+        return;
+    }
+    int set = rt_patch_set("shadow");
+    if (set < 0) {
+        rt_log("resolution: the generated C has no shadow patch set: the game sizes its shadow map");
+        return;
+    }
+    int32_t n = (int32_t)R.shadow;
+    memcpy(page + 92, &n, 4);
+    rt_patch_switch(set, 1);
+    rt_log("resolution: sun shadow map %ux%u (TOTK_SHADOW_RES)", R.shadow, R.shadow);
+}
+
 // ---- start: the patch page and the sets
 static uint64_t pack(unsigned w, unsigned h) { return (uint64_t)h << 32 | w; }
 
@@ -228,36 +255,11 @@ static void res_shadow_range(void) {
     rt_log("resolution: shadow cascades end at %g, %g, %g and %g m", d[0], d[1], d[2], d[3]);
 }
 
-// TOTK_SHADOW_RES (game, or 256 to 4096): the side of the sun's shadow cascades. The game's shadow allocator sizes them
-// from 960 down to 800 by GPU load and halves that with distance, so they change between 400 and 960 while it runs;
-// the shadowres patch set (recomp/patches-v143.txt) gives them the side from page +88 instead, at any load and
-// distance. The game picks that size itself, so its filter taps and texel sizes follow it.
-static void res_shadow_res(void) {
-    if (!R.shadow) return;
-    int set = rt_patch_set("shadowres");
-    if (set < 0) {
-        rt_log("resolution: this game version has no shadowres patch set; the game sizes its shadow maps");
-        return;
-    }
-    if (!R.heapdef_ok) {
-        rt_log("resolution: no grown HeapDef table; the game sizes its shadow maps");
-        return;
-    }
-    float side[2] = {(float)R.shadow, 960.0f};   // the side, and the start of the table row it replaces
-    memcpy((uint8_t *)rt_patch_page() + 88, side, sizeof side);
-    rt_patch_switch(set, 1);
-    rt_log("resolution: sun shadow cascades %ux%u; texture heap +%llu KiB for them", R.shadow, R.shadow,
-           (unsigned long long)shadow_extra_kib());
-}
-
 void res_init(void) {
     res_shadow_range();
-    if (shadow_extra_kib()) {
-        fs_init();   // romfs.c serves the grown HeapDef from here on (res_heapdef_served)
-        res_shadow_res();
-    }
     if (!bigger()) {
         rt_log("resolution: the game's own (output 1920x1080, scene 1600x900)");
+        shadow_init(rt_patch_page());
         return;
     }
     int output = rt_patch_set("output"), scene = rt_patch_set("scene");
@@ -300,8 +302,16 @@ void res_init(void) {
     } else {
         rt_patch_switch(aspect, 0);   // the page holds no ratio
     }
+    shadow_init(page);
     rt_log("resolution: output %ux%u, scene %ux%u%s; texture heap +%llu KiB", R.ow, R.oh, R.sw, R.sh,
            scene_on ? "" : " (the game's own 5/6 of the output)", (unsigned long long)res_heap_extra_kib());
+}
+
+// DLSS upscaling: textures are sampled for the output's resolution, not the scene's (NVIDIA's DLSS guide: a mip bias
+// of log2(render / output)), so their detail survives the scaling. 0 without a DLSS mode.
+float res_dlss_lod_bias(void) {
+    decide();
+    return R.dlss_k ? (float)log2(R.dlss_k) : 0.0f;
 }
 
 // 16:9 within 1% (1366x768 counts): the shape the game's own layouts and camera are made for.
@@ -314,6 +324,29 @@ int res_is_16x9(unsigned w, unsigned h) {
 // aspect patch (set aspect); the UI layouts of another shape only fit a camera that follows the same shape.
 int res_wants_wide_overlay(const unsigned out[2]) {
     return !res_is_16x9(out[0], out[1]) && rt_patch_set("aspect") >= 0;
+}
+
+// Field of view (TOTK_FOV, percent of the game's own, 70..140, live): the camera's vertical view angle times the
+// factor on page +60 (recomp/patches-v143.txt, set fov). The horizontal angle follows through the aspect ratio. 100
+// switches the set off, so the camera code is the game's own. Runs on a settings change (gfx_present.c
+// window_settings_live), the first time at the first present.
+#define FOV_MIN 70
+#define FOV_MAX 140
+void res_fov_live(void) {
+    static int set = -2, shown = 100;
+    if (set == -2) set = rt_patch_set("fov");
+    int pct = cfg_int("TOTK_FOV");
+    pct = pct < FOV_MIN ? FOV_MIN : pct > FOV_MAX ? FOV_MAX : pct;
+    if (pct == shown) return;
+    shown = pct;
+    if (set < 0) {
+        rt_log("resolution: this game version has no field-of-view patch; TOTK_FOV=%d does nothing", pct);
+        return;
+    }
+    float k = pct / 100.0f;
+    memcpy((uint8_t *)rt_patch_page() + 60, &k, sizeof k);   // before the switch: a site that sees it on reads k
+    rt_patch_switch(set, pct != 100);
+    rt_log("resolution: field of view %d%% of the game's", pct);
 }
 
 void res_wanted(unsigned out[2]) {

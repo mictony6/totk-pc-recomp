@@ -313,7 +313,9 @@ int vk_aa_draw(VkExec *ex) {
     if (A.mode == AA_GAME) return 0;
     uint32_t len;
     uint64_t h = vk_exec_fs_hash(ex, &len);
-    if (h == FS_FXAA_COPY || h == FS_FXAA) {
+    // The FXAA shader also does the scene-to-output scaling pass when the scene is smaller than the output; that pass
+    // has no depth attachment and is the only thing that puts the 3D picture on screen (vk_dlaa.c vk_dlaa_skip_draw).
+    if (h == FS_FXAA_COPY || (h == FS_FXAA && ex->depth.image)) {
         if (!A.logged_fxaa)
             A.logged_fxaa = 1, rt_log("vk: the game's FXAA pass is skipped (TOTK_AA=%s)", cfg_value("TOTK_AA"));
         return 1;

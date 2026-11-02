@@ -79,6 +79,11 @@ def pack(cache, keep=False):
     out = cache / PACK
     packed = read_pack(out)
     loose = loose_files(cache)
+    if not loose:
+        # Nothing to fold in: every file of the cache is already in the pack, so writing it again copies the same
+        # bytes over the same entries (1.37 GiB here, 2.6 s, and a file system that then has the old pack's blocks to
+        # release as well). The installer runs this after every prepare.
+        return len(packed), 0, 0, out.stat().st_size if out.is_file() else 0
     keys = sorted(set(packed) | set(loose))
     tmp = out.with_name(PACK + '.tmp')
     index, written, skipped, offset = [], [], 0, 16 + 48 * len(keys)

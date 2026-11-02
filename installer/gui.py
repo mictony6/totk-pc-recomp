@@ -1,11 +1,12 @@
 """The installer window: python -m installer.gui
 
-A front end over the CLI (docs/installer.md): it collects the game files, the keys file path, the game language and the
-install folder, runs `python -m installer ...` as a subprocess and shows its JSON events. Decisions live in guilogic.py;
-this file only draws. The window text is in installer/text/<en|ru>.json under "ui.*" and "launcher.*" ids.
+A front end over the CLI (docs/installer.md): it collects the game files, the keys file path, the optional firmware
+folder, the game language and the install folder, runs `python -m installer ...` as a subprocess and shows its JSON
+events. Decisions live in guilogic.py; this file only draws. The window text is in
+installer/text/<en|ru|pt-BR|zh-Hans>.json under "ui.*" and "launcher.*" ids.
 
-    --selftest [--shots DIR]   build every screen in both languages and close by itself (PNG per screen with --shots)
-    --lang en|ru               window language (default: the Windows display language)
+    --selftest [--shots DIR]   build every screen in every language and close by itself (PNG per screen with --shots)
+    --lang en|ru|pt-BR|zh-Hans window language (default: the Windows display language)
 """
 import argparse
 import json
@@ -23,8 +24,8 @@ except ImportError:
 
 from . import ini
 from . import layout as layouts
-from .guilogic import (DONE, FAILED, PENDING, RUNNING, SKIPPED, UI_LANGUAGES, Catalog, Form, Model, Process,
-                       amount, default_game_language, describe_event, parse_line, windows_ui_language)
+from .guilogic import (DONE, FAILED, PENDING, RUNNING, SKIPPED, UI_LANGUAGE_LABELS, UI_LANGUAGES, Catalog, Form, Model,
+                       Process, amount, default_game_language, describe_event, parse_line, windows_ui_language)
 
 POLL_MS = 100
 GLYPH = {PENDING: '\u25cb', RUNNING: '\u25b6', DONE: '\u2714', SKIPPED: '\u2013', FAILED: '\u2716'}
@@ -51,7 +52,7 @@ class App:
         self.run_args = run_args or {}   # extra CLI options for tests: temp, verify
         self.log_entries = []            # events and raw lines of the run, rendered by render_log
         self.bound = []                  # (widget, option, id, params) retranslated on a language switch
-        self.vars = {n: tk.StringVar() for n in ('base', 'update', 'keys', 'dest')}
+        self.vars = {n: tk.StringVar() for n in ('base', 'update', 'keys', 'firmware', 'dest')}
         self.vars['lang'] = tk.StringVar()
         self.lang_code = default_game_language(ui_lang)
         self.screen = None
@@ -66,8 +67,10 @@ class App:
             self.icon = tk.PhotoImage(file=str(png))
             root.iconphoto(True, self.icon)
         root.protocol('WM_DELETE_WINDOW', self.on_close)
+        self.ui_font = 'Segoe UI' if os.name == 'nt' else 'DejaVu Sans'
+        self.mono_font = 'Consolas' if os.name == 'nt' else 'DejaVu Sans Mono'
         style = ttk.Style(root)
-        style.configure('Title.TLabel', font=('Segoe UI', 15, 'bold'))
+        style.configure('Title.TLabel', font=(self.ui_font, 15, 'bold'))
         style.configure('Notice.TLabel', background='#fff3cd', foreground='#664d03', padding=8)
         style.configure('Err.TLabel', foreground='#c01c28')
         style.configure('Version.TLabel', foreground='#808080')
@@ -83,7 +86,7 @@ class App:
         sw.pack(side='right')
         self.ui_var = tk.StringVar(value=self.cat.lang)
         for code in UI_LANGUAGES:
-            ttk.Radiobutton(sw, text=code.upper(), value=code, variable=self.ui_var, style='Toolbutton',
+            ttk.Radiobutton(sw, text=UI_LANGUAGE_LABELS[code], value=code, variable=self.ui_var, style='Toolbutton',
                             command=self.switch_language).pack(side='left', padx=1)
         self.body = ttk.Frame(root, padding=PAD)
         self.body.pack(fill='both', expand=True)
@@ -195,6 +198,10 @@ class App:
             b.grid(row=i, column=2, padx=(8, 0))
             self.form_rows[name] = lab
         i = len(rows)
+        self.label(grid, 'ui.firmware').grid(row=i, column=0, sticky='w', pady=4)
+        ttk.Entry(grid, textvariable=self.vars['firmware']).grid(row=i, column=1, sticky='ew', pady=4)
+        self.button(grid, 'ui.browse', self.pick_firmware).grid(row=i, column=2, padx=(8, 0))
+        i += 1
         self.label(grid, 'ui.game_language').grid(row=i, column=0, sticky='w', pady=4)
         self.lang_box = ttk.Combobox(grid, textvariable=self.vars['lang'], state='readonly', width=30)
         self.lang_box.grid(row=i, column=1, sticky='w', pady=4)
@@ -204,6 +211,7 @@ class App:
         self.label(grid, 'ui.dest').grid(row=i + 1, column=0, sticky='w', pady=4)
         ttk.Entry(grid, textvariable=self.vars['dest']).grid(row=i + 1, column=1, sticky='ew', pady=4)
         self.button(grid, 'ui.browse', self.pick_dest).grid(row=i + 1, column=2, padx=(8, 0))
+        self.label(f, 'ui.firmware_help', wraplength=620, justify='left').pack(anchor='w', pady=(8, 0))
         self.update_hint = ttk.Label(f, wraplength=620, justify='left')
         self.update_hint.pack(anchor='w', pady=(8, 0))
         self.form_error = ttk.Label(f, style='Err.TLabel', wraplength=620, justify='left')
@@ -219,7 +227,7 @@ class App:
         self.cancel_button.pack(side='right')
         self.log_toggle = self.button(bar, 'ui.show_log', self.toggle_log)
         self.log_toggle.pack(side='left')
-        self.run_header = ttk.Label(f, font=('Segoe UI', 11, 'bold'))
+        self.run_header = ttk.Label(f, font=(self.ui_font, 11, 'bold'))
         self.run_header.pack(anchor='w')
         self.step_rows = {}
         self.steps_box = ttk.Frame(f)
@@ -233,7 +241,7 @@ class App:
         self.warn_label = ttk.Label(f, wraplength=620, justify='left', foreground='#9a6700')
         self.warn_label.pack(anchor='w')
         self.log_frame = ttk.Frame(f)
-        self.log = tk.Text(self.log_frame, height=10, wrap='word', state='disabled', font=('Consolas', 9))
+        self.log = tk.Text(self.log_frame, height=10, wrap='word', state='disabled', font=(self.mono_font, 9))
         scroll = ttk.Scrollbar(self.log_frame, command=self.log.yview)
         self.log.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right', fill='y')
@@ -264,7 +272,7 @@ class App:
 
     def form(self):
         return Form(base=self.vars['base'].get(), update=self.vars['update'].get(), keys=self.vars['keys'].get(),
-                    lang=self.selected_lang(), dest=self.vars['dest'].get())
+                    firmware=self.vars['firmware'].get(), lang=self.selected_lang(), dest=self.vars['dest'].get())
 
     def refresh_form(self):
         form = self.form()
@@ -288,6 +296,11 @@ class App:
         if path:
             self.vars[name].set(os.path.normpath(path))
 
+    def pick_firmware(self):
+        path = filedialog.askdirectory(title=self.cat('ui.pick_firmware'), mustexist=True)
+        if path:
+            self.vars['firmware'].set(os.path.normpath(path))
+
     def pick_dest(self):
         path = filedialog.askdirectory(title=self.cat('ui.pick_dest'), mustexist=False)
         if path:
@@ -304,7 +317,7 @@ class App:
             return
         self.form_error.configure(text='')
         command = form.command(self.layout.python, root=self.layout.root if self.layout.dev else None,
-                               temp=self.run_args.get('temp'), verify=self.run_args.get('verify', False))
+                               temp=self.run_args.get('temp'), verify_hashes=self.run_args.get('verify', False))
         self.begin(command, self.layout.root)
 
     def begin(self, command, cwd):
@@ -378,7 +391,7 @@ class App:
             glyph.configure(text=GLYPH[state], foreground=COLOR[state])
             name.configure(text=self.cat('step.' + s) + (f'  ({self.cat("ui.state_" + state)})'
                                                           if state in (SKIPPED, FAILED) else ''),
-                           font=('Segoe UI', 10, 'bold') if state == RUNNING else ('Segoe UI', 10))
+                           font=(self.ui_font, 10, 'bold') if state == RUNNING else (self.ui_font, 10))
         mode = m.mode or 'install'
         self.run_header.configure(text=self.cat('ui.running_' + mode if mode in ('install', 'resume', 'update')
                                                 else 'ui.running_install'))
@@ -493,10 +506,10 @@ class App:
 # ---- self test ---------------------------------------------------------------------------------------------------
 
 SAMPLE_START = {'type': 'start', 'release': 'selftest', 'mode': 'install', 'dest': 'Z:/selftest/TotK', 'log': 'D:\\log.txt',
-                'steps': ['check', 'extract', 'lift', 'compile', 'prepare', 'cleanup']}
+                'steps': ['check', 'fonts', 'extract', 'lift', 'compile', 'prepare', 'cleanup']}
 SAMPLE_RUN = [
     SAMPLE_START,
-    {'type': 'plan', 'run': ['check', 'extract'], 'skip': {}},
+    {'type': 'plan', 'run': ['check', 'fonts', 'extract'], 'skip': {}},
     {'type': 'step', 'step': 'check', 'state': 'started'},
     {'type': 'progress', 'step': 'check', 'phase': 'inputs'},
     {'type': 'space', 'dest': 'Z:/selftest/TotK', 'need': 36_400_000_000, 'free': 210_000_000_000, 'temp': 'C:\\t',
@@ -509,12 +522,14 @@ SAMPLE_RUN = [
 ]
 
 
-SAMPLE_OK = [SAMPLE_START, {'type': 'plan', 'run': ['check', 'extract'], 'skip': {'lift': 'current', 'compile': 'current',
-                                                                       'prepare': 'current', 'cleanup': 'not_needed'}},
+SAMPLE_OK = [SAMPLE_START, {'type': 'plan', 'run': ['check', 'extract'], 'skip': {'fonts': 'current', 'lift': 'current',
+                                                                       'compile': 'current', 'prepare': 'current',
+                                                                       'cleanup': 'not_needed'}},
              {'type': 'step', 'step': 'check', 'state': 'started'},
              {'type': 'step', 'step': 'check', 'state': 'done', 'seconds': 1.0},
              {'type': 'step', 'step': 'extract', 'state': 'started'},
              {'type': 'step', 'step': 'extract', 'state': 'done', 'seconds': 1.0},
+             {'type': 'step', 'step': 'fonts', 'state': 'skipped', 'reason': 'current'},
              {'type': 'step', 'step': 'lift', 'state': 'skipped', 'reason': 'current'},
              {'type': 'step', 'step': 'compile', 'state': 'skipped', 'reason': 'current'},
              {'type': 'step', 'step': 'prepare', 'state': 'skipped', 'reason': 'current'},
@@ -532,7 +547,7 @@ def grab(root, path):
 
 
 def selftest(layout, shots=None):
-    """Every screen in both languages; the window closes itself. Returns 0 when nothing raised."""
+    """Every screen in every language; the window closes itself. Returns 0 when nothing raised."""
     fix_tcl_paths()
     root = tk.Tk()
     root.geometry('+60+40')

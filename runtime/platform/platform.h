@@ -61,6 +61,23 @@ void plat_fiber_unself(void);             // the calling thread stops being a fi
 PlatFiber *plat_fiber_new(size_t stack, void (*fn)(void *arg), void *arg);
 void plat_fiber_switch(PlatFiber *to);    // from the fiber the calling thread runs
 void plat_fiber_free(PlatFiber *f);       // a fiber nobody runs
+
+// A jump back to a point saved earlier on the same thread, without unwinding the frames in between (no SEH, no C++
+// cleanups): the kernel's ExitThread leaves the lifted frames this way. plat_jmp_save returns 0 when it saves and 1
+// when plat_jmp_go comes back to it; the function that called it must still be running. It keeps the callee-saved
+// registers and the floating-point control state. On Windows this is not the C runtime's setjmp: a non-unwinding
+// setjmp leaves the buffer's frame 0, and the C runtime's longjmp ends the process with 0xc0000409 (fast fail 13) on
+// such a buffer when Control Flow Guard is on for the process, which Exploit protection can force on any program.
+#ifdef _WIN32
+typedef struct { uint64_t gpr[10]; uint32_t mxcsr, fpcw; uint64_t pad; uint8_t xmm[160]; } PlatJmp;
+int plat_jmp_save(PlatJmp *j) __attribute__((returns_twice, nothrow));
+_Noreturn void plat_jmp_go(PlatJmp *j);
+#else
+#include <setjmp.h>
+typedef struct { jmp_buf b; } PlatJmp;
+#define plat_jmp_save(j) setjmp((j)->b)
+#define plat_jmp_go(j) longjmp((j)->b, 1)
+#endif
 // Scheduling priority, Windows' seven levels: of the calling thread, or of t. On Linux a thread lowered without the
 // right to raise its priority again (CAP_SYS_NICE, or an RLIMIT_NICE of 20) could never return to normal, and the
 // runtime lowers threads that later take shared locks at normal priority; without that right every change is skipped
@@ -203,13 +220,17 @@ _Noreturn void plat_reexec(void);
 
 // A crash in this executable's own code (an access violation, an illegal instruction, a division by zero, a stack
 // overflow) goes to fn, which reports it and must end the process. Faults in other modules (drivers) are left to the
-// OS. The write-fault hook above runs first.
+// OS. The write-fault hook above runs first. On Windows abort() (a failed assert, std::terminate) and an invalid
+// parameter to a C runtime function go there too, with the host frames in this executable: the C runtime ends the
+// process for both with 0xc0000409 and no exception.
 typedef struct {
     const char *what;          // "access violation", "illegal instruction", ...
     uint32_t code;             // the Windows exception code or the signal number
     uintptr_t rip, offset;     // the faulting instruction, and its offset in the executable
     int access;                // the data access that faulted: 0 read, 1 write, 8 execute; -1 when not an access
     uint64_t addr;             // its address when access >= 0
+    int nframes;               // abort and invalid parameter: return addresses in this executable, innermost first
+    uintptr_t frames[16];      // (rip is frames[0]); 0 for a fault, whose rip is exact
 } PlatCrash;
 void plat_crash_hook(void (*fn)(const PlatCrash *c));
 // A debugging aid: a hardware data breakpoint (the CPU's debug register DR0) on writes to the len bytes at addr (len 1,
@@ -309,6 +330,10 @@ int plat_fs_rename(const char *from, const char *to, int durable);
 int plat_fs_link(const char *existing, const char *path); // a hard link
 int plat_fs_links(const char *path);                      // the file's hard link count, 0 when unknown
 void plat_fs_sync_dir(const char *path);                  // a directory's entries to the disk, as far as the FS allows
+// Why dir could not be renamed, for the log: into out "no permission to rename it" when this process may not delete
+// it, else the programs holding a file under it ("explorer.exe 1234, ..."), else an empty string. Windows refuses to
+// rename a directory with any file open under it; elsewhere out is always empty.
+void plat_fs_busy_reason(const char *dir, char *out, size_t cap);
 // cb(name, kind, size, ctx) for each entry of dir but "." and ".."; cb returns 0 to stop. The listing's error.
 int plat_fs_list(const char *dir, int (*cb)(const char *name, int kind, uint64_t size, void *ctx), void *ctx);
 // An existing file for reading and, with write, writing; *err (may be NULL) gets the reason on failure.
@@ -348,6 +373,7 @@ uint32_t plat_thread_id(void);                            // id of the calling t
 int plat_font_path(const char *lang, char *out, size_t cap);
 // The operating system and its build ("Windows 10.0.28000") into out; 0 when unknown.
 int plat_os_version(char *out, size_t cap);
+int plat_is_wine(void);                                   // 1 when the Windows build runs under Wine; 0 elsewhere
 // The file the process's stderr (the log) goes to, as a UTF-8 path; 0 when stderr is not a file (a console, a pipe).
 int plat_stderr_path(char *out, size_t cap);
 
@@ -391,3 +417,11 @@ PlatChild *plat_child_start(const char *exe, const char *arg, uint32_t *err);
 void plat_child_stop(PlatChild *c);                       // kills the child and frees c
 int plat_child_write(PlatChild *c, const void *data, size_t n);   // 1 when all n bytes were written
 long plat_child_read(PlatChild *c, void *buf, size_t cap);        // bytes read (at least 1); 0 or negative: pipe broke
+
+// ---- restart: this program again, in a new process that starts once this one is gone
+// Starts this executable again with the same command line, environment and working folder, and no handle of this
+// process. 1 when it started; the caller then exits.
+int plat_restart(void);
+// In a process plat_restart started: waits, at most timeout_ms, until the process that started it has exited. 1 after
+// the wait, -1 on timeout, 0 when there is nothing to wait for (not started by plat_restart, or that process is gone).
+int plat_restart_wait(uint32_t timeout_ms);

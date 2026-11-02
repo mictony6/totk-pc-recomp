@@ -55,6 +55,7 @@ typedef struct Tex {
     uint64_t wr_fence;            // any entry: newest submission recorded to write its image (render, copy, clear,
                                   // storage binding); ReadTexels waits for it instead of draining the replay queue
     uint8_t listed;               // in owned[]
+    uint8_t *snap;                // a texture that fills no page: its storage bytes when the GPU write was recorded
     uint32_t wt_n;                // WriteTexels into the storage since the last upload
     struct Tex *rel_prev, *rel_next;   // while released: the list of released entries, oldest first
 } Tex;
@@ -299,7 +300,7 @@ static void init_image(Tex *e, VkCommandBuffer cb) {
 // game sees nothing of it. A map whose storage the CPU writes (mirrored) or that aliases pool memory keeps its size,
 // as its texels must match the guest layout. Above 1 the sun shadows double: the game's 4-tap PCF steps one texel of the
 // size it allocated, which on the larger map is a fraction of a texel (docs/maxwell.md, section 6); TOTK_SHADOW_RES
-// (resolution.c res_shadow_res) gives the game a larger size it filters correctly.
+// (resolution.c shadow_init) gives the game a larger size it filters correctly.
 static int shadow_scale(void) {
     static int scale = -1;
     if (scale < 0) {
@@ -545,6 +546,7 @@ static void destroy_tex(Tex *e) {
     if (e->released) nreleased--, rel_unlink(e);
     vk_exec_image_gone(e->pub.image);
     vk_defer_image(e->pub.image, e->alloc);
+    free(e->snap);
     free(e);
 }
 
@@ -765,12 +767,33 @@ static void upload(Tex *e) {
     perf_end(PERF_TEX, p0);
 }
 
+// Whether e's storage fills no 4 KiB page of its own, so the write tracking can only see writes to pages it shares.
+static int fills_no_page(const Tex *e) {
+    return ((e->pub.addr + e->t.L.size) & ~0xfffull) <= ((e->pub.addr + 0xfff) & ~0xfffull);
+}
+
+// A texture that fills no page keeps a copy of its storage bytes from when a GPU write to it was recorded
+// (vk_texture_gpu_written), up to SNAP_MAX bytes; wb_exact (TOTK_WB_EXACT, default on) enables it.
+enum { SNAP_MAX = 4096 };
+static int wb_exact = -1;
+static volatile int32_t n_kept;
+
 // vk_mem_changed over the pages wholly inside e's storage (all of its pages when it fills none): a neighbour that shares
-// the first or last page does not count as a write to e.
+// the first or last page does not count as a write to e. A texture that fills no page shares all of its pages, so
+// there a page write counts only when e's own bytes differ from the copy taken at the GPU write. TotK's Purah Pad
+// camera renders the ID, screen rect and depth of what is under the reticle into 4x4 targets of 512 bytes, two
+// slots used in turn, and the CPU reads them a frame later. One slot's rect target shares its page with data the CPU
+// writes every frame: without the copy its renders were never written back, the game read a zero rect every other
+// frame and the target's name label blinked. TOTK_WB_EXACT=0 restores the page-only decision.
 static int storage_rewritten(const Tex *e, uint32_t since, uint32_t *now) {
     uint64_t lo = (e->pub.addr + 0xfff) & ~0xfffull, hi = (e->pub.addr + e->t.L.size) & ~0xfffull;
     if (hi <= lo) lo = e->pub.addr, hi = e->pub.addr + e->t.L.size;
-    return vk_mem_changed(lo, hi - lo, since, now);
+    int ch = vk_mem_changed(lo, hi - lo, since, now);
+    if (ch != 1 || !since || !e->snap || memcmp(e->snap, (const void *)(uintptr_t)e->pub.addr, e->t.L.size)) return ch == 1;
+    log_limited(&n_kept, "write-back of %#llx kept: fmt %#x %ux%u, %llu bytes; a neighbour wrote its page",
+                (unsigned long long)e->pub.addr, e->t.d.format, e->t.d.width, e->t.d.height,
+                (unsigned long long)e->t.L.size);
+    return 0;
 }
 
 // A mirrored texture is uploaded on first use and again when its storage pages carry a newer write generation.
@@ -985,6 +1008,10 @@ void vk_texture_gpu_written(const tex_t *t) {
         if (e->pub.mirrored) {
             e->gpu_dirty = 1;
             storage_rewritten(e, 0, &e->gpu_gen);   // CPU writes up to here are older than this render
+            if (wb_exact < 0) wb_exact = cfg_bool("TOTK_WB_EXACT");
+            if (wb_exact && !e->snap && e->t.L.size <= SNAP_MAX && fills_no_page(e) && !(e->snap = malloc(SNAP_MAX)))
+                rt_fatal("vk: out of memory for a texture's storage copy");
+            if (e->snap) memcpy(e->snap, (const void *)(uintptr_t)e->pub.addr, e->t.L.size);
             e->gpu_seq = ++gpu_writes;
             e->gpu_fence = vk_exec_recording_fence();
             wb_cfg_init();
@@ -1587,8 +1614,7 @@ static VkCompareOp compare_op(uint32_t f) {
     }
 }
 
-static struct { int init, mirror_clamp_edge, minmax, border_no_format; } sf;
-static float aniso_force;   // TOTK_ANISO: 0 = the game's level, else the least level of mipmapped colour samplers
+static struct { int init, mirror_clamp_edge, minmax, border_no_format; float aniso; } sf;   // aniso: TOTK_ANISO, 0 = the game's
 
 static void sampler_features(VkCtx *c) {
     if (sf.init) return;
@@ -1601,8 +1627,8 @@ static void sampler_features(VkCtx *c) {
     sf.minmax = f12.samplerFilterMinmax;
     sf.border_no_format = c->has_custom_border_color && cbf.customBorderColors && cbf.customBorderColorWithoutFormat;
     const char *an = cfg_value("TOTK_ANISO");
-    aniso_force = strcmp(an, "game") ? (float)atoi(an) : 0;
-    rt_log("vk: anisotropic filtering: %s", aniso_force > 1 ? an : "the game's");
+    sf.aniso = strcmp(an, "game") ? (float)atoi(an) : 0;
+    rt_log("vk: anisotropic filtering: %s", sf.aniso > 1 ? an : "the game's");
     sf.init = 1;
 }
 
@@ -1635,14 +1661,26 @@ static VkSampler make_sampler(VkCtx *c, const samp_par *d) {
     si.maxLod = d->lod_max > 1000 ? VK_LOD_CLAMP_NONE : d->lod_max;
     if (mf <= NVN_MIN_FILTER_LINEAR) si.maxLod = si.minLod + 0.25f;   // not mipmapped: stay on the base level
     if (si.maxLod < si.minLod) si.maxLod = si.minLod;
-    float lim = c->props.limits.maxSamplerLodBias;
-    si.mipLodBias = fmaxf(-lim, fminf(lim, d->lod_bias));
+    float lim = c->props.limits.maxSamplerLodBias, bias = d->lod_bias;
+    // DLSS upscaling (resolution.c): the scene's material textures, the filtered mipmapped ones that repeat, are
+    // sampled for the output's resolution; clamped ones (post effects, LUTs, the UI) keep the game's bias.
+    if (!d->cmp_mode && mf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR &&
+        (si.addressModeU == VK_SAMPLER_ADDRESS_MODE_REPEAT || si.addressModeU == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT ||
+         si.addressModeV == VK_SAMPLER_ADDRESS_MODE_REPEAT || si.addressModeV == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT))
+        bias += res_dlss_lod_bias();
+    si.mipLodBias = fmaxf(-lim, fminf(lim, bias));
+    // TOTK_ANISO raises the level for filtered, mipmapped colour samplers that repeat on U and V: the surface textures,
+    // which tile, so ground and walls seen at a shallow angle stay sharp into the distance. Depth-compare (shadow)
+    // samplers, nearest or unmipmapped ones (data maps, LUTs) and clamped ones keep the game's level: clamped samplers
+    // read screen-sized buffers, whose coordinates can stretch steeply at an object's edge, where anisotropic taps reach
+    // across it and leave a speckled fringe (the inventory's character preview).
     float aniso = d->aniso;
-    // TOTK_ANISO raises the level for filtered, mipmapped colour samplers only: depth-compare (shadow) samplers and
-    // nearest or unmipmapped ones (data maps, LUTs) keep what the game set.
-    if (aniso_force > 1 && !d->cmp_mode && si.magFilter == VK_FILTER_LINEAR && si.minFilter == VK_FILTER_LINEAR &&
-        (mf == NVN_MIN_FILTER_LINEAR_MIPMAP_NEAREST || mf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR) && aniso < aniso_force)
-        aniso = aniso_force;
+    // The game's own wrap modes: a mirror-clamp one maps to MIRRORED_REPEAT where the device lacks mirror-clamp-to-edge.
+    int tiled = (d->ws == NVN_WRAP_MODE_REPEAT || d->ws == NVN_WRAP_MODE_MIRRORED_REPEAT) &&
+                (d->wt == NVN_WRAP_MODE_REPEAT || d->wt == NVN_WRAP_MODE_MIRRORED_REPEAT);
+    if (sf.aniso > aniso && tiled && !d->cmp_mode && si.magFilter == VK_FILTER_LINEAR && si.minFilter == VK_FILTER_LINEAR &&
+        (mf == NVN_MIN_FILTER_LINEAR_MIPMAP_NEAREST || mf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR))
+        aniso = sf.aniso;
     if (aniso > 1) {
         si.anisotropyEnable = VK_TRUE;
         si.maxAnisotropy = fminf(aniso, c->props.limits.maxSamplerAnisotropy);

@@ -7,9 +7,11 @@
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <psapi.h>
+#include <restartmanager.h>
 #include <shellapi.h>
 #include <timeapi.h>
 #include <tlhelp32.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
@@ -201,6 +203,69 @@ void plat_fiber_free(PlatFiber *f) {
     DeleteFiber(f->h);
     free(f);
 }
+
+// plat_jmp_save / plat_jmp_go: PlatJmp holds rbx, rbp, rdi, rsi, r12-r15, the caller's rsp and the return address at
+// 0..72, MXCSR at 80, the x87 control word at 84 and xmm6-xmm15 from 96, the Win64 callee-saved state. Both are leaf
+// code that does not move rsp before it leaves, so they need no unwind data.
+_Static_assert(sizeof(PlatJmp) == 256 && __builtin_offsetof(PlatJmp, xmm) == 96, "plat_jmp_save layout");
+__asm__(".text\n"
+        ".globl plat_jmp_save\n"
+        ".def plat_jmp_save; .scl 2; .type 32; .endef\n"
+        ".p2align 4\n"
+        "plat_jmp_save:\n"
+        "    movq %rbx, 0(%rcx)\n"
+        "    movq %rbp, 8(%rcx)\n"
+        "    movq %rdi, 16(%rcx)\n"
+        "    movq %rsi, 24(%rcx)\n"
+        "    movq %r12, 32(%rcx)\n"
+        "    movq %r13, 40(%rcx)\n"
+        "    movq %r14, 48(%rcx)\n"
+        "    movq %r15, 56(%rcx)\n"
+        "    leaq 8(%rsp), %rdx\n"   // the caller's rsp after this call returns
+        "    movq %rdx, 64(%rcx)\n"
+        "    movq (%rsp), %rdx\n"
+        "    movq %rdx, 72(%rcx)\n"
+        "    stmxcsr 80(%rcx)\n"
+        "    fnstcw 84(%rcx)\n"
+        "    movdqu %xmm6, 96(%rcx)\n"
+        "    movdqu %xmm7, 112(%rcx)\n"
+        "    movdqu %xmm8, 128(%rcx)\n"
+        "    movdqu %xmm9, 144(%rcx)\n"
+        "    movdqu %xmm10, 160(%rcx)\n"
+        "    movdqu %xmm11, 176(%rcx)\n"
+        "    movdqu %xmm12, 192(%rcx)\n"
+        "    movdqu %xmm13, 208(%rcx)\n"
+        "    movdqu %xmm14, 224(%rcx)\n"
+        "    movdqu %xmm15, 240(%rcx)\n"
+        "    xorl %eax, %eax\n"
+        "    ret\n"
+        ".globl plat_jmp_go\n"
+        ".def plat_jmp_go; .scl 2; .type 32; .endef\n"
+        ".p2align 4\n"
+        "plat_jmp_go:\n"
+        "    movq 0(%rcx), %rbx\n"
+        "    movq 8(%rcx), %rbp\n"
+        "    movq 16(%rcx), %rdi\n"
+        "    movq 24(%rcx), %rsi\n"
+        "    movq 32(%rcx), %r12\n"
+        "    movq 40(%rcx), %r13\n"
+        "    movq 48(%rcx), %r14\n"
+        "    movq 56(%rcx), %r15\n"
+        "    ldmxcsr 80(%rcx)\n"
+        "    fldcw 84(%rcx)\n"
+        "    movdqu 96(%rcx), %xmm6\n"
+        "    movdqu 112(%rcx), %xmm7\n"
+        "    movdqu 128(%rcx), %xmm8\n"
+        "    movdqu 144(%rcx), %xmm9\n"
+        "    movdqu 160(%rcx), %xmm10\n"
+        "    movdqu 176(%rcx), %xmm11\n"
+        "    movdqu 192(%rcx), %xmm12\n"
+        "    movdqu 208(%rcx), %xmm13\n"
+        "    movdqu 224(%rcx), %xmm14\n"
+        "    movdqu 240(%rcx), %xmm15\n"
+        "    movq 64(%rcx), %rsp\n"
+        "    movl $1, %eax\n"
+        "    jmpq *72(%rcx)\n");
 
 int plat_thread_spawn(PlatThreadFn fn, void *arg, const char *name, size_t stack) {
     PlatThread *t = plat_thread_new_ex(fn, arg, name, stack);
@@ -587,9 +652,37 @@ static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// abort() and an invalid parameter to a C runtime function raise no exception: the C runtime ends the process with
+// 0xc0000409 after calling the SIGABRT or invalid-parameter handler. The report names the host frames in this
+// executable; the innermost is the caller of abort (assert) or of the C runtime function. Skipped frames: this function
+// and the handler that called it.
+__attribute__((noinline)) static void crash_from_runtime(const char *what, uint32_t code) {
+    PlatCrash c = {what, code, 0, 0, -1, 0};
+    void *f[62];
+    USHORT n = RtlCaptureStackBackTrace(2, 62, f, NULL);
+    MODULEINFO mi;
+    if (GetModuleInformation(GetCurrentProcess(), GetModuleHandleW(NULL), &mi, sizeof mi)) {
+        uintptr_t base = (uintptr_t)mi.lpBaseOfDll;
+        for (USHORT i = 0; i < n && c.nframes < (int)(sizeof c.frames / sizeof *c.frames); i++)
+            if ((uintptr_t)f[i] - base < mi.SizeOfImage) c.frames[c.nframes++] = (uintptr_t)f[i];
+        if (c.nframes) c.rip = c.frames[0], c.offset = c.rip - base;
+    }
+    crash_fn(&c);
+}
+
+static void abort_signal(int sig) { crash_from_runtime("abort", (uint32_t)sig); }
+
+static void invalid_parameter(const wchar_t *expr, const wchar_t *func, const wchar_t *file, unsigned line,
+                              uintptr_t reserved) {
+    (void)expr, (void)func, (void)file, (void)line, (void)reserved;   // NULL and 0 in the release C runtime
+    crash_from_runtime("invalid parameter to a C runtime function", 0xc0000417u);   // STATUS_INVALID_CRUNTIME_PARAMETER
+}
+
 void plat_crash_hook(void (*fn)(const PlatCrash *c)) {
     crash_fn = fn;
     AddVectoredExceptionHandler(0, crash_veh);
+    signal(SIGABRT, abort_signal);
+    _set_invalid_parameter_handler(invalid_parameter);
 }
 
 // ---- write watch: DR0 holds the address; DR7 enables it (L0, bit 0) for data writes (R/W0 = 01, bits 16-17) of LEN0
@@ -912,6 +1005,94 @@ void plat_fs_sync_dir(const char *path) {
     }
 }
 
+// Restart Manager (rstrtmgr.dll, loaded on first use) names the processes that hold a file open.
+typedef DWORD(WINAPI *RmStartSession_t)(DWORD *, DWORD, WCHAR *);
+typedef DWORD(WINAPI *RmRegisterResources_t)(DWORD, UINT, LPCWSTR *, UINT, RM_UNIQUE_PROCESS *, UINT, LPCWSTR *);
+typedef DWORD(WINAPI *RmGetList_t)(DWORD, UINT *, UINT *, RM_PROCESS_INFO *, LPDWORD);
+typedef DWORD(WINAPI *RmEndSession_t)(DWORD);
+static struct {
+    INIT_ONCE once;
+    RmStartSession_t start;
+    RmRegisterResources_t add;
+    RmGetList_t list;
+    RmEndSession_t end;
+} rm = {INIT_ONCE_STATIC_INIT};
+
+static BOOL CALLBACK rm_load(INIT_ONCE *o, void *p, void **c) {
+    (void)o, (void)p, (void)c;
+    HMODULE l = plat_lib_open("rstrtmgr.dll");
+    if (!l) return TRUE;
+    rm.add = (RmRegisterResources_t)(void *)GetProcAddress(l, "RmRegisterResources");
+    rm.list = (RmGetList_t)(void *)GetProcAddress(l, "RmGetList");
+    rm.end = (RmEndSession_t)(void *)GetProcAddress(l, "RmEndSession");
+    RmStartSession_t start = (RmStartSession_t)(void *)GetProcAddress(l, "RmStartSession");
+    if (rm.add && rm.list && rm.end) rm.start = start;   // start set: all of them are there
+    return TRUE;
+}
+
+// The files under dir (links not followed), at most BUSY_FILES of them, each a malloc'd path.
+#define BUSY_FILES 256
+typedef struct { LPCWSTR p[BUSY_FILES]; UINT n; } BusyFiles;
+
+static void busy_files(const wchar_t *dir, BusyFiles *f) {
+    wchar_t pat[WPATH + 4];
+    swprintf(pat, WPATH + 4, L"%ls\\*", dir);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        DWORD a = fd.dwFileAttributes;
+        if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..") || (a & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
+        size_t n = wcslen(dir) + wcslen(fd.cFileName) + 2;
+        wchar_t *p = n <= WPATH ? malloc(n * sizeof *p) : NULL;
+        if (!p) continue;
+        swprintf(p, n, L"%ls\\%ls", dir, fd.cFileName);
+        if (a & FILE_ATTRIBUTE_DIRECTORY) busy_files(p, f), free(p);
+        else f->p[f->n++] = p;
+    } while (f->n < BUSY_FILES && FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+void plat_fs_busy_reason(const char *dir, char *out, size_t cap) {
+    if (!cap) return;
+    *out = 0;
+    wchar_t w[WPATH];
+    if (!widen(dir, w, WPATH)) return;
+    for (wchar_t *q = w; *q; q++)
+        if (*q == L'/') *q = L'\\';
+    // a rename needs DELETE access to the directory: a folder made by an elevated run can refuse it
+    HANDLE h = CreateFileW(w, DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        if (GetLastError() == ERROR_ACCESS_DENIED) snprintf(out, cap, "no permission to rename it");
+        return;
+    }
+    CloseHandle(h);
+    InitOnceExecuteOnce(&rm.once, rm_load, NULL, NULL);
+    DWORD session;
+    WCHAR key[CCH_RM_SESSION_KEY + 1] = {0};
+    if (!rm.start || rm.start(&session, 0, key) != ERROR_SUCCESS) return;
+    BusyFiles f = {.n = 0};
+    busy_files(w, &f);
+    RM_PROCESS_INFO info[8];
+    UINT need = 0, n = 8;
+    DWORD reasons = 0, e = f.n ? rm.add(session, f.n, f.p, 0, NULL, 0, NULL) : ERROR_SUCCESS;
+    if (f.n && e == ERROR_SUCCESS) e = rm.list(session, &need, &n, info, &reasons);
+    else n = 0;
+    rm.end(session);
+    for (UINT i = 0; i < f.n; i++) free((void *)f.p[i]);
+    if (e == ERROR_MORE_DATA) snprintf(out, cap, "%u programs hold files in it", need);   // info is not filled then
+    if (e != ERROR_SUCCESS) return;
+    size_t at = 0;
+    for (UINT i = 0; i < n && at < cap; i++) {   // the program's display name ("Windows Explorer") and process id
+        char name[CCH_RM_MAX_APP_NAME + 1];
+        if (!WideCharToMultiByte(CP_UTF8, 0, info[i].strAppName, -1, name, sizeof name, NULL, NULL)) strcpy(name, "?");
+        int k = snprintf(out + at, cap - at, "%s%s %lu", i ? ", " : "", name, info[i].Process.dwProcessId);
+        if (k < 0) break;
+        at += (size_t)k;
+    }
+}
+
 int plat_fs_list(const char *dir, int (*cb)(const char *name, int kind, uint64_t size, void *ctx), void *ctx) {
     wchar_t wd[WPATH], pat[WPATH + 4];
     if (!widen(dir, wd, WPATH)) return PLAT_FS_ERROR;
@@ -1074,6 +1255,11 @@ int plat_os_version(char *out, size_t cap) {
     snprintf(out, cap, ubr ? "Windows %lu.%lu.%lu.%lu" : "Windows %lu.%lu.%lu", v.dwMajorVersion, v.dwMinorVersion,
              v.dwBuildNumber, ubr);
     return 1;
+}
+
+int plat_is_wine(void) {
+    HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+    return nt && GetProcAddress(nt, "wine_get_version") != NULL;
 }
 
 int plat_stderr_path(char *out, size_t cap) {
@@ -1405,4 +1591,45 @@ long plat_child_read(PlatChild *c, void *buf, size_t cap) {
     DWORD got = 0;
     if (!ReadFile(c->out, buf, (DWORD)cap, &got, NULL)) return -1;
     return (long)got;
+}
+
+// ---- restart
+// TOTK_RESTART_WAIT names the process that called plat_restart, as its id and creation time: a process that has only
+// reused the id is not waited for. Waiting keeps the new process off the old one's files (the log it moves at start,
+// the saves) until the old one is gone; no handle is inherited, so none of them stays open in the new one either.
+#define RESTART_WAIT "TOTK_RESTART_WAIT"
+
+static uint64_t process_created(HANDLE h) {
+    FILETIME c, e, k, u;
+    return GetProcessTimes(h, &c, &e, &k, &u) ? ft64(c) : 0;
+}
+
+int plat_restart(void) {
+    char wait[48];
+    snprintf(wait, sizeof wait, "%lu.%llu", GetCurrentProcessId(), (unsigned long long)process_created(GetCurrentProcess()));
+    plat_setenv(RESTART_WAIT, wait);
+    STARTUPINFOW si = {.cb = sizeof si};
+    PROCESS_INFORMATION pi;
+    wchar_t *cmd = _wcsdup(GetCommandLineW());   // CreateProcessW may write its command line
+    BOOL ok = cmd && CreateProcessW(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    free(cmd);
+    plat_setenv(RESTART_WAIT, NULL);
+    if (!ok) return 0;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return 1;
+}
+
+int plat_restart_wait(uint32_t timeout_ms) {
+    char v[48];
+    if (!plat_getenv(RESTART_WAIT, v, sizeof v)) return 0;
+    plat_setenv(RESTART_WAIT, NULL);   // the processes this one starts do not wait again
+    unsigned long pid = 0;
+    unsigned long long created = 0;
+    if (sscanf(v, "%lu.%llu", &pid, &created) != 2) return 0;
+    HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return 0;   // already gone
+    int r = process_created(h) != created ? 0 : WaitForSingleObject(h, timeout_ms) == WAIT_OBJECT_0 ? 1 : -1;
+    CloseHandle(h);
+    return r;
 }

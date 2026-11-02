@@ -23,8 +23,8 @@
 // TOTK_DUMP_TEX=<id>|<w>x<h>[,...]: those texture slots, or 2D textures of that size, are copied where first sampled,
 // whatever their format, every mip level (..._L<level> after level 0) of layer TOTK_DUMP_TEX_LAYER (default 0; when
 // set, only textures that have that layer).
-// TOTK_DUMP_UBO=1 (or a row count): each listed pipeline also prints the first 16 (or that many) vec4 of its user
-// uniform blocks (c3 and up), read from guest memory when the entry is listed. A block the submission rewrites with
+// TOTK_DUMP_UBO=<n>: each listed pipeline also prints the first n vec4 of its user uniform blocks (c3 and up; 1
+// means 16, the cap is 4096), read from guest memory when the entry is listed. A block the submission rewrites with
 // UpdateUniformBuffer shows its value from before the submission (vk_exec_draw.c upd_note).
 // TOTK_DUMP_FROM=<pass>: the passes and dispatches before that one are listed but not copied (the caps would end the
 // copies before the late passes of a frame).
@@ -59,7 +59,7 @@ static int dump_key;                    // TOTK_DUMP=key: dump_frame stays UINT6
 static char dir[400];
 static FILE *passes_f, *images_f;
 static int seq, finished, copied;      // copied: passes and dispatches of the dump frame whose images were copied
-static int skip_runs, dump_ubo;        // TOTK_DUMP_SKIP_RUNS, TOTK_DUMP_UBO
+static int skip_runs, dump_ubo;        // TOTK_DUMP_SKIP_RUNS, TOTK_DUMP_UBO (vec4 per block, 0 for none)
 static uint32_t want_tex[16][2];       // TOTK_DUMP_TEX: slot id and 0, or width and height
 static int nwant_tex;
 static uint32_t want_layer;            // TOTK_DUMP_TEX_LAYER
@@ -938,6 +938,8 @@ void vk_dump_init(void) {
     const char *du = cfg_get("TOTK_DUMP_UBO");
     dump_ubo = du && *du && *du != '0' ? atoi(du) : 0;   // the vec4 rows printed per block; 1 stands for 16
     if (dump_ubo == 1) dump_ubo = 16;
+    if (dump_ubo > 4096) dump_ubo = 4096;
+    if (dump_ubo < 0) dump_ubo = 0;
     const char *wt = cfg_get("TOTK_DUMP_TEX");
     for (char *q = (char *)wt; q && *q && nwant_tex < 16; q += *q == ',') {
         uint32_t *w = want_tex[nwant_tex++];
