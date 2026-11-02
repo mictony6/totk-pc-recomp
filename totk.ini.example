@@ -337,5 +337,6 @@
 # Largest render target (bytes, 0 to 1073741824) that goes back to its game memory when the game waits for a GPU fence.
 # A game that reads a larger target without invalidating it sees stale bytes at the default. With trace = gfx the log
 # names each dirty target over the limit that stays on the GPU ("fence write-back skipped-for-size") and each one over
-# 65536 bytes that went back ("over-default"). Raising it costs a copy per such target and wait.
-# wb_fence_limit = 65536
+# 262144 bytes that went back ("over-default"). Raising it costs a copy per such target and wait. The default covers
+# the 260x260 grass maps (214528 bytes) that the game's fire logic reads back; 65536 was too small.
+# wb_fence_limit = 262144

@@ -980,7 +980,7 @@ const VkTexImage *vk_texture_get(const tex_t *t) {
 // Small render targets the CPU reads without NVN's invalidate (vk_texture_write_back_small); small_pending: one may be
 // dirty. wb_limit is the largest target (bytes) that goes back when the CPU waits for a fence: TOTK_WB_FENCE_LIMIT,
 // read once. wb_trace: TOTK_TRACE=gfx, read together with it.
-enum { WB_SMALL_DEFAULT = 64 << 10 };
+enum { WB_SMALL_DEFAULT = 256 << 10 };
 static int small_pending;
 static uint64_t wb_limit = WB_SMALL_DEFAULT;
 static int wb_trace;
