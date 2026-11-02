@@ -199,6 +199,9 @@
 # ao_grass: the share of its occlusion that grass and other vegetation keep with GTAO, in percent (0 to 100): 100 is
 # GTAO's own, lower lightens the grass only.
 # ao_grass = 100
+# ao_light: how far a point light (a lamp, a Brightbloom seed) lifts the GTAO occlusion where it shines, in percent (0 to
+# 100). The game cuts its point lights by the occlusion, so a bright lamp leaves an occluded corner dark; 0 keeps that.
+# ao_light = 100
 # ao_char: how much characters (Link, enemies) darken what is right around them with GTAO, in percent (0 to 100).
 # ao_char = 25
 # ao_crease: darkens GTAO's corners and creases more than open surfaces, towards the game's own heavier look, in percent

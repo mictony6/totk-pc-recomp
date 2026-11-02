@@ -223,6 +223,14 @@ void vk_underwater_pass_end(VkExec *ex);
 void vk_underwater_present(uint64_t frame);
 void vk_underwater_sampled(VkExec *ex, const VkTexImage *img);
 extern int vk_underwater_watch;
+// vk_lightao.c: point lights lift the occlusion the composite would cut them by. vk_lightao_pass_end sees which pass
+// writes the game's occlusion image or draws the point lights; the lift runs in vk_lightao_pass_begin, and passes
+// larger than the image then sample vk_lightao_swap_view in place of it (vk_lightao_swap_img).
+void vk_lightao_pass_begin(VkExec *ex);
+void vk_lightao_pass_end(VkExec *ex);
+void vk_lightao_present(uint64_t frame);
+extern const VkTexImage *vk_lightao_swap_img;
+extern VkImageView vk_lightao_swap_view;
 extern const VkTexImage *vk_underwater_swap_img;
 extern VkImageView vk_underwater_swap_view;
 // vk_contact.c: a pass about to begin (its targets resolved, no pass open), and a dispatch or copy about to be recorded

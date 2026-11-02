@@ -1,0 +1,31 @@
+#version 450
+// Point lights lift the occlusion they would be multiplied by (vk_lightao.c). TotK's full-size composite scales the
+// light of its point lights by values the half-size lighting stores in an RGBA8 image: its red channel multiplies the
+// ambient and point light together, and its blue channel, the occlusion, is cut by a steep ramp ((x - 0.75) * 16) before
+// it multiplies the point light. A bright light next to an occluded corner therefore adds nothing there. This pass
+// copies that image and moves red and blue towards 1 where the point lights' own half-size image (two layers of
+// R11G11B10F) is bright; green and alpha pass through unchanged. Layer 0 of that image is a broad light field that is
+// bright almost everywhere (Link black), and layer 1 holds the point lights alone: dark except around the lamps (1.4.3,
+// three Brightbloom seeds on a wall: about 0.14 linear luminance beside a seed, 0.005 to 0.03 over the rest), so layer
+// 1 tells where a point light shines. Both images are at the same size and a pixel only reads its own texels, so no
+// light is spread across a depth edge.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D occ;           // the game's image: R, G, B (occlusion), A (sky)
+layout(binding = 1) uniform sampler2DArray lights;   // the point lights' light, layers 0 and 1
+layout(binding = 2, rgba8) uniform writeonly image2D out_img;
+layout(push_constant) uniform Params {
+    ivec2 size;
+    float strength;   // 0..1: how far a fully lit pixel's occlusion is lifted
+    float lo, hi;     // light (luminance, linear) below which nothing is lifted, and from which it is lifted completely
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= pc.size.x || p.y >= pc.size.y) return;
+    vec4 v = texelFetch(occ, p, 0);
+    float lum = dot(texelFetch(lights, ivec3(p, 1), 0).rgb, vec3(0.2126, 0.7152, 0.0722));
+    float lift = smoothstep(pc.lo, pc.hi, lum) * pc.strength;
+    v.r = mix(v.r, 1.0, lift);
+    v.b = mix(v.b, 1.0, lift);
+    imageStore(out_img, p, v);
+}

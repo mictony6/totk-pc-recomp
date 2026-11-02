@@ -770,6 +770,7 @@ void gfx_window_release_vk(void) {
         vk_gtao_release();
         vk_lightnorm_release();
         vk_underwater_release();
+        vk_lightao_release();
         free_capture();
         free_thumbs();
         for (int i = 0; i < FRAMES; i++) {

@@ -108,6 +108,7 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
     vk_gtao_present(frame);
     vk_lightnorm_present(frame);
     vk_underwater_present(frame);
+    vk_lightao_present(frame);
     __atomic_store_n(&gfx_counters.validation_errors, (uint64_t)vk_validation_errors_total(), __ATOMIC_RELAXED);
     const VkTexImage *img = vk_texture_get(t);
     if (!img || !(img->aspect & VK_IMAGE_ASPECT_COLOR_BIT)) {
