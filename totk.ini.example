@@ -141,8 +141,8 @@
 # Anti-aliasing: game (the game's own FXAA, unless a RomFS mod turns it off), off, or smaa: SMAA 1x on the tonemapped
 # scene in place of the game's FXAA, before the HUD is drawn, so text stays sharp. 1.4.3. Changes apply at once.
 # aa = game
-# Scaling to the window when it is larger than the game resolution: fsr (AMD FSR 1) or bilinear, and FSR's sharpening
-# from 0 (off) to 100. Changes while the game runs take effect at once.
+# Scaling to the window when it is larger than the game resolution: fsr (AMD FSR 1) or bilinear, and the sharpening
+# (AMD RCAS) of the final picture from 0 (off) to 100, with FSR or without. Changes while the game runs take effect at once.
 # upscaler = fsr
 # sharpness = 80
 # Picture shape when the window's shape differs from the game resolution's (a 16:9 picture in a 21:9 fullscreen

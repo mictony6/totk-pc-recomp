@@ -1,7 +1,9 @@
 // AMD FidelityFX Super Resolution 1 on the present path (gfx_present.c present_image): when the window is larger than
 // the game's output, EASU scales the game's crop rectangle to the swapchain size and RCAS sharpens it, in place of the
 // bilinear vkCmdBlitImage. TOTK_UPSCALER=fsr|bilinear picks it, TOTK_SHARPNESS (0..100, 0 = no RCAS pass) sets RCAS;
-// both apply at the next frame.
+// both apply at the next frame. Without FSR scaling (bilinear, 1:1, or an image larger than the window) a non-zero
+// TOTK_SHARPNESS still runs RCAS: a blit scales the crop into the first intermediate image and RCAS sharpens it, so
+// the sharpening also serves DLAA/DLSS output that is only bilinearly enlarged.
 //
 // Per frame: EASU reads the source through a view of its own format (the same colour conversion the blit does) and
 // writes an RGBA16F image of the picture's size on the swapchain (all of it, or the part between black bars,
@@ -111,7 +113,7 @@ static int ensure_images(VkCtx *c, uint32_t w, uint32_t h) {
                                 .format = VK_FORMAT_R16G16B16A16_SFLOAT, .extent = {w, h, 1}, .mipLevels = 1,
                                 .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
                                 .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
+                                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
         if (vmaCreateImage(c->vma, &ci, &ai, &F.img[i], &F.alloc[i], NULL) != VK_SUCCESS) {
             F.img[i] = VK_NULL_HANDLE;
@@ -156,15 +158,57 @@ static void bind_pass(VkCommandBuffer cb, VkPipeline p, VkImageView in, VkImageV
     vkCmdPushConstants(cb, F.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, pc);
 }
 
+// FSR is not scaling: the blit takes the crop to the picture's size in the first intermediate image, RCAS sharpens it into
+// the second, and a 1:1 blit puts the result into the swapchain image. Returns 2 (the caller's blit is replaced).
+static int sharpen_only(VkCommandBuffer cb, VkImage src, const int crop[4], VkImage dst, const int out[4], int sharp) {
+    uint32_t dw = (uint32_t)out[2], dh = (uint32_t)out[3];
+    if (!F.logged) {
+        F.logged = 1;
+        rt_log("vk: RCAS sharpens the %ux%u picture without FSR scaling (sharpness %d)", dw, dh, sharp);
+    }
+    const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, XF = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    barrier(cb, src, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            VK_ACCESS_2_MEMORY_WRITE_BIT, XF, VK_ACCESS_2_TRANSFER_READ_BIT);
+    for (int i = 0; i < 2; i++)
+        barrier(cb, F.img[i], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, CS | XF, 0, CS | XF,
+                VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    VkImageBlit scale = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                         .srcOffsets = {{crop[0], crop[1], 0}, {crop[0] + crop[2], crop[1] + crop[3], 1}},
+                         .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                         .dstOffsets = {{0, 0, 0}, {(int)dw, (int)dh, 1}}};
+    vkCmdBlitImage(cb, src, VK_IMAGE_LAYOUT_GENERAL, F.img[0], VK_IMAGE_LAYOUT_GENERAL, 1, &scale, VK_FILTER_LINEAR);
+    // later submissions that write the source wait for the blit's read
+    barrier(cb, src, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, XF, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0);
+    barrier(cb, F.img[0], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, XF, VK_ACCESS_2_TRANSFER_WRITE_BIT, CS,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    float rcas[8] = {(float)dw, (float)dh, (float)(100 - sharp) / 50.0f, 0, 0, 0, 0, 0};
+    bind_pass(cb, F.rcas, F.view[0], F.view[1], rcas);
+    vkCmdDispatch(cb, (dw + 15) / 16, (dh + 15) / 16, 1);
+    barrier(cb, F.img[1], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, XF,
+            VK_ACCESS_2_TRANSFER_READ_BIT);
+    VkImageBlit region = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                          .srcOffsets = {{0, 0, 0}, {(int)dw, (int)dh, 1}},
+                          .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                          .dstOffsets = {{out[0], out[1], 0}, {out[0] + (int)dw, out[1] + (int)dh, 1}}};
+    vkCmdBlitImage(cb, F.img[1], VK_IMAGE_LAYOUT_GENERAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region,
+                   VK_FILTER_NEAREST);
+    return 2;
+}
+
 int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, int sw, int sh, const int crop[4],
                   VkImage dst, const int out[4]) {
     int cw = crop[2], ch = crop[3];
     uint32_t dw = (uint32_t)out[2], dh = (uint32_t)out[3];
-    if (strcmp(cfg_value("TOTK_UPSCALER"), "fsr") || (dw <= (uint32_t)cw && dh <= (uint32_t)ch) || !fmt) return 0;
+    int sharp = cfg_int("TOTK_SHARPNESS");
+    if (sharp < 0) sharp = 0;
+    if (sharp > 100) sharp = 100;
+    int scale = !strcmp(cfg_value("TOTK_UPSCALER"), "fsr") && (dw > (uint32_t)cw || dh > (uint32_t)ch);
+    if ((!scale && !sharp) || !fmt) return 0;
     VkCtx *c = vk_ctx();
     if (!F.tried) init(c);
     if (!F.ok || !ensure_images(c, dw, dh)) return 0;
     slot %= SLOTS;
+    if (!scale) return sharpen_only(cb, src, crop, dst, out, sharp);
     if (F.src_view[slot]) vkDestroyImageView(c->device, F.src_view[slot], NULL);
     VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = src,
                                 .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = fmt,
@@ -175,9 +219,6 @@ int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, 
         F.src_view[slot] = VK_NULL_HANDLE;
         return 0;
     }
-    int sharp = cfg_int("TOTK_SHARPNESS");
-    if (sharp < 0) sharp = 0;
-    if (sharp > 100) sharp = 100;
     if (!F.logged) {
         F.logged = 1;
         rt_log("vk: FSR upscales %dx%d to %ux%u (sharpness %d)", cw, ch, dw, dh, sharp);

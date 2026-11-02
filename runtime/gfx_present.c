@@ -632,9 +632,10 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     VkImage psrc = graded ? graded : src;
     VkFormat pfmt = graded ? VK_FORMAT_R16G16B16A16_SFLOAT : fmt;
     const int *prect = graded ? grect : rect;
-    // FSR (TOTK_UPSCALER) when the picture's rectangle is larger than the crop; else the bilinear blit
-    int fsr = general && vk_fsr_record(cb, slot, psrc, pfmt, graded ? cw : w, graded ? ch : h, prect, dst, to);
-    g_scaler = fsr ? 2 : cw != to[2] || ch != to[3];
+    // FSR (TOTK_UPSCALER) when the picture's rectangle is larger than the crop; else the bilinear blit, followed by
+    // RCAS sharpening when TOTK_SHARPNESS is set (vk_fsr_record returns 2)
+    int fsr = general ? vk_fsr_record(cb, slot, psrc, pfmt, graded ? cw : w, graded ? ch : h, prect, dst, to) : 0;
+    g_scaler = fsr == 1 ? 2 : cw != to[2] || ch != to[3];
     if (!fsr) {
         if (general)   // a GENERAL source (vk_texture.c images): earlier submissions' writes become visible to the blit here
             sync_barrier(cb, psrc, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,

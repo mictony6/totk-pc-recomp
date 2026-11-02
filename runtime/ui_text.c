@@ -83,8 +83,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_ANISO] = "Texture filtering",
     [UI_MENU_ANISO_DESC] = "Anisotropic filtering of surface textures: ground, roads and walls seen at a shallow angle stay sharp into the distance instead of blurring. Game: the level the game asks for, as on the Switch.",
     [UI_MENU_ANISO_GAME] = "Game",
-    [UI_MENU_SHARPNESS] = "FSR sharpness",
-    [UI_MENU_SHARPNESS_DESC] = "Sharpening after FSR scaling; 0 turns it off.",
+    [UI_MENU_SHARPNESS] = "Sharpness",
+    [UI_MENU_SHARPNESS_DESC] = "Sharpens the final picture (AMD RCAS), with FSR or without: it helps when the game image is enlarged to a larger window, DLAA included. 0 turns it off.",
     [UI_MENU_COLOR] = "Colour",
     [UI_MENU_COLOR_PRESET] = "Colour profile",
     [UI_MENU_COLOR_PRESET_DESC] = "Sets the four values below. Vivid: more contrast and saturation, shadows opened a "
@@ -480,8 +480,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_ANISO] = "Фильтрация текстур",
     [UI_MENU_ANISO_DESC] = "Анизотропная фильтрация текстур поверхностей: земля, дороги и стены под острым углом остаются чёткими вдали, а не размываются. Игра: уровень, который запрашивает игра, как на Switch.",
     [UI_MENU_ANISO_GAME] = "Игра",
-    [UI_MENU_SHARPNESS] = "Резкость FSR",
-    [UI_MENU_SHARPNESS_DESC] = "Повышение резкости после масштабирования FSR; 0 выключает его.",
+    [UI_MENU_SHARPNESS] = "Резкость",
+    [UI_MENU_SHARPNESS_DESC] = "Повышает резкость итоговой картинки (AMD RCAS), с FSR и без него: помогает, когда изображение игры растянуто на окно большего размера, включая DLAA. 0 выключает.",
     [UI_MENU_COLOR] = "Цвет",
     [UI_MENU_COLOR_PRESET] = "Цветовой профиль",
     [UI_MENU_COLOR_PRESET_DESC] = "Задаёт четыре значения ниже. «Яркий»: больше контраста и насыщенности, тени немного "
@@ -871,8 +871,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_ASPECT_DESC] = "Quando o formato da janela difere do da resolução do jogo (uma imagem 16:9 numa tela "
                             "21:9): manter o formato da imagem com barras pretas ou esticá-la sobre a janela.",
     [UI_MENU_ASPECT_FIT] = "Barras pretas", [UI_MENU_ASPECT_STRETCH] = "Esticar",
-    [UI_MENU_SHARPNESS] = "Nitidez do FSR",
-    [UI_MENU_SHARPNESS_DESC] = "Aumento de nitidez após a ampliação do FSR; 0 desliga.",
+    [UI_MENU_SHARPNESS] = "Nitidez",
+    [UI_MENU_SHARPNESS_DESC] = "Aumenta a nitidez da imagem final (AMD RCAS), com ou sem FSR: ajuda quando a imagem do jogo é ampliada para uma janela maior, inclusive com DLAA. 0 desliga.",
 
     [UI_MENU_FPS_LIMIT] = "Limite de quadros",
     [UI_MENU_FPS_LIMIT_DESC] = "O máximo de quadros por segundo que o jogo desenha. Acima de 60 é experimental e "
@@ -1324,8 +1324,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_FOV] = "视野",
     [UI_MENU_FOV_DESC] = "镜头能看到多大范围，以游戏自身视野的百分比表示。"
                           "仅限游戏版本 1.4.3。",
-    [UI_MENU_SHARPNESS] = "FSR 锐度",
-    [UI_MENU_SHARPNESS_DESC] = "FSR 缩放后的锐化强度；0 为关闭。",
+    [UI_MENU_SHARPNESS] = "锐度",
+    [UI_MENU_SHARPNESS_DESC] = "对最终画面进行锐化（AMD RCAS），无论是否使用 FSR：游戏画面被放大到更大的窗口时（包括 DLAA）很有用；0 为关闭。",
     [UI_MENU_COLOR] = "色彩",
     [UI_MENU_COLOR_PRESET] = "色彩配置",
     [UI_MENU_COLOR_PRESET_DESC] = "同时设置下面四项。鲜艳：对比度和饱和度更高，暗部略微提亮（为 OLED 屏幕调校）。"
