@@ -997,3 +997,27 @@ site cascade main 6fabb8 52a83408 @page:x8 b9404108   # mov w8, #20.0  -> ldr w8
 site cascade main 6fac40 52a84408 @page:x8 b9404508   # mov w8, #40.0  -> ldr w8, [page+68]
 site cascade main 6facc8 52a85408 @page:x8 b9404908   # mov w8, #80.0  -> ldr w8, [page+72]
 site cascade main 6fad4c 52a86408 @page:x8 b9404d08   # mov w8, #160.0 -> ldr w8, [page+76]
+
+# Grass draw distance (runtime/resolution.c res_grass_live writes TOTK_GRASS_DIST / 100 to page +96 and switches the
+# set). The grass scene (main+0x9af2a8) turns each grass type's distances in metres (GrassCross0: detail 8 to 15.5 m,
+# fade-out 30.8 to 50.8 m; GrassCross1: 14 to 22.5 m and 96 to 120 m; GrassBlade0/1 and the others likewise) into
+# inverse thresholds 1 / (d * tan 25 deg). Each grass type's draw function (main+0xe6a000..0xe7a000) compares them
+# with G / (s * d) for a terrain tile at distance d, with G the float at +0x1a0 of the view ([context +0x10]): a tile
+# draws at full density, thinned or not at all from that, and the tile loop ends past the last fade. The replacement
+# loads G as before and multiplies it by the factor on the page, so every switch and fade of every grass type,
+# fallen leaves, chips and stones included, moves out by the factor. The factor goes into lane 1 of the loaded register
+# and the by-element fmul writes the scalar, which clears the upper lanes as the plain load does; x16 (x0 at 0xe7a30c,
+# reloaded at 0xe7a334) is dead after each site. The loads of +0x1a0 at 0xe6c9b4, 0xe6df40, 0xe6dffc, 0xe6e0ac and
+# 0xe6e15c read another structure (an array with stride 0x1a4) and stay.
+set grassdist TOTK_GRASS_DIST_PATCH 0
+site grassdist main e6a51c bd41a1c1 bd41a1c1 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x14, #0x1a0] times [page+96]
+site grassdist main e6c768 bd41a1c1 bd41a1c1 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x14, #0x1a0] times [page+96]
+site grassdist main e6edac bd41a1c1 bd41a1c1 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x14, #0x1a0] times [page+96]
+site grassdist main e713bc bd41a1c1 bd41a1c1 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x14, #0x1a0] times [page+96]
+site grassdist main e73ff4 bd41a122 bd41a122 @page:x16 b9406210 4e0c1e02 5fa29042   # ldr s2, [x9, #0x1a0] times [page+96]
+site grassdist main e741a8 bd41a161 bd41a161 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x11, #0x1a0] times [page+96]
+site grassdist main e75d0c bd41a121 bd41a121 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x9, #0x1a0] times [page+96]
+site grassdist main e77a30 bd41a128 bd41a128 @page:x16 b9406210 4e0c1e08 5fa89108   # ldr s8, [x9, #0x1a0] times [page+96]
+site grassdist main e77b94 bd41a141 bd41a141 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x10, #0x1a0] times [page+96]
+site grassdist main e79d3c bd41a1a1 bd41a1a1 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x13, #0x1a0] times [page+96]
+site grassdist main e7a30c bd41a001 bd41a001 @page:x0 b9406000 4e0c1c01 5fa19021   # ldr s1, [x0, #0x1a0] times [page+96]

@@ -14,7 +14,7 @@
 // 64-bit word, +40 the renderer (1.2.1) or display configuration (1.4.3) the patched code stores there.
 // +56 the camera's aspect ratio as a float when the output is not 16:9 (1.4.3, set aspect). +64 to +76 the sun shadow
 // cascades' end distances (1.4.3, set cascade). +60 the field-of-view factor (set fov, res_fov_live). +92 the sun
-// shadow map size as an int (set shadow, shadow_init).
+// shadow map size as an int (set shadow, shadow_init). +96 the grass distance factor (set grassdist, res_grass_live).
 // 1.4.3 scales the scene it reads by output width / 1920 (a 2560x1440 output renders its 1600x900 scene at 2128x1200;
 // MacNativeGames measured the same), so its page holds the wanted size divided by that factor and the game's 5/6 needs
 // no scene patch. 1.2.1 renders the size it reads (1600x900 on a 2560x1440 output): its page holds the wanted size, and
@@ -347,6 +347,30 @@ void res_fov_live(void) {
     memcpy((uint8_t *)rt_patch_page() + 60, &k, sizeof k);   // before the switch: a site that sees it on reads k
     rt_patch_switch(set, pct != 100);
     rt_log("resolution: field of view %d%% of the game's", pct);
+}
+
+// Grass distance (TOTK_GRASS_DIST, percent of the game's, 100..500, live): every grass type's detail switch and
+// fade-out, fallen leaves, chips and stones included, move out by the factor on page +96 (recomp/patches-v143.txt,
+// set grassdist). Above about 150 % the grass gains little distance in play and its densest level ends in a harder
+// edge, probably because grass is placed only on terrain tiles loaded at enough detail, which this does not move. 100
+// switches the set off. Runs on a settings change, like res_fov_live.
+#define GRASS_MIN 100
+#define GRASS_MAX 500
+void res_grass_live(void) {
+    static int set = -2, shown = 100;
+    if (set == -2) set = rt_patch_set("grassdist");
+    int pct = cfg_int("TOTK_GRASS_DIST");
+    pct = pct < GRASS_MIN ? GRASS_MIN : pct > GRASS_MAX ? GRASS_MAX : pct;
+    if (pct == shown) return;
+    shown = pct;
+    if (set < 0) {
+        rt_log("resolution: this game version has no grass distance patch; TOTK_GRASS_DIST=%d does nothing", pct);
+        return;
+    }
+    float k = pct / 100.0f;
+    memcpy((uint8_t *)rt_patch_page() + 96, &k, sizeof k);   // before the switch: a site that sees it on reads k
+    rt_patch_switch(set, pct != 100);
+    rt_log("resolution: grass distance %d%% of the game's", pct);
 }
 
 void res_wanted(unsigned out[2]) {
