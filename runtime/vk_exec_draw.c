@@ -808,7 +808,7 @@ static int bind_range(VkExec *ex, uint64_t addr, uint64_t size, uint64_t align, 
     if (sp.offset % align == 0) {
         VK_MEM_USE(sp);
         *out = (VkDescriptorBufferInfo){sp.buffer, sp.offset, n};
-        if (written) vk_mem_gpu_wrote_mask(&sp, n, (unsigned)written), vk_usnap_drop(addr, n);
+        if (written) vk_mem_gpu_wrote_shader(&sp, n, (unsigned)written), vk_usnap_drop(addr, n);
         count_use(sp.cls, use, n);
         VK_MEM_BOUND(sp);
         return 1;
@@ -985,6 +985,27 @@ static uint64_t ubo_ptr(const VkExec *ex, int st, const GfxShaderRes *r) {
     return a;
 }
 
+// TOTK_WB_DIAG=1: logs each distinct storage buffer a shader writes (stage, buffer address, size) once, with the write
+// mask the write-back will use and, when it is 15 (whole records), why: not a compute shader, no proven mask for the
+// shader, a buffer address that is not 16-byte aligned, or another bound buffer that is not. A later change of the
+// reason for the same buffer logs again; masked buffers are not logged and the table holds 1024 entries.
+static void wb_diag(int st, const GfxShaderRes *r, uint64_t addr, uint64_t size, uint64_t lead, int aligned, unsigned mask) {
+    static int on = -1;
+    static struct { uint64_t addr; unsigned why; } seen[1024];
+    static int n;
+    if (on < 0) on = cfg_bool("TOTK_WB_DIAG");
+    if (!on || mask != 15) return;
+    unsigned why = st != NVN_STAGE_CS ? 0 : !r->write_mask ? 1 : lead ? 2 : !aligned ? 3 : 4;
+    for (int i = 0; i < n; i++)
+        if (seen[i].addr == addr && seen[i].why == why) return;
+    if (n == 1024) return;
+    seen[n].addr = addr, seen[n].why = why, n++;
+    static const char *const names[] = {"not a compute shader", "no proven mask", "unaligned lead",
+                                        "another bound buffer unaligned", "mask is all lanes"};
+    rt_log("wb_diag: stage %d buffer %#llx size %#llx mask %u: %s", st, (unsigned long long)addr,
+           (unsigned long long)size, mask, names[why]);
+}
+
 static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *r, int written) {
     if (!__atomic_load_n(&LIM.ubo_max, __ATOMIC_ACQUIRE)) limits_init();
     uint64_t max = LIM.sbo_max, align = LIM.sbo_align;
@@ -998,12 +1019,13 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
         // vk_caps.c: shaders translated for sbuf_align address the buffer from its address rounded down to it.
         uint64_t lead = vk_caps.sbuf_align ? b->addr & (vk_caps.sbuf_align - 1) : 0;
         unsigned mask = 15;
+        int aligned = 1;
         if (written && st == NVN_STAGE_CS && r->write_mask && !lead) {
-            int aligned = 1;
             for (int i = 0; i < 16; i++) if (ex->ssbo[st][i].addr & 15) aligned = 0;
             for (int i = 0; i < 18; i++) if (ex->ubo[st][i].addr & 15) aligned = 0;
             if (aligned) mask = r->write_mask;
         }
+        if (written) wb_diag(st, r, b->addr - lead, b->size, lead, aligned, mask);
         if (bind_range(ex, b->addr - lead, b->size ? b->size + lead : 0, align, max, ubo ? VK_MUSE_UBO : VK_MUSE_SSBO,
                        written ? (int)mask : 0, &bi)) {
             if (written && bi.buffer != VK_NULL_HANDLE) note_written(ex, b->addr - lead, bi.range);
