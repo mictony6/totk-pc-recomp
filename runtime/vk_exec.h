@@ -214,6 +214,17 @@ void vk_lightnorm_sampled(VkExec *ex, const VkTexImage *img);
 extern int vk_lightnorm_watch;
 extern const VkTexImage *vk_lightnorm_swap_img;
 extern VkImageView vk_lightnorm_swap_view;
+// vk_underwater.c: the half-size scene the water and ice show, upsampled to full size, with the same hooks; while
+// vk_underwater_watch is set, tex_info reports each image a draw samples (vk_underwater_sampled), which finds the game's
+// half-size scene; while vk_underwater_swap_img is set, draws in full-size passes sample vk_underwater_swap_view in its
+// place. vk_underwater_pass_end sees which pass writes it; the upsample runs in vk_underwater_pass_begin.
+void vk_underwater_pass_begin(VkExec *ex);
+void vk_underwater_pass_end(VkExec *ex);
+void vk_underwater_present(uint64_t frame);
+void vk_underwater_sampled(VkExec *ex, const VkTexImage *img);
+extern int vk_underwater_watch;
+extern const VkTexImage *vk_underwater_swap_img;
+extern VkImageView vk_underwater_swap_view;
 // vk_contact.c: a pass about to begin (its targets resolved, no pass open), and a dispatch or copy about to be recorded
 void vk_contact_pass_begin(VkExec *ex);
 void vk_contact_flush(VkExec *ex);

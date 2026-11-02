@@ -580,6 +580,7 @@ void vk_exec_pass_begin(VkExec *ex) {
     vk_aa_flush(ex);
     vk_gtao_pass_begin(ex);
     vk_lightnorm_pass_begin(ex);
+    vk_underwater_pass_begin(ex);
     vk_dlaa_pass(ex);   // DLAA runs before the bloom chain's first pass (vk_dlaa.c)
     // Learned targets (VkTexImage.fb_learned) are attached in the feedback layout
     VkImage want[9];
@@ -636,6 +637,7 @@ void vk_exec_pass_end(VkExec *ex) {
         if (ex->color[i].image && ex->color[i].img && ex->color[i].img->image != ex->color[i].image)
             bc_copy_back(ex, &ex->color[i]);
     if (vk_dump_armed) vk_dump_pass_end(ex);
+    vk_underwater_pass_end(ex);
     uint64_t stamp = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) + 1;
     for (int i = 0; i < 8; i++)
         if (ex->color[i].image) vk_texture_gpu_written(ex->color[i].tex), tfr_note(&ex->color[i], stamp);

@@ -207,6 +207,18 @@
 # shimmer when the camera moves; average gives those lights the average of the four instead. Changes apply at once.
 # light_normals = game
 
+# Particles and effects (the ice rod's glow, sparkles, auras): the game draws them at half resolution and blends them
+# onto the scene so that each pixel takes one of four half-resolution pixels at an edge, which leaves stair steps.
+# smooth blends the four by how close their depth is to the pixel's instead (keeps the game's look and cost). Read at
+# start.
+# effects_upsample = game
+
+# What water and ice show through themselves (the riverbed, the scene behind ice): the game renders it at half
+# resolution, so it looks blurred and stair-stepped. smooth upsamples it to full resolution the same way as
+# effects_upsample before the water is drawn (one extra full-screen pass where water or ice is in view). Changes apply
+# at once.
+# underwater_upsample = game
+
 # NVIDIA DLSS / DLAA for the 3D scene, on NVIDIA RTX GPUs with nvngx_dlss.dll (from NVIDIA's DLSS SDK) next to
 # totk.exe; elsewhere the setting does nothing. The HUD is drawn after it and is not touched. Read at start.
 # dlaa = 0

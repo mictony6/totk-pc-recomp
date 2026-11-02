@@ -560,6 +560,12 @@ static void row_light_normals(void) {
     opt_choice_list("TOTK_LIGHT_NORMALS", UI_MENU_LIGHT_NORMALS, vals, names, 2, UI_MENU_LIGHT_NORMALS_DESC);
 }
 
+static void row_underwater(void) {   // vk_underwater.c; Game and Smooth as for the point lights
+    static const char *const vals[] = {"game", "smooth"};
+    const char *names[] = {menu_text(UI_MENU_LIGHT_NORMALS_GAME), menu_text(UI_MENU_LIGHT_NORMALS_AVERAGE)};
+    opt_choice_list("TOTK_UNDERWATER_UPSAMPLE", UI_MENU_UNDERWATER, vals, names, 2, UI_MENU_UNDERWATER_DESC);
+}
+
 static void row_gpu(void) {
     const char *vals[MAX_GPUS + 1], *names[MAX_GPUS + 1];
     char idx[MAX_GPUS][4];
@@ -695,6 +701,7 @@ static void tab_screen(float scale) {
     opt_slider("TOTK_CONTACT_SHADOWS", UI_MENU_CONTACT_SHADOWS, 0, 100, UI_MENU_CONTACT_SHADOWS_DESC, 10, "%.0f %%");
     row_ao();
     row_light_normals();
+    row_underwater();
     opt_toggle("TOTK_DLAA", UI_MENU_DLAA, UI_MENU_DLAA_DESC);
     static const UiTextId dlss[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
                                     UI_MENU_DLSS_PERFORMANCE};

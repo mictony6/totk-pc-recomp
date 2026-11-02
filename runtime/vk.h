@@ -130,6 +130,7 @@ void vk_hdr_support(float out[4]);
 int vk_contact_strength(void);   // percent, 0 = off
 void vk_aa_release(void);        // before the device goes away
 void vk_gtao_release(void);      // before the device goes away
+void vk_underwater_release(void); // before the device goes away
 void vk_lightnorm_release(void);  // before the device goes away
 void vk_contact_release(void);   // before the device goes away
 void vk_present_flip(void);

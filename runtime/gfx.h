@@ -76,6 +76,14 @@ const uint32_t *gfx_shader_spirv(const GfxShader *s, uint64_t *words);
 // vk_hdr.c: with TOTK_HDR=1, replaces a fragment shader's SPIR-V (malloc'd, *words long) by the HDR tonemap when it is
 // the game's tonemap; gfx_shader.c calls it for every fragment shader entering the cache.
 void vk_hdr_shader_swap(uint32_t **spirv, uint64_t *words);
+// vk_upsample.c: with TOTK_EFFECTS_UPSAMPLE=smooth, replaces the game's composite of its half-resolution effects by
+// shaders/effects_upsample.frag; gfx_shader.c calls it for every fragment shader entering the cache.
+void vk_upsample_shader_swap(uint32_t **spirv, uint64_t *words);
+// vk_hdr.c: replaces *spirv by a copy of ours_spv whose binding k (set 0) takes the binding and set of the game's
+// variable names[k], k < nnames (at most 8). Returns 1 when swapped; 0, leaving *spirv as it was, when one of the
+// names is missing or undecorated.
+int vk_shader_swap_named(uint32_t **spirv, uint64_t *words, const uint32_t *ours_spv, uint64_t ours_words,
+                         const char *const *names, int nnames);
 uint64_t gfx_shader_failures(void);                         // failed translations; feeds GfxStats.shader_failures
 // Reflection: parsed once per shader from the translator's .res.json and the SPIR-V before it enters the cache.
 enum { GFX_RES_UBO, GFX_RES_SSBO, GFX_RES_TEX, GFX_RES_IMG, GFX_RES_KINDS };

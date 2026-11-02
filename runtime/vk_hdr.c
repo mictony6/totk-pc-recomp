@@ -90,14 +90,76 @@ static int name_is(const uint32_t *a, uint32_t len, const char *s) {   // OpName
     return (len - 2) * 4 >= n + 1 && !memcmp(a + 1, s, n + 1);
 }
 
+int vk_shader_swap_named(uint32_t **spirv, uint64_t *words, const uint32_t *ours_spv, uint64_t ours_words,
+                         const char *const *names, int nnames) {
+    enum { MAXN = 8 };
+    if (nnames > MAXN || !*spirv || *words < 5) return 0;
+    const uint32_t *w = *spirv;
+    uint64_t n = *words;
+    uint32_t ids[MAXN] = {0}, bind[MAXN], set[MAXN];
+    int has_bind[MAXN] = {0};
+    for (uint64_t i = 5; i < n;) {   // the game's variables by name
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > n) return 0;
+        const uint32_t *a = w + i + 1;
+        if (op == SPV_OP_NAME && len >= 3)
+            for (int k = 0; k < nnames; k++)
+                if (name_is(a, len, names[k])) ids[k] = a[0];
+        i += len;
+    }
+    for (int k = 0; k < nnames; k++)
+        if (!ids[k]) return 0;
+    for (uint64_t i = 5; i < n;) {   // the bindings and sets of those variables
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        const uint32_t *a = w + i + 1;
+        if (op == SPV_OP_DECORATE && len == 4)
+            for (int k = 0; k < nnames; k++)
+                if (a[0] == ids[k]) {
+                    if (a[1] == SPV_DEC_BINDING) bind[k] = a[2], has_bind[k] |= 1;
+                    else if (a[1] == SPV_DEC_SET) set[k] = a[2], has_bind[k] |= 2;
+                }
+        i += len;
+    }
+    for (int k = 0; k < nnames; k++)
+        if (has_bind[k] != 3) return 0;
+    uint32_t *out = malloc(ours_words * 4);
+    if (!out) return 0;
+    memcpy(out, ours_spv, ours_words * 4);
+    // ours declares binding k for names[k] in set 0: each gets the game's binding and set
+    uint32_t bound = out[3], *ours = calloc(bound ? bound : 1, sizeof *ours);   // id -> our binding + 1
+    if (!ours) {
+        free(out);
+        return 0;
+    }
+    for (uint64_t i = 5; i < ours_words;) {
+        uint32_t op = out[i] & 0xffff, len = out[i] >> 16;
+        uint32_t *a = out + i + 1;
+        if (op == SPV_OP_DECORATE && len == 4 && a[1] == SPV_DEC_BINDING && a[2] < (uint32_t)nnames) {
+            if (a[0] < bound) ours[a[0]] = a[2] + 1;
+            a[2] = bind[a[2]];
+        }
+        i += len;
+    }
+    for (uint64_t i = 5; i < ours_words;) {
+        uint32_t op = out[i] & 0xffff, len = out[i] >> 16;
+        uint32_t *a = out + i + 1;
+        if (op == SPV_OP_DECORATE && len == 4 && a[1] == SPV_DEC_SET && a[0] < bound && ours[a[0]]) a[2] = set[ours[a[0]] - 1];
+        i += len;
+    }
+    free(ours);
+    free(*spirv);
+    *spirv = out;
+    *words = ours_words;
+    return 1;
+}
+
 void vk_hdr_shader_swap(uint32_t **spirv, uint64_t *words) {
     if (!vk_hdr_wanted() || !*spirv || *words < 5) return;
     const uint32_t *w = *spirv;
     uint64_t n = *words;
     // the game's constants: the BT.601 red weight, -1/ln 2 (e^-x as exp2), 2/3 (the grade's red weight), the bloom clamp
     static const float want[4] = {0.298900008f, -1.44269502f, 0.666666687f, 10000.0f};
-    uint32_t float_type = 0, found = 0, ids[5] = {0}, bind[5], set[5];
-    int has_bind[5] = {0};
+    uint32_t float_type = 0, found = 0;
     for (uint64_t i = 5; i < n;) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
         if (!len || i + len > n) return;
@@ -109,56 +171,10 @@ void vk_hdr_shader_swap(uint32_t **spirv, uint64_t *words) {
                 memcpy(&f, &a[2], 4);
                 if (f == want[k]) found |= 1u << k;
             }
-        else if (op == SPV_OP_NAME && len >= 3)
-            for (int k = 0; k < 5; k++)
-                if (name_is(a, len, tm_names[k])) ids[k] = a[0];
         i += len;
     }
     if (found != 15) return;
-    for (int k = 0; k < 5; k++)
-        if (!ids[k]) return;
-    for (uint64_t i = 5; i < n;) {   // the bindings and sets of those variables
-        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
-        const uint32_t *a = w + i + 1;
-        if (op == SPV_OP_DECORATE && len == 4)
-            for (int k = 0; k < 5; k++)
-                if (a[0] == ids[k]) {
-                    if (a[1] == SPV_DEC_BINDING) bind[k] = a[2], has_bind[k] |= 1;
-                    else if (a[1] == SPV_DEC_SET) set[k] = a[2], has_bind[k] |= 2;
-                }
-        i += len;
-    }
-    for (int k = 0; k < 5; k++)
-        if (has_bind[k] != 3) return;
-    uint64_t m = sizeof hdr_tonemap_spv / 4;
-    uint32_t *out = malloc(sizeof hdr_tonemap_spv);
-    if (!out) return;
-    memcpy(out, hdr_tonemap_spv, sizeof hdr_tonemap_spv);
-    // ours declares binding k for tm_names[k] in set 0: each gets the game's binding and set
-    uint32_t bound = out[3], *ours = calloc(bound ? bound : 1, sizeof *ours);   // id -> our binding + 1
-    if (!ours) {
-        free(out);
-        return;
-    }
-    for (uint64_t i = 5; i < m;) {
-        uint32_t op = out[i] & 0xffff, len = out[i] >> 16;
-        uint32_t *a = out + i + 1;
-        if (op == SPV_OP_DECORATE && len == 4 && a[1] == SPV_DEC_BINDING && a[2] < 5) {
-            if (a[0] < bound) ours[a[0]] = a[2] + 1;
-            a[2] = bind[a[2]];
-        }
-        i += len;
-    }
-    for (uint64_t i = 5; i < m;) {
-        uint32_t op = out[i] & 0xffff, len = out[i] >> 16;
-        uint32_t *a = out + i + 1;
-        if (op == SPV_OP_DECORATE && len == 4 && a[1] == SPV_DEC_SET && a[0] < bound && ours[a[0]]) a[2] = set[ours[a[0]] - 1];
-        i += len;
-    }
-    free(ours);
-    free(*spirv);
-    *spirv = out;
-    *words = m;
+    if (!vk_shader_swap_named(spirv, words, hdr_tonemap_spv, sizeof hdr_tonemap_spv / 4, tm_names, 5)) return;
     static volatile int32_t swaps;
     rt_log("hdr: the game's tonemap shader runs as shaders/hdr_tonemap.frag (%d so far)", plat_inc32(&swaps));
 }
