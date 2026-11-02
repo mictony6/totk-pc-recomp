@@ -708,11 +708,34 @@ static uint64_t bindings_hash(const VkExec *ex, const VkPipeInfo *info) {
     return h;
 }
 
+// The draw's output state as NVN set it: colour blend enable bits and channel masks (4 bits per target, r=1 g=2 b=4
+// a=8), each enabled target's blend factors and equations (raw NVN enums), depth test/write/function, alpha to coverage.
+// Blend enable and write mask are dynamic state, so one VkPipeline can draw with several of these.
+static void describe_output(Str *b, const VkPipeState *s) {
+    sp(b, "    out: blend_en %#x chmask %#x depth test %d write %d func %d a2c %d\n", s->color.blend_en, s->chmask.mask,
+       (int)s->ds.dt, (int)s->ds.dw, (int)s->ds.df, s->ms.a2c);
+    for (int i = 0; i < 8; i++)
+        if (s->color_fmt[i] && (s->color.blend_en >> i & 1)) {
+            const blend_st *bl = &s->blend[i];
+            sp(b, "    blend t%d: rgb %d*src %d %d*dst, a %d*src %d %d*dst\n", i, (int)bl->src_rgb, (int)bl->eq_rgb,
+               (int)bl->dst_rgb, (int)bl->src_a, (int)bl->eq_a, (int)bl->dst_a);
+        }
+}
+
+static uint64_t output_hash(const VkPipeState *s) {
+    _Static_assert(sizeof(ds_st) == 8 && sizeof(blend_st) == 8, "output_hash reads them as one word");
+    uint64_t h = 0xcbf29ce484222325ull, v[12] = {s->color.blend_en, s->chmask.mask, 0, s->ms.a2c};
+    memcpy(&v[2], &s->ds, 8);
+    memcpy(&v[4], s->blend, sizeof s->blend);
+    for (int k = 0; k < 12; k++) h = (h ^ v[k]) * 0x100000001b3ull;
+    return h;
+}
+
 void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeInfo *info) {
     plat_mutex_lock(&rec_lock);
     if (!active()) goto out;
     pass_draws++;
-    uint64_t th = bindings_hash(ex, info);
+    uint64_t th = bindings_hash(ex, info) ^ output_hash(s);
     for (int i = 0; i < nents; i++)
         if (ents[i].p == p && ents[i].th == th) {
             ents[i].draws++;
@@ -725,6 +748,7 @@ void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeIn
     Str b = {0};
     sp(&b, "vs %016llx fs %016llx prog %llu prim %d\n", (unsigned long long)shader_hash(s->vs),
        (unsigned long long)shader_hash(s->fs), (unsigned long long)(ex->prog ? ex->prog->serial : 0), s->prim);
+    describe_output(&b, s);
     describe_bindings(&b, ex, info);
     ents[nents++] = (Ent){p, th, 1, b.s};
 out:
