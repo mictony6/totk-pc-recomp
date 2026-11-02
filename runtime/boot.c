@@ -229,13 +229,17 @@ static void save_shot(const tex_t *t, const char *path) {
 // TOTK_SHOTS=lo-hi:step [TOTK_SHOTS_DIR=dir]: every step-th present in [lo, hi] saved as <dir>/f<n>.png (n the
 // present), box-filtered to 480x270; TOTK_SHOTS=w<lo>-<hi>:<step> takes them by world-clock seconds instead, the first
 // present at or after each step (full size with TOTK_SHOTS_FULL=1), for finding short glitches. Pipeline builds stay asynchronous, so the
-// pictures show what a player sees.
+// pictures show what a player sees. TOTK_SHOTS_CROP=x,y,w,h saves that rectangle of the presented frame at full
+// resolution instead, small enough to take every other frame of a minute of play.
 static void series_shot(const tex_t *t, uint64_t n) {
     static int parsed;
     static unsigned long long lo, hi, step, next;
     static const char *dir;
     static int full, world;
+    static unsigned crop[4];   // TOTK_SHOTS_CROP: x, y, w, h; w = 0: none
     if (!parsed) {
+        const char *cr = cfg_get("TOTK_SHOTS_CROP");
+        if (!cr || sscanf(cr, "%u,%u,%u,%u", &crop[0], &crop[1], &crop[2], &crop[3]) != 4) crop[2] = 0;
         full = cfg_get("TOTK_SHOTS_FULL") != NULL;
         const char *e = cfg_get("TOTK_SHOTS");
         double wl, wh, ws;
@@ -258,6 +262,8 @@ static void series_shot(const tex_t *t, uint64_t n) {
     int bgra = fmt == NVN_FORMAT_BGRA8 || fmt == NVN_FORMAT_BGRA8_SRGB;
     if (!bgra && fmt != NVN_FORMAT_RGBA8 && fmt != NVN_FORMAT_RGBA8_SRGB) return;
     uint32_t w = t->d.width, h = t->d.height, ow = full ? w : 480, oh = full ? h : 270;
+    int cropped = crop[2] && crop[0] + crop[2] <= w && crop[1] + crop[3] <= h;
+    if (cropped) ow = crop[2], oh = crop[3];
     uint8_t *px = malloc(4ull * w * h), *out = malloc(4ull * ow * oh);
     if (!px || !out) rt_fatal("boot: out of memory for a TOTK_SHOTS frame");
     view_t view;
@@ -267,6 +273,12 @@ static void series_shot(const tex_t *t, uint64_t n) {
     gfx_backend()->read_texels(t, &view, &r, px, 4ull * w, 4ull * w * h);
     for (uint32_t y = 0; y < oh; y++)
         for (uint32_t x = 0; x < ow; x++) {
+            if (cropped) {   // one texel, no scaling
+                const uint8_t *i = px + 4ull * ((y + crop[1]) * (uint64_t)w + x + crop[0]);
+                uint8_t *o = out + 4ull * (y * ow + x);
+                o[0] = i[bgra ? 2 : 0], o[1] = i[1], o[2] = i[bgra ? 0 : 2], o[3] = 255;
+                continue;
+            }
             uint32_t x0 = x * w / ow, x1 = (x + 1) * w / ow, y0 = y * h / oh, y1 = (y + 1) * h / oh;
             if (x1 <= x0) x1 = x0 + 1;
             if (y1 <= y0) y1 = y0 + 1;

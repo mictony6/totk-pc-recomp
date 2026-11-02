@@ -28,6 +28,10 @@
 // UpdateUniformBuffer shows its value from before the submission (vk_exec_draw.c upd_note).
 // TOTK_DUMP_FROM=<pass>: the passes and dispatches before that one are listed but not copied (the caps would end the
 // copies before the late passes of a frame).
+// TOTK_DUMP_ON=<button>+<frames> (with TOTK_DUMP=key; button A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT): the frame
+// that many frames after the game's input sees that button go down is dumped, as F9 does for the frame after it, for
+// things too brief to time by hand (the name the camera flashes for a few frames when it opens, e.g. L+3). Each press
+// dumps once; the process dumps one frame in all. TOTK_DUMP_LOG=press also logs every frame from the press to that one.
 // TOTK_DUMP_SKIP_RUNS=1: a render pass with the same targets as the render pass before it is logged but not copied
 // (the terrain decals draw one pass each into the G-buffer and would use up both caps).
 #include <math.h>
@@ -968,6 +972,16 @@ void vk_dump_init(void) {
     vk_dump_armed = 1;
     if (dump_key) rt_log("vk_dump: the frame after F9 goes to %s", dir);
     else rt_log("vk_dump: frame %llu goes to %s", (unsigned long long)dump_frame, dir);
+}
+
+// The game's input saw the TOTK_DUMP_ON button go down (input.c input_poll): dump the frame `ahead` frames from now.
+void vk_dump_arm(unsigned ahead) {
+    if (!dump_key || __atomic_load_n(&dump_frame, __ATOMIC_ACQUIRE) != UINT64_MAX) return;
+    open_files();
+    const char *lf = cfg_get("TOTK_DUMP_LOG");
+    if (lf && !strcmp(lf, "press")) log_from = frame_now();   // every frame from the press on is logged
+    __atomic_store_n(&dump_frame, frame_now() + ahead, __ATOMIC_RELEASE);
+    rt_log("vk_dump: armed for frame %llu", (unsigned long long)(frame_now() + ahead));
 }
 
 void vk_dump_present(uint64_t frame) {

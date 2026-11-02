@@ -20,6 +20,7 @@
 #include "nvn_api.h"
 #include "ui/menu.h"
 #include "vk.h"
+#include "vk_exec.h"
 #include "platform/platform.h"
 
 enum { STICK_MAX = 32767, STICK_DIR = 16384, TRIGGER_ON = 16384, RESCAN_MS = 1000 };
@@ -585,11 +586,34 @@ static int blocked(volatile int32_t *flag, uint64_t buttons, const int32_t *axes
     return k && !(k == 2 && !held && plat_cas32(flag, 0, 2) == 2);
 }
 
+// TOTK_DUMP_ON=<button>+<frames> (vk_dump.c): when the game's input sees that button go down, the frame dump is armed.
+static void dump_on_press(uint64_t b) {
+    static int parsed, bit = -1;
+    static unsigned ahead;
+    static uint64_t prev;
+    if (!parsed) {
+        parsed = 1;
+        const char *e = cfg_get("TOTK_DUMP_ON");
+        char name[16];
+        unsigned n = 0;
+        if (e && sscanf(e, "%15[A-Z]+%u", name, &n) == 2)
+            for (size_t i = 0; i < sizeof script_buttons / sizeof *script_buttons; i++)
+                if (!strcmp(name, script_buttons[i].name)) bit = script_buttons[i].bit, ahead = n;
+    }
+    if (bit < 0) return;
+    uint64_t edge = b & ~prev;
+    prev = b;
+    if (edge >> bit & 1) vk_dump_arm(ahead);
+}
+
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     poll_merged(buttons, lx, ly, rx, ry);
     const int32_t axes[4] = {*lx, *ly, *rx, *ry};
     int text = blocked(&g_block, *buttons, axes), menu = blocked(&g_menu, *buttons, axes);
-    if (!text && !menu) return;
+    if (!text && !menu) {
+        dump_on_press(*buttons);
+        return;
+    }
     *buttons = 0; *lx = *ly = *rx = *ry = 0;
 }
 

@@ -165,6 +165,7 @@ void vk_dump_copy(VkExec *ex, uint32_t op, const void *payload);   // before a c
 // An image of the port's own passes (vk_gtao.c), in VK_IMAGE_LAYOUT_GENERAL and outside a render pass: copied at this
 // point of the dump frame to pass_<seq>_<label>_<w>x<h>_<vkformat>_<format>.png and listed in passes.txt
 void vk_dump_image(VkExec *ex, VkImage image, VkFormat vf, uint32_t w, uint32_t h, const char *label);
+void vk_dump_arm(unsigned ahead);       // input.c: TOTK_DUMP_ON: dump the frame `ahead` frames from now
 void vk_dump_present(uint64_t frame);    // vk_be_present: waits for the dump frame's copies and closes the logs
 
 // c0, the NVN driver constant bank of one stage (vk_exec_draw.c; TOTK_FIX_C0=0 binds zeros instead): bank is

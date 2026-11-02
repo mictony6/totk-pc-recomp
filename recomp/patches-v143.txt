@@ -981,8 +981,14 @@ spin sdk 541e54 541f98   # 32 instructions; loads
 
 # Sun shadow map size (patches-v121.txt explains the set and the page). 1.4.3 interpolates the size between a minimum
 # and the base and rounds it up to 8 at main+0x683604; the rounded value is the width (+0x3d8) and, through the packed
-# store at +0xf4, the height (+0x3f8). The page's size goes in just before the rounding.
-site shadow main 683604 11001d6b @page:x11 b9405d6b 11001d6b   # add w11, w11, #7 -> adrp x11, page; ldr w11, [x11, #92]; add w11, w11, #7
+# store at +0xf4, the height (+0x3f8). The allocator (main+0x68318c) serves every shadow type, each from its own table
+# row {base, minimum}: the sun cascades' row starts at 960, the static shadow maps have their own rows (1440, 720), and
+# those keep the game's sizes. The first site compares the row's base (w14 as a float in s19) with 960.0 and leaves
+# the mask in s22; the second puts the page's size in place of the computed one just before the rounding where the mask
+# is set. Vector compares and selects, as an alternative may hold only one flag-using word; x16 and s21 to s23 are free
+# between the sites (main+0x683618 loads x16; the code between them reads s18, s19, s20, s7 and d8 only).
+site shadow main 683594 1e2201d3 1e2201d3 52a88e10 1e270215 5e35e676   # scvtf s19, w14; mov w16, #960.0f; fmov s21, w16; fcmeq s22, s19, s21
+site shadow main 683604 11001d6b @page:x16 bd405e15 1e270177 2eb61eb7 1e2602eb 11001d6b   # ldr s21, [page+92]; fmov s23, w11; bit v23, v21, v22; fmov w11, s23; add w11, w11, #7
 
 # Sun shadow cascade distances (runtime/resolution.c res_shadow_range switches the set on). The depth shadow parameter
 # object (main+0x6fa3c0) registers depth_shadow_near_0_1..3 = 20, 40, 80 m and depth_shadow_far_0 = 160 m as
