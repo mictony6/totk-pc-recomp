@@ -74,7 +74,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
     {"COLOR_GAMMA", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
     {"HDR_UI_NITS", "display"}, {"SHADOW_RES", "display"},
-    {"DLAA", "display"}, {"DLSS", "display"}, {"FXAA", "display"},
+    {"DLAA", "display"}, {"DLSS", "display"},
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
@@ -120,7 +120,7 @@ static const CfgMeta metas[] = {
     {"AO_CREASE", "0", "0..100", LIVE},
     {"LIGHT_NORMALS", "game", "game|average", LIVE},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
-    {"DLAA", "0", "0|1", RESTART}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance", RESTART}, {"FXAA", "1", "0|1", LIVE},
+    {"DLAA", "0", "0|1", RESTART}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance", RESTART},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"ANISO", "game", "game|2|4|8|16", RESTART},   // vk_texture.c sampler_features
     // colour adjustment (vk_color.c); the preset is the menu's, the four values are what the present uses
@@ -223,10 +223,19 @@ static void add(char *key, char *value, int line) {
 // Read as those two, which the menu shows and the next cfg_save writes; a prompts line of the file's own wins. The
 // value still works from the environment (input_pad_layout_pick, input_prompts_pick).
 static void migrate(void) {
-    CfgEntry *layout = NULL, *prompts = NULL;
+    CfgEntry *layout = NULL, *prompts = NULL, *fxaa = NULL, *aa = NULL;
     for (int i = 0; i < n_entries; i++) {
         if (!strcmp(entries[i].key, "PAD_LAYOUT")) layout = &entries[i];
         if (!strcmp(entries[i].key, "PROMPTS")) prompts = &entries[i];
+        if (!strcmp(entries[i].key, "FXAA")) fxaa = &entries[i];
+        if (!strcmp(entries[i].key, "AA")) aa = &entries[i];
+    }
+    // The game's FXAA once had a switch of its own (fxaa = 0), now the anti-aliasing setting's off: fxaa = 0 is read as
+    // aa = off when the file's aa line is absent or game. The FXAA key stays known so the old line raises no warning.
+    if (fxaa && !strcmp(fxaa->value, "0") && (!aa || !strcasecmp(aa->value, "game"))) {
+        if (aa) free(aa->value), aa->value = strdup("off"), aa->dirty = 1;
+        else if (n_entries < CFG_MAX_KEYS) entries[n_entries++] = (CfgEntry){strdup("AA"), strdup("off"), 1, 0};
+        rt_log("cfg: totk.ini fxaa = 0 is read as aa = off");
     }
     if (!layout || strcasecmp(layout->value, "xbox_prompts")) return;
     free(layout->value);

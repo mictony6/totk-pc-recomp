@@ -628,16 +628,13 @@ void vk_dlaa_frame(void) {
     D.cam_addr = 0;
 }
 
-// ---------------------------------------------------------------- the game's FXAA (TOTK_FXAA, live)
-// TotK's FXAA is two full-screen passes after the bloom, just before the HUD: one copies the scene target into a
-// scratch target, the other draws the anti-aliased result back over the scene (found by diffing frame dumps with the
-// game's own switch, ModelSceneExtensionParam EnableFXAA, on and off). With fxaa = 0 the draws of that second pass's
-// fragment shader are skipped, so the scene reaches the HUD as it was. Shaders are known by the FNV-1a hash of their
-// SPIR-V, as vk_dump.c names them; a translator change gives new hashes and the switch then does nothing.
-// With a scene smaller than the output (the game's own 5/6 render scale, or a DLSS mode) the same shader draws the
-// scaled picture into the output-sized target, in a pass without the depth attachment the in-place FXAA has: there it
-// is always drawn, whatever fxaa says (skipping it would leave the 3D picture out), unless DLSS already wrote that
-// target this frame.
+// ---------------------------------------------------------------- the game's FXAA shader as DLSS's scaling pass
+// TotK's FXAA is two full-screen passes after the bloom, just before the HUD (vk_aa.c skips them for TOTK_AA off and
+// smaa). With a scene smaller than the output (the game's own 5/6 render scale, or a DLSS mode) the same fragment
+// shader also draws the scaled picture into the output-sized target, in a pass without the depth attachment the
+// in-place FXAA has. When DLSS already wrote that target this frame, that scaling draw is skipped here. Shaders are
+// known by the FNV-1a hash of their SPIR-V, as vk_dump.c names them; a translator change gives new hashes and the
+// scaling draw is then not skipped.
 // The stock translator's hash, and the one with tools/xlate patch 0010 (PCSS, PR #89) applied.
 static const uint64_t FXAA_FS[] = {0xf450003ebeb3dc52ull, 0x0a12f4bc2a9a4fbeull};
 
@@ -658,20 +655,13 @@ static uint64_t spirv_hash(const GfxShader *s) {
 }
 
 int vk_dlaa_skip_draw(VkExec *ex, const GfxShader *fs) {
-    static uint64_t frame_read = ~0ull;
-    static int fxaa = 1;
-    uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
-    if (f != frame_read) frame_read = f, fxaa = cfg_bool("TOTK_FXAA");   // once a frame: the menu switches it live
-    if (fxaa && !D.up) return 0;   // nothing to skip: no shader lookup per draw at the defaults
-    if (!fs) return 0;
+    if (!D.up || !fs || ex->depth.image) return 0;   // nothing to skip: no shader lookup per draw at the defaults
     uint64_t h = spirv_hash(fs);
-    if (h != FXAA_FS[0] && h != FXAA_FS[1]) return 0;
-    if (!ex->depth.image) return D.up;   // the scaling pass
-    return !fxaa;
+    return h == FXAA_FS[0] || h == FXAA_FS[1];   // the scaling pass, which DLSS replaced
 }
 
 #else
-// NGX is loaded as a Windows DLL; elsewhere DLAA, the DLSS modes' scaling and the FXAA switch do nothing.
+// NGX is loaded as a Windows DLL; elsewhere DLAA and the DLSS modes' scaling do nothing.
 #include "vk_dlaa.h"
 
 int vk_dlaa_wanted(void) { return 0; }

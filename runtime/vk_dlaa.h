@@ -18,6 +18,6 @@ void vk_dlaa_frame(void);
 // the viewport of the scene's draws by the frame's jitter (vk_dlaa_viewport, when the viewport is recorded).
 void vk_dlaa_draw(VkExec *ex);
 void vk_dlaa_viewport(VkExec *ex, VkViewport *v);
-// vk_exec_draw.c, once a draw's fragment shader is known: 1 skips the draw (the game's FXAA while TOTK_FXAA is 0, its
-// scaling draw when DLSS wrote the scaled picture).
+// vk_exec_draw.c, once a draw's fragment shader is known: 1 skips the draw (the game's scaling draw when DLSS wrote the
+// scaled picture).
 int vk_dlaa_skip_draw(VkExec *ex, const GfxShader *fs);
