@@ -75,9 +75,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_ASPECT_FIT] = "Black bars", [UI_MENU_ASPECT_STRETCH] = "Stretch",
     [UI_MENU_FOV] = "Field of view",
     [UI_MENU_FOV_DESC] = "How much of the world the camera shows, in percent of the game's own. Game version 1.4.3 only.",
-    [UI_MENU_GRASS_DIST] = "Grass distance",
-    [UI_MENU_GRASS_DIST_DESC] = "How far grass, flowers, fallen leaves and small stones keep their detail and are drawn, "
-                                "in percent of the game's own. Costs GPU time. Game version 1.4.3 only.",
+    [UI_MENU_GRASS_DIST] = "Grass falloff",
+    [UI_MENU_GRASS_DIST_DESC] = "Where grass, flowers, fallen leaves and small stones start to thin out and fade away, "
+                                "in percent of the game's own. It does not place grass farther than the game does: "
+                                "the densest grass still ends about 32 m away. Costs GPU time. Game version 1.4.3 only.",
     [UI_MENU_SHADOW_RES] = "Shadow map size",
     [UI_MENU_SHADOW_RES_DESC] = "Size of the sun's shadow map. The game's own size changes with the view, down to about 400 "
                                 "near the ground, so leaf shadows look blocky and jump; a fixed size keeps them still and "
@@ -475,9 +476,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_ASPECT_FIT] = "Чёрные полосы", [UI_MENU_ASPECT_STRETCH] = "Растянуть",
     [UI_MENU_FOV] = "Поле зрения",
     [UI_MENU_FOV_DESC] = "Сколько мира показывает камера, в процентах от игрового. Только для версии игры 1.4.3.",
-    [UI_MENU_GRASS_DIST] = "Дальность травы",
-    [UI_MENU_GRASS_DIST_DESC] = "Как далеко трава, цветы, опавшие листья и мелкие камни сохраняют детализацию и "
-                                "рисуются, в процентах от игровой. Нагружает GPU. Только для версии игры 1.4.3.",
+    [UI_MENU_GRASS_DIST] = "Затухание травы",
+    [UI_MENU_GRASS_DIST_DESC] = "Где трава, цветы, опавшие листья и мелкие камни начинают редеть и исчезать, в "
+                                "процентах от игровой дальности. Дальше, чем в игре, трава не появляется: самая густая "
+                                "трава по-прежнему кончается примерно в 32 м. Нагружает GPU. Только для версии игры 1.4.3.",
     [UI_MENU_SHADOW_RES] = "Размер карты теней",
     [UI_MENU_SHADOW_RES_DESC] = "Размер карты теней от солнца. Собственный размер игры меняется вместе с видом, у земли до "
                                 "примерно 400, поэтому тени листвы выглядят квадратными и дёргаются; постоянный размер делает "
@@ -1117,10 +1119,10 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_FOV] = "Campo de visão",
     [UI_MENU_FOV_DESC] = "Quanto do mundo a câmera mostra, em porcentagem do original do jogo. Só na versão 1.4.3 do "
                          "jogo.",
-    [UI_MENU_GRASS_DIST] = "Distância da grama",
-    [UI_MENU_GRASS_DIST_DESC] = "Até onde a grama, as flores, as folhas caídas e as pedrinhas mantêm o detalhe e são "
-                                "desenhadas, em porcentagem do original do jogo. Custa tempo de GPU. Só na versão 1.4.3 "
-                                "do jogo.",
+    [UI_MENU_GRASS_DIST] = "Atenuação da grama",
+    [UI_MENU_GRASS_DIST_DESC] = "Onde a grama, as flores, as folhas caídas e as pedrinhas começam a rarear e a sumir, em "
+                                "porcentagem do original do jogo. Não coloca grama mais longe do que o jogo: a grama "
+                                "mais densa ainda termina a cerca de 32 m. Custa tempo de GPU. Só na versão 1.4.3 do jogo.",
     [UI_MENU_SHADOW_RES] = "Tamanho do mapa de sombras",
     [UI_MENU_SHADOW_RES_DESC] = "Tamanho do mapa de sombras do sol. O tamanho do jogo muda com a vista, até cerca de "
                                 "400 perto do chão, então as sombras das folhas ficam quadriculadas e pulam; um "
@@ -1334,9 +1336,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_FOV] = "视野",
     [UI_MENU_FOV_DESC] = "镜头能看到多大范围，以游戏自身视野的百分比表示。"
                           "仅限游戏版本 1.4.3。",
-    [UI_MENU_GRASS_DIST] = "草地距离",
-    [UI_MENU_GRASS_DIST_DESC] = "草、花、落叶和小石子保持细节并被绘制的距离，以游戏自身距离的百分比表示。"
-                                "会增加 GPU 负担。仅限游戏版本 1.4.3。",
+    [UI_MENU_GRASS_DIST] = "草地衰减",
+    [UI_MENU_GRASS_DIST_DESC] = "草、花、落叶和小石子开始变稀并淡出的位置，以游戏自身距离的百分比表示。"
+                                "不会让草长得比游戏更远：最密的草仍在约 32 米处结束。会增加 GPU 负担。仅限游戏版本 1.4.3。",
     [UI_MENU_SHARPNESS] = "锐度",
     [UI_MENU_SHARPNESS_DESC] = "对最终画面进行锐化（AMD RCAS），无论是否使用 FSR：游戏画面被放大到更大的窗口时（包括 DLAA）很有用；0 为关闭。",
     [UI_MENU_COLOR] = "色彩",

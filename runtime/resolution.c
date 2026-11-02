@@ -349,13 +349,14 @@ void res_fov_live(void) {
     rt_log("resolution: field of view %d%% of the game's", pct);
 }
 
-// Grass distance (TOTK_GRASS_DIST, percent of the game's, 100..500, live): every grass type's detail switch and
+// Grass falloff (TOTK_GRASS_DIST, percent of the game's, 100..150, live): every grass type's detail switch and
 // fade-out, fallen leaves, chips and stones included, move out by the factor on page +96 (recomp/patches-v143.txt,
-// set grassdist). Above about 150 % the grass gains little distance in play and its densest level ends in a harder
-// edge, probably because grass is placed only on terrain tiles loaded at enough detail, which this does not move. 100
-// switches the set off. Runs on a settings change, like res_fov_live.
+// set grassdist). It moves where grass thins and fades, not where the game places it: the grass system's init
+// (main+0xa388e0) builds three rings of 32x32 tiles around the camera, of 2, 4 and 8 m, and the densest types draw
+// from the 2 m ring, so past about 130 % they end in a hard edge at its 32 m border. 100 switches the set off. Runs on
+// a settings change, like res_fov_live.
 #define GRASS_MIN 100
-#define GRASS_MAX 500
+#define GRASS_MAX 150
 void res_grass_live(void) {
     static int set = -2, shown = 100;
     if (set == -2) set = rt_patch_set("grassdist");
@@ -370,7 +371,7 @@ void res_grass_live(void) {
     float k = pct / 100.0f;
     memcpy((uint8_t *)rt_patch_page() + 96, &k, sizeof k);   // before the switch: a site that sees it on reads k
     rt_patch_switch(set, pct != 100);
-    rt_log("resolution: grass distance %d%% of the game's", pct);
+    rt_log("resolution: grass falloff %d%% of the game's", pct);
 }
 
 void res_wanted(unsigned out[2]) {

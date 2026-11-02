@@ -128,7 +128,7 @@ static const CfgMeta metas[] = {
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
     {"DLAA", "0", "0|1", RESTART}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance", RESTART},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
-    {"GRASS_DIST", "100", "100..500", LIVE},   // resolution.c res_grass_live
+    {"GRASS_DIST", "100", "100..150", LIVE},   // resolution.c res_grass_live
     {"ANISO", "game", "game|2|4|8|16", RESTART},   // vk_texture.c sampler_features
     // colour adjustment (vk_color.c); the preset is the menu's, the four values are what the present uses
     {"COLOR_PRESET", "default", "default|vivid|clarity|custom", LIVE}, {"COLOR_BRIGHTNESS", "0", "-30..30", LIVE},
