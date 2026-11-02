@@ -255,11 +255,60 @@ static void crash_handler(const PlatCrash *x) {
 // address in hex (0x...) or module-relative (main+0x...), 4 bytes unless given; rt_watch arms it from diagnostic code
 // for an address only known at run time (a heap object). Each write logs the new value, the lifted function the writing
 // code lies in (the nearest one below it, so host code that writes guest memory is misnamed) and the guest link
-// register. A (writer, value) pair is logged once, the first WATCH_MAX of them.
+// register. A (writer, value) pair is logged once, the first WATCH_MAX of them. TOTK_WATCH_DUMP also logs x19..x28 and
+// guest memory with each logged write: the objects the writing function works on, when it keeps them in callee-saved
+// registers. It is a comma-separated list of x<n>{+<hex>|-<hex>|*}[:<bytes>]: start at register x<n>, add or subtract
+// offsets, * loads the 8-byte pointer at the address so far, then log <bytes> (64 unless given, at most 512) from there.
+// x20+0x178*+8**:0x40 logs the vtable of the second object of the array at [x20+0x178].
 enum { WATCH_MAX = 64 };
 static uint64_t watch_at, watch_seen[WATCH_MAX];
 static int watch_len;
+static char watch_dump_spec[1024];
 static volatile int32_t watch_n;
+
+static void watch_dump(const Cpu *c) {
+    if (!c || !watch_dump_spec[0]) return;
+    rt_log("watch:   x19..x28 %#llx %#llx %#llx %#llx %#llx %#llx %#llx %#llx %#llx %#llx",
+           (unsigned long long)c->x[19], (unsigned long long)c->x[20], (unsigned long long)c->x[21],
+           (unsigned long long)c->x[22], (unsigned long long)c->x[23], (unsigned long long)c->x[24],
+           (unsigned long long)c->x[25], (unsigned long long)c->x[26], (unsigned long long)c->x[27],
+           (unsigned long long)c->x[28]);
+    for (const char *s = watch_dump_spec; *s;) {
+        const char *item = s;
+        char *end;
+        if (*s != 'x' && *s != 'X') break;
+        long reg = strtol(s + 1, &end, 10);
+        if (reg < 0 || reg > 30) break;
+        uint64_t a = c->x[reg];
+        int ok = 1, bytes = 64;
+        for (s = end; ok && (*s == '+' || *s == '-' || *s == '*'); ) {
+            if (*s == '*') ok = plat_mem_read(a, &a, 8), s++;
+            else {
+                uint64_t off = strtoull(s + 1, &end, 16);
+                a = *s == '+' ? a + off : a - off;
+                s = end;
+            }
+        }
+        if (*s == ':') bytes = (int)strtol(s + 1, &end, 0), s = end;
+        bytes = (bytes < 4 ? 4 : bytes > 512 ? 512 : bytes) & ~3;
+        int len = (int)strcspn(item, ",");
+        uint32_t words[128];
+        if (!ok || !plat_mem_read(a, words, (size_t)bytes)) {
+            rt_log("watch:   %.*s: unreadable", len, item);
+        } else {
+            rt_log("watch:   %.*s = %#llx", len, item, (unsigned long long)a);
+            for (int o = 0; o < bytes / 4; o += 4) {
+                char line[96];
+                int n = snprintf(line, sizeof line, "watch:     +%03x", o * 4);
+                for (int i = o; i < o + 4 && i < bytes / 4; i++)
+                    n += snprintf(line + n, sizeof line - (size_t)n, " %08x", words[i]);
+                rt_log("%s", line);
+            }
+        }
+        s = item + len;
+        if (*s == ',') s++;
+    }
+}
 
 static void watch_hit(uintptr_t rip, uintptr_t offset) {
     uint64_t v = 0;
@@ -280,6 +329,7 @@ static void watch_hit(uintptr_t rip, uintptr_t offset) {
     rt_log("watch: %#llx = %#llx, written in f_%llx = %s (host totk+%#llx), guest lr %s", (unsigned long long)watch_at,
            (unsigned long long)v, (unsigned long long)fn, fn ? ldr_describe(fn, f, sizeof f) : "?",
            (unsigned long long)offset, c ? ldr_describe(c->x[30], lr, sizeof lr) : "(a host thread)");
+    watch_dump(c);
 }
 
 int rt_watch(uint64_t addr, int len) {
@@ -312,6 +362,8 @@ void rt_watch_init(void) {
         addr = strtoull(e, &end, 16);
     }
     int len = *end == ':' ? atoi(end + 1) : 4;
+    const char *d = cfg_get("TOTK_WATCH_DUMP");
+    if (d) snprintf(watch_dump_spec, sizeof watch_dump_spec, "%s", d);
     rt_watch(addr, len);
 }
 

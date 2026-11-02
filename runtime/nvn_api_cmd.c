@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cfg.h"
 #include "gfx.h"
 #include "host.h"
 #include "nvn_api.h"
@@ -825,14 +826,35 @@ NVN_API(nvnCommandBufferSetStencilRef) {
 NVN_API(nvnCommandBufferSetPolygonOffsetClamp) {
     *REC(cmd_of(c), OP_POLY_OFFSET, p_poly_offset) = (p_poly_offset){arg_s(c, 0), arg_s(c, 1), arg_s(c, 2)};
 }
+// TOTK_DRAW_LOG=<frame>[:<frames>]: each draw recorded while gfx_counters.frames is in [frame, frame + frames) (1
+// frame unless given) logs the counter, the game's return address, the vertex or index count and the instance count,
+// to find which game function issues a draw and how many instances. The game records on several threads, so one
+// counter value can hold parts of two frames.
+static void draw_log(Cpu *c, const char *kind, int count, int instances) {
+    static int64_t frame = -2, frames = 1;
+    if (frame == -2) {
+        const char *e = cfg_get("TOTK_DRAW_LOG");
+        char *end = NULL;
+        frame = e && *e ? strtoll(e, &end, 10) : -1;
+        if (end && *end == ':') frames = strtoll(end + 1, NULL, 10);
+    }
+    int64_t now = (int64_t)__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
+    if (frame < 0 || now < frame || now >= frame + frames) return;
+    char lr[160];
+    rt_log("draw: %lld %s count %d instances %d lr %s", (long long)now, kind, count, instances,
+           ldr_describe(c->x[30], lr, sizeof lr));
+}
+
 // void nvnCommandBufferDrawArrays(NVNcommandBuffer *cmd, NVNdrawPrimitive prim, int first, int count)
 NVN_API(nvnCommandBufferDrawArrays) {
+    draw_log(c, "arrays", (int)arg_x(c, 3), 1);
     *REC(cmd_of(c), OP_DRAW, p_draw) = (p_draw){(int)arg_x(c, 1), (int)arg_x(c, 2), (int)arg_x(c, 3), 0, 1};
 }
 // void nvnCommandBufferDrawArraysInstanced(NVNcommandBuffer *cmd, NVNdrawPrimitive prim, int first, int count,
 // int base_instance, int instances): zero instances draw nothing
 NVN_API(nvnCommandBufferDrawArraysInstanced) {
     int inst = (int)arg_x(c, 5);
+    draw_log(c, "arrays-inst", (int)arg_x(c, 3), inst);
     if (inst <= 0) return;
     *REC(cmd_of(c), OP_DRAW, p_draw) = (p_draw){(int)arg_x(c, 1), (int)arg_x(c, 2), (int)arg_x(c, 3), (int)arg_x(c, 4), inst};
 }
@@ -840,12 +862,14 @@ NVN_API(nvnCommandBufferDrawArraysInstanced) {
 // NVNbufferAddress indices)
 NVN_API(nvnCommandBufferDrawElements) {
     cmd_t *o = cmd_of(c);
+    draw_log(c, "elements", (int)arg_x(c, 3), 1);
     *REC(o, OP_DRAW_IDX, p_draw_idx) = (p_draw_idx){(int)arg_x(c, 1), (int)arg_x(c, 2), (int)arg_x(c, 3), 0, 0, 1, arg_x(c, 4)};
     hw_fix(o, 48);
 }
 // void nvnCommandBufferDrawElementsBaseVertex(..., NVNbufferAddress indices, int base_vertex)
 NVN_API(nvnCommandBufferDrawElementsBaseVertex) {
     cmd_t *o = cmd_of(c);
+    draw_log(c, "elements-bv", (int)arg_x(c, 3), 1);
     *REC(o, OP_DRAW_IDX, p_draw_idx) =
         (p_draw_idx){(int)arg_x(c, 1), (int)arg_x(c, 2), (int)arg_x(c, 3), (int)arg_x(c, 5), 0, 1, arg_x(c, 4)};
     hw_fix(o, 44);
@@ -854,6 +878,7 @@ NVN_API(nvnCommandBufferDrawElementsBaseVertex) {
 // int instances): assumed to use the 6-parameter draw macro of the base-vertex form (unverified)
 NVN_API(nvnCommandBufferDrawElementsInstanced) {
     cmd_t *o = cmd_of(c);
+    draw_log(c, "elements-inst", (int)arg_x(c, 3), (int)arg_x(c, 7));
     *REC(o, OP_DRAW_IDX, p_draw_idx) = (p_draw_idx){(int)arg_x(c, 1), (int)arg_x(c, 2), (int)arg_x(c, 3),
                                                     (int)arg_x(c, 5), (int)arg_x(c, 6), (int)arg_x(c, 7), arg_x(c, 4)};
     hw_fix(o, 44);
@@ -862,6 +887,7 @@ NVN_API(nvnCommandBufferDrawElementsInstanced) {
 // NVNbufferAddress indices, NVNbufferAddress indirect): the arguments at indirect are often GPU-written, so the replay
 // draws with vkCmdDrawIndexedIndirect from the pool buffer (nxnative hle_nvn.c, SavageWindRecomp cmdbuf.c)
 NVN_API(nvnCommandBufferDrawElementsIndirect) {
+    draw_log(c, "elements-indirect", 0, -1);
     *REC(cmd_of(c), OP_DRAW_IDX_IND, p_draw_idx_ind) = (p_draw_idx_ind){(int)arg_x(c, 1), (int)arg_x(c, 2), arg_x(c, 3), arg_x(c, 4)};
 }
 // void nvnCommandBufferDispatchCompute(NVNcommandBuffer *cmd, int x, int y, int z): caller = the game's return address
