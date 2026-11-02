@@ -37,7 +37,7 @@ layout(push_constant) uniform Params {
     vec4 opt;     // slices, steps per slice, falloff range (fraction of the radius), final value power
     vec4 opt2;    // thin occluder compensation (0: off, XeGTAO's range 0..0.7), vegetation fade (0: none, 1: no AO),
                   // G-buffer normals (1: read), near plane
-    vec4 opt3;    // x: how much characters occlude (0..1)
+    vec4 opt3;    // x: how much characters occlude (0..1), y: how much AO vegetation receives (0..1, TOTK_AO_GRASS)
 } pc;
 
 #define PI 3.1415926535897932
@@ -305,5 +305,7 @@ void main() {
     visibility = max(0.03, pow(visibility, pc.opt.w)) * micro;
     // and is occluded less itself
     if (pc.opt2.y > 0.0) visibility = mix(visibility, 1.0, pc.opt2.y * vegetation(uv));
+    // the grass setting: the share of its occlusion that vegetation keeps
+    if (pc.opt3.y < 1.0) visibility = mix(visibility, 1.0, (1.0 - pc.opt3.y) * vegetation(uv));
     imageStore(ao_out, px, vec4(clamp(visibility / OCCLUSION_TERM_SCALE, 0.0, 1.0), 0.0, 0.0, 0.0));
 }

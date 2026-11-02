@@ -196,6 +196,9 @@
 # ao_strength = 100
 # ao_radius = 1
 # ao_foliage = minimal
+# ao_grass: the share of its occlusion that grass and other vegetation keep with GTAO, in percent (0 to 100): 100 is
+# GTAO's own, lower lightens the grass only.
+# ao_grass = 100
 # ao_char: how much characters (Link, enemies) darken what is right around them with GTAO, in percent (0 to 100).
 # ao_char = 25
 # ao_crease: darkens GTAO's corners and creases more than open surfaces, towards the game's own heavier look, in percent

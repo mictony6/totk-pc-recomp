@@ -131,6 +131,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_AO_FOLIAGE_DESC] = "How much grass, leaves and other thin things darken what is behind them. Minimal is "
                                 "close to the game, which gives foliage no AO; Full darkens fields and trees.",
     [UI_MENU_AO_FOLIAGE_MINIMAL] = "Minimal", [UI_MENU_AO_FOLIAGE_FULL] = "Full",
+    [UI_MENU_AO_GRASS] = "GTAO on grass",
+    [UI_MENU_AO_GRASS_DESC] = "How much of GTAO's occlusion grass and other vegetation keeps. 100 % is full; lower values lighten the shading on grass without touching the rest.",
     [UI_MENU_AO_CHAR] = "GTAO from characters",
     [UI_MENU_AO_CHAR_DESC] = "How much Link and other characters darken the walls and ground right around them. The "
                              "game's own AO gives them a wide, soft shadow.",
@@ -525,6 +527,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_AO_FOLIAGE_DESC] = "Насколько трава, листья и другие тонкие предметы затеняют то, что за ними. Минимально "
                                 "— близко к игре, где у листвы нет затенения; полностью — поля и деревья темнее.",
     [UI_MENU_AO_FOLIAGE_MINIMAL] = "Минимально", [UI_MENU_AO_FOLIAGE_FULL] = "Полностью",
+    [UI_MENU_AO_GRASS] = "GTAO на траве",
+    [UI_MENU_AO_GRASS_DESC] = "Какая доля затенения GTAO остаётся на траве и другой растительности. 100 % — полностью; меньшие значения осветляют траву, не трогая остальное.",
     [UI_MENU_AO_CHAR] = "GTAO от персонажей",
     [UI_MENU_AO_CHAR_DESC] = "Насколько Линк и другие персонажи затеняют стены и землю рядом с собой. Собственное "
                              "затенение игры даёт им широкую мягкую тень.",
@@ -1204,6 +1208,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_AO_FOLIAGE_DESC] = "Quanto a grama, as folhas e outras coisas finas escurecem o que está atrás delas. "
                                 "Mínimo fica perto do jogo, que não aplica oclusão à folhagem; Total escurece campos e árvores.",
     [UI_MENU_AO_FOLIAGE_MINIMAL] = "Mínimo", [UI_MENU_AO_FOLIAGE_FULL] = "Total",
+    [UI_MENU_AO_GRASS] = "GTAO na grama",
+    [UI_MENU_AO_GRASS_DESC] = "Quanto da oclusão do GTAO a grama e outra vegetação mantêm. 100 % é total; valores menores clareiam a grama sem mexer no resto.",
     [UI_MENU_AO_CHAR] = "GTAO dos personagens",
     [UI_MENU_AO_CHAR_DESC] = "Quanto Link e outros personagens escurecem as paredes e o chão ao redor deles. A oclusão "
                              "do próprio jogo dá a eles uma sombra larga e suave.",
@@ -1741,6 +1747,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_AO_FOLIAGE_DESC] = "草、树叶等细小物体使其后方变暗的程度。最小接近游戏本身（不给植被加遮蔽）；"
                                 "完整会让草地和树木变暗。",
     [UI_MENU_AO_FOLIAGE_MINIMAL] = "最小", [UI_MENU_AO_FOLIAGE_FULL] = "完整",
+    [UI_MENU_AO_GRASS] = "草地上的 GTAO",
+    [UI_MENU_AO_GRASS_DESC] = "草和其他植被保留多少 GTAO 遮蔽。100 % 为完整；调低会让草地变亮，其余不受影响。",
     [UI_MENU_AO_CHAR] = "角色产生的 GTAO",
     [UI_MENU_AO_CHAR_DESC] = "林克和其他角色使周围墙壁与地面变暗的程度。游戏自带的遮蔽会在他们周围形成宽而柔的阴影。",
     [UI_MENU_AO_CREASE] = "GTAO 缝隙强调",

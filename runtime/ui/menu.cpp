@@ -550,6 +550,7 @@ static void row_ao(void) {
     static const char *const fol[] = {"minimal", "full"};
     const char *fol_names[] = {menu_text(UI_MENU_AO_FOLIAGE_MINIMAL), menu_text(UI_MENU_AO_FOLIAGE_FULL)};
     opt_choice_list("TOTK_AO_FOLIAGE", UI_MENU_AO_FOLIAGE, fol, fol_names, 2, UI_MENU_AO_FOLIAGE_DESC);
+    opt_slider("TOTK_AO_GRASS", UI_MENU_AO_GRASS, 0, 100, UI_MENU_AO_GRASS_DESC, 5, "%.0f %%");
     opt_slider("TOTK_AO_CHAR", UI_MENU_AO_CHAR, 0, 100, UI_MENU_AO_CHAR_DESC, 5, "%.0f %%");
     opt_slider("TOTK_AO_CREASE", UI_MENU_AO_CREASE, 0, 100, UI_MENU_AO_CREASE_DESC, 5, "%.0f %%");
 }

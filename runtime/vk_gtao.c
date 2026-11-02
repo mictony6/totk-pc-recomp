@@ -1,5 +1,5 @@
 // Ambient occlusion (TOTK_AO: game, gtao; TOTK_AO_STRENGTH percent, TOTK_AO_RADIUS metres, TOTK_AO_FOLIAGE minimal or
-// full; all apply in play).
+// full, TOTK_AO_GRASS percent of the occlusion vegetation keeps; all apply in play).
 // TotK computes its SSAO at a quarter of the screen per axis, in one draw that writes an RGBA8 mask: sun shadow in red,
 // a distance term in green, the AO in blue, a screen-space shadow term in alpha. Two passes then blur the mask and
 // bend the AO through a contrast curve, and the half-resolution lighting reads the mask with one bilinear sample at a
@@ -68,6 +68,7 @@ static struct {
     int tried, mode, ok, init_tried;
     unsigned cfg_ver;
     float strength, radius, thin, fade; // thin: XeGTAO's thin occluder compensation, fade: foliage fade (TOTK_AO_FOLIAGE)
+    float grass;                        // how much AO vegetation receives (TOTK_AO_GRASS, percent, 100)
     float char_occ;                     // how much characters occlude what is around them (TOTK_AO_CHAR, percent, 25)
     int denoise;                        // denoise passes, the compose's included (TOTK_AO_DENOISE)
     float slices, steps;                // horizon directions and samples per direction (TOTK_AO_SLICES, TOTK_AO_STEPS)
@@ -129,6 +130,8 @@ static void update_mode(void) {
     G.crease = (float)(cr < 0 ? 0 : cr > 100 ? 100 : cr) / 100.0f;
     int cp = cfg_int("TOTK_AO_CHAR");
     G.char_occ = (float)(cp < 0 ? 0 : cp > 100 ? 100 : cp) / 100.0f;
+    int gr = cfg_int("TOTK_AO_GRASS");
+    G.grass = (float)(gr < 0 ? 0 : gr > 100 ? 100 : gr) / 100.0f;
     const char *kv = cfg_get("TOTK_AO_KEPT");
     int ka = kv && *kv ? atoi(kv) : 108;
     G.kept_ao = (float)(ka < 0 ? 0 : ka > 255 ? 255 : ka) / 255.0f;
@@ -334,7 +337,7 @@ void vk_gtao_flush(VkExec *ex) {
                      (float)G.dw, (float)G.dh, 1.0f / (float)G.dw, 1.0f / (float)G.dh,
                      G.slices, G.steps, 0.615f, 2.2f,   // slices, steps (TOTK_AO_SLICES, TOTK_AO_STEPS), falloff range, power
                      G.thin, G.fade, gnormal ? 1.0f : 0.0f, znear,   // TOTK_AO_FOLIAGE; the G-buffer's normals
-                     G.char_occ, 0, 0, 0};
+                     G.char_occ, G.grass, 0, 0};
     run(cb, P_MAIN, (VkImageView[5]){depth, VK_NULL_HANDLE, material, albedo, gnormal}, pt, G.img[I_AO].view,
         G.img[I_EDGES].view, mpc, sizeof mpc);
     // denoise passes back and forth between the two visibility images, the compose's own the last: XeGTAO leaves the

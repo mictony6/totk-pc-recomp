@@ -30,7 +30,7 @@ static int save_ok = 1;                         // the last cfg_save_to wrote (o
 // Every name the runtime reads (and the patch sets in generated/), without the prefix. A file key outside this list is
 // logged as unknown. A new variable goes here too, or its ini key logs a harmless "unknown key" line.
 static const char *const known[] = {
-    "AA", "AA_LOG", "AB", "AMIIBO_DIR", "ANISO", "AO", "AO_CHAR", "AO_CREASE", "AO_DENOISE", "AO_FOLIAGE", "AO_KEPT",
+    "AA", "AA_LOG", "AB", "AMIIBO_DIR", "ANISO", "AO", "AO_CHAR", "AO_CREASE", "AO_DENOISE", "AO_FOLIAGE", "AO_GRASS", "AO_KEPT",
     "AO_LOG", "AO_RADIUS", "AO_SLICES", "AO_STEPS", "AO_STRENGTH", "AO_TRACE", "APP_POOL", "ASPECT", "ASPECT_PATCH",
     "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_OFF", "AUDIO_PREFILL_MS",
     "BACKGROUND_WINDOW", "BIND_A", "BIND_B", "BIND_DOWN", "BIND_L", "BIND_LCLICK", "BIND_LEFT", "BIND_LSTICK_DOWN", "BIND_LSTICK_LEFT",
@@ -78,7 +78,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
-    {"AA", "display"}, {"AO", "display"}, {"AO_STRENGTH", "display"}, {"AO_RADIUS", "display"}, {"AO_FOLIAGE", "display"}, {"AO_CHAR", "display"}, {"AO_CREASE", "display"}, {"LIGHT_NORMALS", "display"},
+    {"AA", "display"}, {"AO", "display"}, {"AO_STRENGTH", "display"}, {"AO_RADIUS", "display"}, {"AO_FOLIAGE", "display"}, {"AO_GRASS", "display"}, {"AO_CHAR", "display"}, {"AO_CREASE", "display"}, {"LIGHT_NORMALS", "display"},
     {"EFFECTS_UPSAMPLE", "display"},
     {"UNDERWATER_UPSAMPLE", "display"},
     {"MENU_LANG", "language"}, {"LANG", "language"}, {"OPERATION_MODE", "language"},
@@ -119,7 +119,7 @@ static const CfgMeta metas[] = {
     {"AA", "game", "game|off|smaa", LIVE}, {"AO", "game", "game|gtao", LIVE},
     {"AO_STRENGTH", "100", "0..300", LIVE}, {"AO_RADIUS", "1", "0.25..5", LIVE},
     {"AO_FOLIAGE", "minimal", "minimal|full", LIVE}, {"AO_CHAR", "25", "0..100", LIVE},
-    {"AO_CREASE", "0", "0..100", LIVE},
+    {"AO_CREASE", "0", "0..100", LIVE}, {"AO_GRASS", "100", "0..100", LIVE},
     {"LIGHT_NORMALS", "game", "game|average", LIVE},
     // half-resolution effects composite (vk_upsample.c): on at start (the shader is swapped as shaders load)
     {"EFFECTS_UPSAMPLE", "game", "game|smooth", RESTART},
