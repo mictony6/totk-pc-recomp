@@ -1432,12 +1432,13 @@ static Twin *twin_update(VkExec *ex, const VkTexImage *img) {
 // normals, while averaged ones replace them, for those (vk_lightnorm.c, which also learns here what its candidate draw
 // samples); in a full-size pass, the game's half-size scene behind water, while ours replaces it, for ours
 // (vk_underwater.c, which also learns here which image that is); in a pass larger than it, the game's occlusion
-// image, while ours with the point lights' lift replaces it (vk_lightao.c).
+// image, while ours with the point lights' lift replaces it (vk_lightao.c); in a pass larger than it, the scene's light
+// target, once DLSS scaled it this frame, for DLSS's output (vk_dlaa.c).
 static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage, int separate, VkDescriptorImageInfo *out) {
     tex_info_lookup(ex, r, h, storage, separate, out);
     if (h && !storage &&
         (vk_gtao_swap_img || vk_lightnorm_swap_img || vk_lightnorm_watch || vk_underwater_swap_img || vk_underwater_watch ||
-         vk_lightao_swap_img)) {
+         vk_lightao_swap_img || vk_dlaa_swap_img)) {
         const VkTexImage *img = vk_texture_by_id_locked((int)(h & 0xfffff), NULL, NULL);
         if (img && img == vk_gtao_swap_img)
             out->imageView = vk_gtao_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL, vk_gtao_swap_hits++;
@@ -1447,6 +1448,8 @@ static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage,
             out->imageView = vk_underwater_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         else if (img && img == vk_lightao_swap_img && ex->in_pass && ex->pass_w > img->width + 1)
             out->imageView = vk_lightao_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        else if (img && img == vk_dlaa_swap_img && ex->in_pass && ex->pass_w > img->width + 1)
+            out->imageView = vk_dlaa_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         if (vk_lightnorm_watch) vk_lightnorm_sampled(ex, img);
         if (vk_underwater_watch && ex->in_pass) vk_underwater_sampled(ex, img);
     }

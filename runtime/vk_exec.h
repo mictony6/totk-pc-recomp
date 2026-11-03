@@ -233,6 +233,10 @@ extern const VkTexImage *vk_lightao_swap_img;
 extern VkImageView vk_lightao_swap_view;
 extern const VkTexImage *vk_underwater_swap_img;
 extern VkImageView vk_underwater_swap_view;
+// vk_dlaa.c: once DLSS has scaled the scene this frame, passes larger than the scene's light target vk_dlaa_swap_img
+// sample DLSS's output vk_dlaa_swap_view in its place, so the game's scaling draw scales DLSS's picture.
+extern const VkTexImage *vk_dlaa_swap_img;
+extern VkImageView vk_dlaa_swap_view;
 // vk_contact.c: a pass about to begin (its targets resolved, no pass open), and a dispatch or copy about to be recorded
 void vk_contact_pass_begin(VkExec *ex);
 void vk_contact_flush(VkExec *ex);
