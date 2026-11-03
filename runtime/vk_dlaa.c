@@ -92,6 +92,7 @@ static int p_getp(const NgxParam *p, const char *n, void **v) { return NGX_OK(((
 // in play (vk_dlaa_frame). Without that file DLSS cannot run, and NGX stays unloaded, so machines without DLSS keep
 // their start time and device. Switched off, nothing of DLAA runs per frame.
 int vk_dlaa_wanted(void) { return res_dlss_dll(); }
+int vk_dlaa_available(void) { return vk_dlaa_wanted() && N.available; }   // the device brought NGX up with DLSS
 
 static int core_load(void) {
     if (N.tried) return N.loaded;
@@ -1117,6 +1118,7 @@ const VkTexImage *vk_dlaa_swap_img;
 VkImageView vk_dlaa_swap_view;
 
 int vk_dlaa_wanted(void) { return 0; }
+int vk_dlaa_available(void) { return 0; }
 void vk_dlaa_instance_exts(const char **ext, uint32_t *n, uint32_t max) { (void)ext, (void)n, (void)max; }
 void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, const char **ext, uint32_t *n, uint32_t max) {
     (void)have, (void)nhave, (void)ext, (void)n, (void)max;
