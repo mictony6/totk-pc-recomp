@@ -477,9 +477,10 @@ static void copy_t2t(VkExec *ex, const p_copy_t2t *p) {
 
 static void copy_b2b(VkExec *ex, const p_copy_b2b *p) {
     uint64_t src = p->src, dst = p->dst, left = p->size;
-    int started = 0;
+    int started = 0, spans = 0;
+    VkMemSpan d = {0};
     while (left) {
-        VkMemSpan s, d;
+        VkMemSpan s;
         if (!vk_mem_resolve(src, 1, &s) || !vk_mem_resolve(dst, 1, &d)) {
             warn_once(W_BUFFER, "buffer copy %#llx -> %#llx (%llu bytes) leaves backed memory: rest skipped",
                       (unsigned long long)p->src, (unsigned long long)p->dst, (unsigned long long)p->size);
@@ -498,12 +499,14 @@ static void copy_b2b(VkExec *ex, const p_copy_b2b *p) {
         VkBufferCopy bc = {s.offset, d.offset, n};
         vkCmdCopyBuffer(ex->cb, s.buffer, d.buffer, 1, &bc);
         vk_mem_gpu_wrote(&d, n);
+        spans++;
         ex->recorded++;
         vk_mem_count(s.cls, VK_MUSE_COPY_SRC, n);
         vk_mem_count(d.cls, VK_MUSE_GPU_WRITE, n);
         src += n, dst += n, left -= n;
     }
     if (started) note_gpu_write(ex, p->dst, p->size - left);
+    if (spans == 1 && !left && !nvn_gpu_only(p->dst)) vk_exec_readback(ex, &d, p->size);   // the CPU may read it back
 }
 
 // ---- buffer fills (ClearBuffer, and ReportValue as a 4-byte one): vkCmdFillBuffer in GPU order after a full

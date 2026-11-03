@@ -27,6 +27,7 @@ typedef struct VkCtx {
     int xfer_shared;                        // 1: no separate queue; serialise with gfx_queue
     VmaAllocator vma;
     VkSemaphore timeline;                   // one timeline semaphore; values are issued by vk_sync.c
+    VkSemaphore readback;                   // timeline of the readback points (vk_sync_split_readback)
     VkDebugUtilsMessengerEXT messenger;
     volatile int32_t validation_errors;        // errors seen by the messenger (TOTK_VK_VALIDATION=1)
     int validation;                         // layer active
@@ -216,6 +217,9 @@ void vk_mem_pick(VkMemSpan *sp);
 #define VK_MEM_USE(sp) do { if (vk_mirror_on && (sp).pool) vk_mem_use(&(sp)); } while (0)
 #define VK_MEM_PICK(sp) do { if (vk_mirror_on && (sp).pool) vk_mem_pick(&(sp)); } while (0)
 void vk_mem_gpu_wrote(const VkMemSpan *sp, uint64_t size);
+// Records the copy of [sp.offset, sp.offset + size) of a mirror into guest memory now, then a barrier to host reads;
+// returns the commands recorded, -1 when the span's bytes cannot reach guest memory before the submission ends.
+int vk_mem_write_back_now(VkCommandBuffer cb, const VkMemSpan *sp, uint64_t size);
 void vk_mem_gpu_wrote_mask(const VkMemSpan *sp, uint64_t size, unsigned mask);
 // A shader's storage-buffer write: goes back through the write-back merge (vk_memory.c), which keeps the words the GPU
 // did not change; mask only matters where the merge is off.
@@ -412,6 +416,9 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
 // batch) without a signal, and returns a new begun one for the rest of the submission. The submission's timeline value
 // is signalled by its last part, whose signal covers every earlier part in submission order.
 VkCommandBuffer vk_sync_split(void);
+// vk_sync_split whose part also signals the next readback point (vk_exec.c vk_exec_readback).
+VkCommandBuffer vk_sync_split_readback(void);
+int vk_sync_readback_wait(uint64_t lo, uint64_t hi);   // GfxBackend.readback_wait
 // Runs fn(arg) on the completion thread once fence is done on the GPU (event writes, counter reports, sync state).
 // Callbacks run in the order they were added, after those of earlier values; a value already done runs at once there.
 void vk_completion_add(uint64_t fence, void (*fn)(void *), void *arg);

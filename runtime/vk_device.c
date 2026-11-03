@@ -356,7 +356,8 @@ static int create_device(void) {
     VkSemaphoreTypeCreateInfo st = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
                                     .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE, .initialValue = 0};
     VkSemaphoreCreateInfo si = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = &st};
-    if ((r = vkCreateSemaphore(g_vk.device, &si, NULL, &g_vk.timeline)) != VK_SUCCESS) {
+    if ((r = vkCreateSemaphore(g_vk.device, &si, NULL, &g_vk.timeline)) != VK_SUCCESS ||
+        (r = vkCreateSemaphore(g_vk.device, &si, NULL, &g_vk.readback)) != VK_SUCCESS) {
         rt_log("vk: timeline semaphore creation failed (%d)", (int)r);
         return 0;
     }
@@ -372,6 +373,7 @@ static void destroy_all(void) {
     if (g_vk.device) vk_astc_release();
     if (g_vk.device) vk_crumbs_release();
     if (g_vk.timeline) vkDestroySemaphore(g_vk.device, g_vk.timeline, NULL);
+    if (g_vk.readback) vkDestroySemaphore(g_vk.device, g_vk.readback, NULL);
     vk_headroom_stop();
     if (g_vk.vma) vmaDestroyAllocator(g_vk.vma);
     if (g_vk.device) vkDestroyDevice(g_vk.device, NULL);

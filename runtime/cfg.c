@@ -146,7 +146,7 @@ static const CfgMeta metas[] = {
     // Game
     {"FPS_LIMIT", "60", "30|40|45|60|90|120|144|display", LIVE}, {"FPS60", "1", "0|1", LIVE},
     {"REALTIME", "1", "0|1", RESTART}, {"CLOTH_REALTIME", "1", "0|1", RESTART},
-    {"HIGHFPS_FIX", "1", "0|1", RESTART}, {"FRAME_OVERLAP", "1", "0|1", LIVE},   // nvn_api_core.c frame_overlap_fence
+    {"HIGHFPS_FIX", "1", "0|1", RESTART}, {"FRAME_OVERLAP", "0", "0|1", LIVE},   // nvn_api_core.c frame_overlap_fence
     {"LANG", "", "ja|en-US|fr|de|it|es|zh-CN|ko|nl|pt|ru|zh-TW|en-GB|fr-CA|es-419|zh-Hans|zh-Hant|pt-BR", RESTART},
     {"OPERATION_MODE", "docked", "docked|handheld", RESTART},
     {"ASSUME_FOCUS", "1", "0|1", LIVE},   // read on every focus change (ov_system.c)

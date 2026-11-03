@@ -528,6 +528,7 @@ const GfxBackend gfx_vulkan_backend = {
     .guest_written = vk_be_guest_written,
     .guest_read = vk_be_guest_read,
     .cpu_synced = vk_be_cpu_synced,
+    .readback_wait = vk_sync_readback_wait,
 };
 
 void vk_backend_shutdown(void) {

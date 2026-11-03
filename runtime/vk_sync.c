@@ -47,6 +47,13 @@ static int stop;
 static Pending *queue;            // side effects in the order they were added
 static int qhead, qn, qcap;
 
+// Readback points (vk_exec.c vk_exec_readback): a part that ends right after a GPU copy the CPU reads back signals the
+// next value of VkCtx.readback. rb_ring (st_lock) holds the newest points with the value of their submission.
+#define RB_RING 16
+typedef struct { uint64_t fence, value; } RbPoint;
+static RbPoint rb_ring[RB_RING];
+static uint64_t rb_value;         // newest readback value handed out (sub_lock)
+
 // ---- GPU time (TOTK_TRACE=perf): each submission part (vk_sync_split) writes a timestamp when it starts and when it
 // ends, into a ring of query pairs. The completion thread reads a pair once the part's value is reached and adds the
 // part's interval to the busy time, counting overlap with the previous part once. Off (one log line) when the queue
@@ -307,6 +314,8 @@ void vk_sync_start(void) {
         plat_mutex_lock(&st_lock);
         issued = done = now;
         if (reserved < now) reserved = now;
+        rb_value = 0;   // a new device's readback semaphore starts at 0
+        memset(rb_ring, 0, sizeof rb_ring);
         stop = 0;
         plat_mutex_unlock(&st_lock);
         vk_mem_note_submit(now);
@@ -363,7 +372,7 @@ static VkCommandBuffer prologue(VkCtx *c, uint64_t fence) {
     return cb;
 }
 
-VkCommandBuffer vk_sync_split(void) {
+static VkCommandBuffer split(uint64_t rb) {
     VkCtx *c = vk_ctx();
     VkCommandBuffer cb = slots[cur_slot].cb;
     ts_end(cb, cur_fence);
@@ -372,8 +381,11 @@ VkCommandBuffer vk_sync_split(void) {
     VkCommandBuffer pro = prologue(c, cur_fence);
     VkCommandBufferSubmitInfo cbi[2] = {{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = pro},
                                         {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cb}};
+    VkSemaphoreSubmitInfo sig = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, .semaphore = c->readback,
+                                 .value = rb, .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
     VkSubmitInfo2 si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2, .commandBufferInfoCount = pro ? 2 : 1,
-                        .pCommandBufferInfos = pro ? cbi : cbi + 1};
+                        .pCommandBufferInfos = pro ? cbi : cbi + 1, .signalSemaphoreInfoCount = rb ? 1u : 0u,
+                        .pSignalSemaphoreInfos = &sig};
     ts_submitted();
     vk_queue_lock();
     VkResult r = vkQueueSubmit2(c->gfx_queue, 1, &si, VK_NULL_HANDLE);
@@ -391,6 +403,43 @@ VkCommandBuffer vk_sync_split(void) {
     ts_begin(s->cb);
     rec_begin(s->cb);
     return s->cb;
+}
+
+VkCommandBuffer vk_sync_split(void) { return split(0); }
+
+VkCommandBuffer vk_sync_split_readback(void) {
+    uint64_t v = ++rb_value;
+    VkCommandBuffer cb = split(v);
+    plat_mutex_lock(&st_lock);
+    rb_ring[v % RB_RING] = (RbPoint){cur_fence, v};
+    plat_mutex_unlock(&st_lock);
+    return cb;
+}
+
+// The newest readback point of the submissions with values in (lo, hi]: those are replayed in order, so it is the one
+// the CPU reads last. Points older than the ring are long done.
+int vk_sync_readback_wait(uint64_t lo, uint64_t hi) {
+    vk_sync_start();
+    plat_mutex_lock(&st_lock);
+    int replayed = issued >= hi;
+    uint64_t v = 0;
+    for (int i = 0; i < RB_RING; i++)
+        if (rb_ring[i].fence > lo && rb_ring[i].fence <= hi && rb_ring[i].value > v) v = rb_ring[i].value;
+    plat_mutex_unlock(&st_lock);
+    if (!replayed) return 0;
+    if (!v) return 1;
+    VkCtx *c = vk_ctx();
+    uint64_t p0 = perf_begin();
+    VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
+                              .pSemaphores = &c->readback, .pValues = &v};
+    VkResult r = vkWaitSemaphores(c->device, &wi, UINT64_MAX);
+    if (r != VK_SUCCESS) {
+        vk_device_fault_report(r);
+        rt_fatal("vk: vkWaitSemaphores on readback point %llu failed (%d; device lost?)", (unsigned long long)v, (int)r);
+    }
+    perf_end(PERF_FENCE, p0);
+    perf_gpu_wait(p0);
+    return 1;
 }
 
 // Asynchronous replay (vk_backend.c): the value the next queued submission or present will signal. Values are handed

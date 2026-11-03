@@ -818,6 +818,29 @@ static void maybe_split(VkExec *ex) {
     n_parts++;
 }
 
+// ---- readback points
+// Every frame TotK copies 304 bytes of ambient light terms (written by a 1x1 draw over the 64x64 environment cubemap)
+// into a pool the CPU reads the next frame (1.4.3: 0x1b8057040 -> 0x1b7cc6240 or +0x400). On a Switch the frame
+// pacing wait covers the whole frame, so they are there. With frame overlap that wait is for the previous frame, and a
+// mirrored pool gets its bytes back only at the end of the submission: now and then the CPU read the terms a frame
+// late, and the lit scene stepped in creases and contact areas (shrine wall base 0.2730 -> 0.2664) and stayed. After a
+// copy of at most RB_MAX bytes into CPU-visible memory the bytes go to guest memory at once and the part ends with a
+// readback point, which the overlapped wait waits for too (nvn_api_core.c nvnSyncWait).
+#define RB_MAX 1024
+void vk_exec_readback(VkExec *ex, const VkMemSpan *d, uint64_t size) {
+    if (size > RB_MAX || !nvn_frame_overlap()) return;
+    int n = vk_mem_write_back_now(ex->cb, d, size);
+    if (n < 0) return;
+    ex->recorded += n;
+    ex->cb = vk_sync_split_readback();
+    part_start = ex->recorded;
+    part_t0 = kern_now_ns();
+    split_draws = 0;
+    ex->dirty = VK_EXEC_DIRTY_ALL;
+    vk_exec_draw_new_cb();
+    n_parts++;
+}
+
 static void walk(VkExec *ex, const op_hdr *h, int depth) {
     for (;;) {
         if (h->size < sizeof *h || (h->size & 7) || h->op >= OP_COUNT_)

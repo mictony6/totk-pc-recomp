@@ -133,6 +133,7 @@ static void null_write_texels(const tex_t *t, const view_t *v, const NVNcopyRegi
 static void null_guest_written(uint64_t addr, uint64_t size) { (void)addr, (void)size; }
 static void null_guest_read(uint64_t addr, uint64_t size) { (void)addr, (void)size; }
 static void null_cpu_synced(uint64_t fence) { (void)fence; }
+static int null_readback_wait(uint64_t lo, uint64_t hi) { (void)lo, (void)hi; return 1; }
 
 const GfxBackend gfx_null_backend = {
     .name = "null",
@@ -153,4 +154,5 @@ const GfxBackend gfx_null_backend = {
     .guest_written = null_guest_written,
     .guest_read = null_guest_read,
     .cpu_synced = null_cpu_synced,
+    .readback_wait = null_readback_wait,
 };
