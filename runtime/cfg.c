@@ -39,7 +39,7 @@ static const char *const known[] = {
     "BIND_SKIP", "BIND_STATS", "BIND_UP", "BIND_X", "BIND_Y",
     "BIND_ZL", "BIND_ZR", "BLOCK_VIEWS_3D", "BUFFER_WRITE_MASKS", "CLOTH_REALTIME", "COLOR_BRIGHTNESS", "COLOR_CONTRAST", "COLOR_GAMMA",
     "COLOR_PRESET", "COLOR_SATURATION", "CONTACT_DEBUG", "CONTACT_SHADOWS", "CORE_DIAG", "CRIT", "CRIT_OUT",
-    "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLSS", "DLSS_MODEL", "DRAW_LOG", "DUMP", "DUMP_BUF", "DUMP_DIR",
+    "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLAA_MASKDEBUG", "DLAA_MVDEBUG", "DLAA_OBJMV", "DLAA_SURVEY", "DLAA_TIMES", "DLSS", "DLSS_MODEL", "DLSS_REACTIVE", "DRAW_LOG", "DUMP", "DUMP_BUF", "DUMP_DIR",
     "DUMP_FROM", "DUMP_LOG", "DUMP_ON", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_TEX_LAYER", "EFFECTS_UPSAMPLE", "EXEFS", "FEEDBACK", "FIX_C0", "FIX_ZERO",
     "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES", "FLIGHT_SPIKE_MS", "FLIGHT_THUMBS", "FOV", "FOV_PATCH",
     "FPS60", "FPS_LIMIT", "FRAME_OVERLAP", "FREEZE_IDLE", "FREE_CORES", "FULLSCREEN", "FXAA", "GPL", "GPL_DRAW_BUILD", "GPU",
@@ -47,6 +47,8 @@ static const char *const known[] = {
     "INPUT_RECORD", "INPUT_SCRIPT", "LANG", "LIB_PREBUILD", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS",
     "LIGHT_NORMALS", "LOCALE", "LOD_GUARD", "LSTICK_DEADZONE", "MEMORY", "MENU_LANG", "MENU_TEST",
     "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MIRROR_GAP", "MIRROR_LIST", "MIRROR_RANGE", "MOTION", "MOUSE_SENS", "MOVIE_HOST", "MOVIE_PACE",
+    "MVOBJ_ALL", "MVOBJ_BANKS", "MVOBJ_EQUAL", "MVOBJ_EXACT", "MVOBJ_EXEC", "MVOBJ_NOC4", "MVOBJ_ONLY", "MVOBJ_TIMES", "MVPREV_CHECK", "MVPREV_GROW", "MVPREV_SKIP", "MVPREV_TRUST", "MV_CHECK",
+    "MV_SURVEY",
     "ONE_PER_CORE", "OPERATION_MODE", "OUTPUT_RES", "PAD_LAYOUT", "PATCH_OUTPUT", "PATCH_SCENE", "PCSS", "PCSS_K", "PERF_OVERLAY", "PERF_SLOW_MS", "PIPELINE_CACHE", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SKIP", "PIPE_SYNC", "PIPE_WAIT",
     "PREWARM_XLATE", "PROBE_MOVIE", "PROBE_MOVIE_SHOT", "PROFILE", "PROFILE_CHAINS", "PROFILE_DIR", "PROFILE_FRAMES",
     "PROFILE_MAIN", "PROFILE_RENDER", "PROMPTS", "PUSH_SKIP", "PUSH_STAGE", "RDOC", "RDOC_DIR", "RDOC_DLL", "REALTIME", "REC_END", "REEXEC",
@@ -103,6 +105,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"VK_DYN_VERTEX", "performance"}, {"VK_DYN_A2C", "performance"}, {"VK_SUBGROUP_PIN", "performance"},
     {"TRACE", "diagnostics"}, {"FLIGHT", "diagnostics"}, {"FLIGHT_SPIKE_MS", "diagnostics"},
     {"WB_DIAG", "diagnostics"}, {"WB_FENCE_LIMIT", "diagnostics"}, {"WB_MERGE", "diagnostics"}, {"WB_EXACT", "diagnostics"},
+    {"MV_SURVEY", "diagnostics"},
 };
 
 // The settings the menu shows: the value in effect when the key is unset, and what the key accepts. The only place a
@@ -126,7 +129,8 @@ static const CfgMeta metas[] = {
     // the half-size scene behind water and ice (vk_underwater.c), upsampled when the game writes it; applies at once
     {"UNDERWATER_UPSAMPLE", "game", "game|smooth", LIVE},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
-    {"DLAA", "0", "0|1", LIVE}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance", LIVE},   // resolution.c res_scene_live
+    {"DLAA", "0", "0|1", LIVE},   // resolution.c res_scene_live
+    {"DLSS", "dlaa", "dlaa|quality|balanced|performance|ultra_performance", LIVE},
     {"DLSS_MODEL", "transformer", "cnn|transformer|default", LIVE},   // fastest first (menu order)   // vk_dlaa.c dlss_preset
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"GRASS_DIST", "100", "100..150", LIVE},   // resolution.c res_grass_live

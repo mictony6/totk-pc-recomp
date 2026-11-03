@@ -707,8 +707,8 @@ static void tab_screen(float scale) {
     row_underwater();
     opt_toggle("TOTK_DLAA", UI_MENU_DLAA, UI_MENU_DLAA_DESC);
     static const UiTextId dlss[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
-                                    UI_MENU_DLSS_PERFORMANCE};
-    opt_choice("TOTK_DLSS", UI_MENU_DLSS, dlss, 4, UI_MENU_DLSS_DESC);
+                                    UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
+    opt_choice("TOTK_DLSS", UI_MENU_DLSS, dlss, 5, UI_MENU_DLSS_DESC);
     static const UiTextId model[] = {UI_MENU_DLSS_MODEL_CNN, UI_MENU_DLSS_MODEL_TRANSFORMER, UI_MENU_DLSS_MODEL_DEFAULT};
     opt_choice("TOTK_DLSS_MODEL", UI_MENU_DLSS_MODEL, model, 3, UI_MENU_DLSS_MODEL_DESC);
     rows_color();

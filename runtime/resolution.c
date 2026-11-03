@@ -58,7 +58,7 @@ static struct {
     int heapdef_ok;            // romfs.c serves the grown HeapDef
     int on;                    // res_init switched the patch sets on
     unsigned shadow;           // fixed sun shadow map size (TOTK_SHADOW_RES), 0: the game's own
-    double dlss_k;             // TOTK_DLSS quality/balanced/performance: the scene's share of the output, else 0
+    double dlss_k;             // TOTK_DLSS quality/balanced/performance/ultra_performance: the scene's share of the output, else 0
 } R;
 
 // The scene size is decided before the device exists, so NGX cannot be asked yet. NGX loads DLSS from nvngx_dlss.dll
@@ -82,8 +82,8 @@ int res_dlss_dll(void) {
 // The scene's share of the output for a TOTK_DLSS mode; 0 for dlaa, which keeps render_scale.
 static double dlss_mode_k(const char *m) {
     static const struct { const char *name; double k; } dlss[] = {
-        {"quality", 2.0 / 3.0}, {"balanced", 0.58}, {"performance", 0.5}};
-    for (int i = 0; i < 3; i++)
+        {"quality", 2.0 / 3.0}, {"balanced", 0.58}, {"performance", 0.5}, {"ultra_performance", 1.0 / 3.0}};
+    for (int i = 0; i < (int)(sizeof dlss / sizeof dlss[0]); i++)
         if (!strcmp(m, dlss[i].name)) return dlss[i].k;
     return 0;
 }

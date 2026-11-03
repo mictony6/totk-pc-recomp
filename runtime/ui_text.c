@@ -165,11 +165,11 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_DLAA_DESC] = "NVIDIA DLSS for the 3D scene (NVIDIA RTX GPUs; nvngx_dlss.dll next to totk.exe): smoother edges "
                           "and less shimmer. The HUD is not touched. The mode below sets the resolution it works from.",
     [UI_MENU_DLSS] = "DLSS mode",
-    [UI_MENU_DLSS_DESC] = "DLAA draws the 3D scene at full resolution. Quality, Balanced and Performance draw it at 67, 58 "
-                          "and 50 % and let DLSS scale it up, for more frames per second; they replace the 3D render "
-                          "scale.",
+    [UI_MENU_DLSS_DESC] = "DLAA draws the 3D scene at full resolution. Quality, Balanced, Performance and Ultra "
+                          "Performance draw it at 67, 58, 50 and 33 % and let DLSS scale it up, which saves GPU time; "
+                          "they replace the 3D render scale. Takes effect at once.",
     [UI_MENU_DLSS_DLAA] = "DLAA (native)", [UI_MENU_DLSS_QUALITY] = "Quality", [UI_MENU_DLSS_BALANCED] = "Balanced",
-    [UI_MENU_DLSS_PERFORMANCE] = "Performance",
+    [UI_MENU_DLSS_PERFORMANCE] = "Performance", [UI_MENU_DLSS_ULTRA] = "Ultra Performance",
     [UI_MENU_DLSS_MODEL] = "DLSS model",
     [UI_MENU_DLSS_MODEL_DESC] = "Fastest to slowest (extra GPU time a frame, 1080p scene to 4K on a laptop RTX 4060):\n"
                                 "CNN: about 2.5 ms. The older model: softer, more ghosting.\n"
@@ -578,11 +578,11 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_DLAA_DESC] = "NVIDIA DLSS для 3D-сцены (видеокарты NVIDIA RTX; nvngx_dlss.dll рядом с totk.exe): ровнее края и "
                           "меньше мерцания. Интерфейс не затрагивается. Режим ниже задаёт разрешение, с которым он работает.",
     [UI_MENU_DLSS] = "Режим DLSS",
-    [UI_MENU_DLSS_DESC] = "DLAA рисует 3D-сцену в полном разрешении. «Качество», «Баланс» и «Производительность» рисуют её "
-                          "в 67, 58 и 50 % и масштабируют через DLSS ради большего числа кадров; они заменяют масштаб "
-                          "3D-отрисовки.",
+    [UI_MENU_DLSS_DESC] = "DLAA рисует 3D-сцену в полном разрешении. «Качество», «Баланс», «Производительность» и "
+                          "«Макс. производительность» рисуют её в 67, 58, 50 и 33 % и масштабируют через DLSS, что "
+                          "экономит время видеокарты; они заменяют масштаб 3D-отрисовки. Действует сразу.",
     [UI_MENU_DLSS_DLAA] = "DLAA (родное)", [UI_MENU_DLSS_QUALITY] = "Качество", [UI_MENU_DLSS_BALANCED] = "Баланс",
-    [UI_MENU_DLSS_PERFORMANCE] = "Производительность",
+    [UI_MENU_DLSS_PERFORMANCE] = "Производительность", [UI_MENU_DLSS_ULTRA] = "Макс. производительность",
     [UI_MENU_DLSS_MODEL] = "Модель DLSS",
     [UI_MENU_DLSS_MODEL_DESC] = "От самой быстрой к самой медленной (дополнительное время GPU на кадр, сцена 1080p в 4K на "
                                 "ноутбучной RTX 4060):\n"
@@ -1281,13 +1281,13 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                           "mais suaves e menos cintilação. O HUD não é afetado. O modo abaixo define a resolução de "
                           "onde ele parte.",
     [UI_MENU_DLSS] = "Modo do DLSS",
-    [UI_MENU_DLSS_DESC] = "DLAA desenha a cena 3D na resolução cheia. Qualidade, Equilibrado e Desempenho a desenham "
-                          "em 67, 58 e 50 % e deixam o DLSS ampliá-la, para mais quadros por segundo; eles substituem "
-                          "a escala 3D.",
+    [UI_MENU_DLSS_DESC] = "DLAA desenha a cena 3D na resolução cheia. Qualidade, Equilibrado, Desempenho e Ultra "
+                          "Desempenho a desenham em 67, 58, 50 e 33 % e deixam o DLSS ampliá-la, o que poupa tempo da "
+                          "GPU; eles substituem a escala 3D. Vale na hora.",
     [UI_MENU_DLSS_DLAA] = "DLAA (nativo)",
     [UI_MENU_DLSS_QUALITY] = "Qualidade",
     [UI_MENU_DLSS_BALANCED] = "Equilibrado",
-    [UI_MENU_DLSS_PERFORMANCE] = "Desempenho",
+    [UI_MENU_DLSS_PERFORMANCE] = "Desempenho", [UI_MENU_DLSS_ULTRA] = "Ultra Desempenho",
     [UI_MENU_DLSS_MODEL] = "Modelo do DLSS",
     [UI_MENU_DLSS_MODEL_DESC] = "Do mais rápido ao mais lento (tempo extra de GPU por quadro, cena 1080p para 4K numa RTX "
                                 "4060 de notebook):\n"
@@ -1827,11 +1827,12 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_DLAA_DESC] = "用于 3D 场景的 NVIDIA DLSS（NVIDIA RTX 显卡；nvngx_dlss.dll 放在 totk.exe 旁）：边缘更平滑，闪烁更少。HUD "
                           "不受影响。下方的模式决定它的工作分辨率。",
     [UI_MENU_DLSS] = "DLSS 模式",
-    [UI_MENU_DLSS_DESC] = "DLAA 以全分辨率绘制 3D 场景。质量、平衡和性能分别以 67%、58% 和 50% 绘制，再由 DLSS 放大，以获得更高帧率；它们会取代 3D 渲染比例。",
+    [UI_MENU_DLSS_DESC] = "DLAA 以全分辨率绘制 3D 场景。质量、平衡、性能和超级性能分别以 67%、58%、50% 和 33% 绘制，再由 DLSS 放大，以节省 GPU 时间；它们会取代 3D 渲染比例。立即生效。",
     [UI_MENU_DLSS_DLAA] = "DLAA（原生）",
     [UI_MENU_DLSS_QUALITY] = "质量",
     [UI_MENU_DLSS_BALANCED] = "平衡",
     [UI_MENU_DLSS_PERFORMANCE] = "性能",
+    [UI_MENU_DLSS_ULTRA] = "超级性能",
     [UI_MENU_DLSS_MODEL] = "DLSS 模型",
     [UI_MENU_DLSS_MODEL_DESC] = "从快到慢（每帧额外 GPU 时间，笔记本 RTX 4060 上 1080p 场景放大到 4K）：\n"
                                 "CNN：约 2.5 毫秒。旧模型：较柔和，拖影较多。\n"
