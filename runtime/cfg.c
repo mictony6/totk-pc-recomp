@@ -360,11 +360,13 @@ void cfg_set(const char *name, const char *value) {
     char key[64];
     snprintf(key, sizeof key, "%s", name + PREFIX_LEN);
     for (char *p = key; *p; p++) *p = (char)toupper((unsigned char)*p);
+    int changed = 0;
     plat_mutex_lock(&set_lock);
     int i = 0, n = n_entries;
     while (i < n && strcmp(entries[i].key, key)) i++;
     if (i < n) {
         if (!entries[i].value || strcmp(entries[i].value, value)) {
+            changed = 1;
             __atomic_store_n(&entries[i].value, strdup(value), __ATOMIC_RELEASE);   // the old string stays for readers
             entries[i].dirty = 1;
         }
@@ -372,9 +374,15 @@ void cfg_set(const char *name, const char *value) {
     } else if (n < CFG_MAX_KEYS) {
         entries[n] = (CfgEntry){strdup(key), strdup(value), 1, 0};
         __atomic_store_n(&n_entries, n + 1, __ATOMIC_RELEASE);
+        changed = 1;
     }
     __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
     plat_mutex_unlock(&set_lock);
+    // a choice made in play goes to the log, so a log tells which mode a session ran in; sliders (no '|' list) would
+    // log every step of a drag
+    const CfgMeta *m = changed ? cfg_meta(key) : NULL;
+    if (m && m->values && strchr(m->values, '|'))
+        rt_log("cfg: %s = %s%s", key, value, m->live ? "" : " (applies after a restart)");
 }
 
 int cfg_reset(const char *const *keys, int n) {

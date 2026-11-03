@@ -352,8 +352,9 @@ void res_init(void) {
         rt_patch_switch(aspect, 0);   // the page holds no ratio
     }
     shadow_init(page);
-    rt_log("resolution: output %ux%u, scene %ux%u%s; texture heap +%llu KiB", R.ow, R.oh, R.sw, R.sh,
-           scene_on ? "" : " (the game's own 5/6 of the output)", (unsigned long long)res_heap_extra_kib());
+    rt_log("resolution: output %ux%u, scene %ux%u%s; DLSS mode %s, dlaa %s; texture heap +%llu KiB", R.ow, R.oh, R.sw,
+           R.sh, scene_on ? "" : " (the game's own 5/6 of the output)", R.dlss_k ? cfg_value("TOTK_DLSS") : "dlaa",
+           cfg_bool("TOTK_DLAA") ? "on" : "off", (unsigned long long)res_heap_extra_kib());
 }
 
 // DLSS upscaling: textures are sampled for the output's resolution, not the scene's (NVIDIA's DLSS guide: a mip bias
