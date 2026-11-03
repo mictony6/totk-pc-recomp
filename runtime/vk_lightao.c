@@ -35,6 +35,10 @@ VkImageView vk_lightao_swap_view;
 // The point lights' light (layer 1, linear luminance) that lifts nothing and that lifts the occlusion completely.
 #define LIGHT_LO 0.005f
 #define LIGHT_HI 0.04f
+// The same for layer 0, the wide light, which must also be bright (light_ao.comp): above a shrine's 0.15 and the
+// Depths' unlit 0.42, below what a Brightbloom seed gives over its glow (2 to 9).
+#define WIDE_LO 0.6f
+#define WIDE_HI 1.5f
 
 static struct {
     int tried, on, ok, init_tried, logged;
@@ -88,7 +92,7 @@ static int init(VkCtx *c) {
     VkDescriptorSetLayoutCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                                            .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
                                            .bindingCount = 3, .pBindings = b};
-    VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 20};
+    VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 28};
     VkPipelineLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
                                      .pSetLayouts = &A.dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pr};
     VkSamplerCreateInfo si = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_NEAREST,
@@ -246,7 +250,8 @@ static void flush(VkExec *ex) {
                                       .descriptorType = i < 2 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
                                                               : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                       .pImageInfo = &ii[i]};
-    struct { int32_t size[2]; float strength, lo, hi; } pc = {{(int32_t)A.w, (int32_t)A.h}, A.strength, LIGHT_LO, LIGHT_HI};
+    struct { int32_t size[2]; float strength, lo, hi, lo0, hi0; } pc = {{(int32_t)A.w, (int32_t)A.h}, A.strength, LIGHT_LO,
+                                                                     LIGHT_HI, WIDE_LO, WIDE_HI};
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, A.pipe);
     rec_push(A.push, cb, VK_PIPELINE_BIND_POINT_COMPUTE, A.layout, 0, 3, w);
     vkCmdPushConstants(cb, A.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
