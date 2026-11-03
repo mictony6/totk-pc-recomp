@@ -709,6 +709,8 @@ static void tab_screen(float scale) {
     static const UiTextId dlss[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
                                     UI_MENU_DLSS_PERFORMANCE};
     opt_choice("TOTK_DLSS", UI_MENU_DLSS, dlss, 4, UI_MENU_DLSS_DESC);
+    static const UiTextId model[] = {UI_MENU_DLSS_MODEL_CNN, UI_MENU_DLSS_MODEL_TRANSFORMER, UI_MENU_DLSS_MODEL_DEFAULT};
+    opt_choice("TOTK_DLSS_MODEL", UI_MENU_DLSS_MODEL, model, 3, UI_MENU_DLSS_MODEL_DESC);
     rows_color();
     opt_group(UI_MENU_HDR_GROUP);
     opt_toggle("TOTK_HDR", UI_MENU_HDR, UI_MENU_HDR_DESC);
@@ -724,6 +726,7 @@ static void tab_game(float scale) {
     opt_toggle("TOTK_REALTIME", UI_MENU_REALTIME, UI_MENU_REALTIME_DESC);
     opt_toggle("TOTK_CLOTH_REALTIME", UI_MENU_CLOTH_REALTIME, UI_MENU_CLOTH_REALTIME_DESC);
     opt_toggle("TOTK_HIGHFPS_FIX", UI_MENU_HIGHFPS_FIX, UI_MENU_HIGHFPS_FIX_DESC);
+    opt_toggle("TOTK_FRAME_OVERLAP", UI_MENU_FRAME_OVERLAP, UI_MENU_FRAME_OVERLAP_DESC);
     row_game_lang();
     static const UiTextId mode[] = {UI_MENU_MODE_DOCKED, UI_MENU_MODE_HANDHELD};
     opt_choice("TOTK_OPERATION_MODE", UI_MENU_OPERATION_MODE, mode, 2, UI_MENU_OPERATION_MODE_DESC);

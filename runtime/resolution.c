@@ -15,6 +15,7 @@
 // +56 the camera's aspect ratio as a float when the output is not 16:9 (1.4.3, set aspect). +64 to +76 the sun shadow
 // cascades' end distances (1.4.3, set cascade). +60 the field-of-view factor (set fov, res_fov_live). +92 the sun
 // shadow map size as an int (set shadow, shadow_init). +96 the grass distance factor (set grassdist, res_grass_live).
+// +112 a one-shot request byte for the game's resize (1.4.3, set scene, res_scene_live).
 // 1.4.3 scales the scene it reads by output width / 1920 (a 2560x1440 output renders its 1600x900 scene at 2128x1200;
 // MacNativeGames measured the same), so its page holds the wanted size divided by that factor and the game's 5/6 needs
 // no scene patch. 1.2.1 renders the size it reads (1600x900 on a 2560x1440 output): its page holds the wanted size, and
@@ -50,7 +51,9 @@
 
 static struct {
     int decided;
-    unsigned ow, oh, sw, sh;   // output and scene
+    unsigned ow, oh, sw, sh;   // output and scene (sw, sh: res_scene_live changes them in play)
+    unsigned mw, mh;           // the largest scene a change in play can ask for: the heap is grown for it
+    double scale_k;            // TOTK_RENDER_SCALE (the game's 5/6 for "game"): the scene without a DLSS mode
     int scene_set;             // the scene differs from the game's 5/6 of the output
     int heapdef_ok;            // romfs.c serves the grown HeapDef
     int on;                    // res_init switched the patch sets on
@@ -76,6 +79,33 @@ int res_dlss_dll(void) {
     return have;
 }
 
+// The scene's share of the output for a TOTK_DLSS mode; 0 for dlaa, which keeps render_scale.
+static double dlss_mode_k(const char *m) {
+    static const struct { const char *name; double k; } dlss[] = {
+        {"quality", 2.0 / 3.0}, {"balanced", 0.58}, {"performance", 0.5}};
+    for (int i = 0; i < 3; i++)
+        if (!strcmp(m, dlss[i].name)) return dlss[i].k;
+    return 0;
+}
+
+// TOTK_RENDER_SCALE as the scene's share of the output: the game's 5/6 for "game" or a value outside 25..400 %.
+static double render_k(const char *s, int log) {
+    char *end;
+    double pct = strtod(s, &end);
+    if (strcmp(s, "game") && end != s && !*end && pct >= 25 && pct <= 400) return pct / 100.0;
+    if (log && strcmp(s, "game")) rt_log("resolution: TOTK_RENDER_SCALE=%s is not game or a percentage 25..400; game", s);
+    return 5.0 / 6.0;
+}
+
+// The scene at k times the output, shrunk to SCENE_MAX a side; 1 when it had to shrink.
+static int scene_size(double k, unsigned *w, unsigned *h) {
+    double sw = R.ow * k, sh = R.oh * k;
+    double fit = fmin(1.0, fmin(SCENE_MAX / sw, SCENE_MAX / sh));
+    *w = (unsigned)(sw * fit + 0.5);
+    *h = (unsigned)(sh * fit + 0.5);
+    return fit < 1.0;
+}
+
 static void decide(void) {
     if (R.decided) return;
     R.decided = 1;
@@ -92,11 +122,9 @@ static void decide(void) {
     }
     const char *s = cfg_value("TOTK_RENDER_SCALE");
     double k = 5.0 / 6.0;
-    const char *m = cfg_value("TOTK_DLSS");   // a DLSS mode other than dlaa sets the scene size
-    static const struct { const char *name; double k; } dlss[] = {
-        {"quality", 2.0 / 3.0}, {"balanced", 0.58}, {"performance", 0.5}};
-    for (int i = 0; i < 3; i++)
-        if (!strcmp(m, dlss[i].name)) R.dlss_k = dlss[i].k;
+    // a DLSS mode other than dlaa sets the scene size while DLSS runs (dlaa = 1); with it off, render_scale does
+    const char *m = cfg_value("TOTK_DLSS");
+    R.dlss_k = cfg_bool("TOTK_DLAA") ? dlss_mode_k(m) : 0;
     if (R.dlss_k && !res_dlss_dll()) {
 #ifdef _WIN32
         rt_log("resolution: DLSS %s needs nvngx_dlss.dll next to totk.exe, which is missing: the scene follows render_scale", m);
@@ -105,25 +133,19 @@ static void decide(void) {
 #endif
         R.dlss_k = 0;
     }
+    k = render_k(s, 1);
+    if (k != 5.0 / 6.0) R.scene_set = 1;
+    R.scale_k = k;
     if (R.dlss_k) {
         k = R.dlss_k;
         R.scene_set = 1;
         rt_log("resolution: DLSS %s: the scene at %.0f %% of the output (render_scale ignored)", m, k * 100);
-    } else if (strcmp(s, "game")) {
-        char *end;
-        double pct = strtod(s, &end);
-        if (end != s && !*end && pct >= 25 && pct <= 400) {
-            k = pct / 100.0;
-            R.scene_set = 1;
-        } else {
-            rt_log("resolution: TOTK_RENDER_SCALE=%s is not game or a percentage 25..400; game", s);
-        }
     }
-    double sw = R.ow * k, sh = R.oh * k;
-    double fit = fmin(1.0, fmin(SCENE_MAX / sw, SCENE_MAX / sh));
-    if (fit < 1.0) R.scene_set = 1;
-    R.sw = (unsigned)(sw * fit + 0.5);
-    R.sh = (unsigned)(sh * fit + 0.5);
+    // On 1.4.3 render_scale, DLSS and its mode change in play (res_scene_live): the heap is grown for the largest scene
+    // up to 100 % (or the start's render_scale, when above), and the scene set is on, so the patch page holds the size.
+    double kmax = k;
+    if (RT_V143) kmax = fmax(k, fmax(R.scale_k, 1.0)), R.scene_set = 1;
+    if (scene_size(k, &R.sw, &R.sh) | scene_size(kmax, &R.mw, &R.mh)) R.scene_set = 1;
     const char *sr = cfg_value("TOTK_SHADOW_RES");
     if (strcmp(sr, "game")) {
         unsigned n = (unsigned)atoi(sr);
@@ -146,7 +168,7 @@ static int bigger(void) {
 uint64_t res_heap_extra_kib(void) {
     if (!bigger()) return 0;
     double grow = fmax(0.0, (double)R.ow * R.oh / (BASE_W * BASE_H) - 1.0) +
-                  fmax(0.0, (double)R.sw * R.sh / (SCENE_W * SCENE_H) - 1.0);
+                  fmax(0.0, (double)R.mw * R.mh / (SCENE_W * SCENE_H) - 1.0);
     uint64_t kib = grow > 0 ? (uint64_t)ceil(DTA_KIB * (1.0 + grow) / 1024.0) * 1024 - DTA_KIB : 0;
     return kib + ((shadow_kib() + 1023) & ~1023ull);   // whole MiB
 }
@@ -399,6 +421,38 @@ void res_grass_live(void) {
     memcpy((uint8_t *)rt_patch_page() + 96, &k, sizeof k);   // before the switch: a site that sees it on reads k
     rt_patch_switch(set, pct != 100);
     rt_log("resolution: grass falloff %d%% of the game's", pct);
+}
+
+// The scene size in play (TOTK_RENDER_SCALE, TOTK_DLAA, TOTK_DLSS, on a settings change like res_fov_live): a DLSS
+// mode's while DLSS runs, render_scale's otherwise. A new size goes to page +16 and the request byte on page +112 makes
+// the game's next frame resize its renderer as when a Switch is docked (recomp/patches-v143.txt, set scene), which
+// builds the scene's render targets at the new size. The heap was grown at start for the largest size allowed here
+// (decide); a larger one, and any change on a version without that site, applies after a restart.
+void res_scene_live(void) {
+    const char *m = cfg_value("TOTK_DLSS"), *s = cfg_value("TOTK_RENDER_SCALE");
+    double k = res_dlss_dll() && cfg_bool("TOTK_DLAA") ? dlss_mode_k(m) : 0, scale = render_k(s, 0);
+    if (k == R.dlss_k && scale == R.scale_k) return;
+    uint8_t *page = rt_patch_page();
+    int set = rt_patch_set("scene");
+    unsigned w, h;
+    scene_size(k ? k : scale, &w, &h);
+    if (!R.on || !page || !RT_V143 || !rt_patch_enabled(set) || w > R.mw || h > R.mh) {
+        static double told = -1;
+        if (told != (k ? k : scale)) {
+            told = k ? k : scale;
+            rt_log("resolution: a %ux%u scene applies after a restart (%s)", w, h,
+                   RT_V143 ? "larger than the heap grown at start" : "this game version cannot resize in play");
+        }
+        return;
+    }
+    R.dlss_k = k, R.scale_k = scale;
+    if (w == R.sw && h == R.sh) return;   // e.g. DLSS off with the dlaa mode: render_scale either way
+    double v = RT_V143 ? (double)R.ow / BASE_W : 1.0;   // 1.4.3's own scaling of the scene with the output width
+    float sc[2] = {(float)(w / v), (float)(h / v)};
+    memcpy(page + 16, sc, sizeof sc);
+    R.sw = w, R.sh = h;
+    __atomic_store_n(page + 112, (uint8_t)1, __ATOMIC_RELEASE);   // after the size: the game's next frame resizes
+    rt_log("resolution: the scene at %ux%u (%s %s)", w, h, k ? "DLSS" : "render_scale", k ? m : s);
 }
 
 void res_wanted(unsigned out[2]) {

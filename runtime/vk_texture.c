@@ -1744,8 +1744,8 @@ static int wrap_repeats(uint8_t w) {
 // DLSS upscaling (resolution.c res_dlss_lod_bias): while DLSS runs (vk_dlaa.c vk_dlaa_frame), the scene's material
 // textures, the filtered mipmapped ones that repeat on U or V, are sampled for the output's resolution; clamped ones
 // (post effects, LUTs, the UI) keep the game's bias. With dlaa off nothing accumulates the extra detail, and the
-// sharper mips only shimmer. The bias goes into the sampler's key, so both kinds of sampler can exist side by side.
-static int dlss_bias_on;
+// sharper mips only shimmer. The bias goes into the sampler's key, so samplers of every mode can exist side by side.
+static float dlss_bias;   // the DLSS mode's bias while DLSS runs, else 0
 
 // Caller holds the lock.
 static VkSampler sampler_for(VkCtx *c, const samp_par *s) {
@@ -1753,9 +1753,9 @@ static VkSampler sampler_for(VkCtx *c, const samp_par *s) {
     memset(&k, 0, sizeof k);
     k = *s;
     sampler_features(c);
-    if (dlss_bias_on && !k.cmp_mode && k.minf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR &&
+    if (dlss_bias != 0 && !k.cmp_mode && k.minf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR &&
         (wrap_repeats(k.ws) || wrap_repeats(k.wt)))
-        k.lod_bias += res_dlss_lod_bias();
+        k.lod_bias += dlss_bias;
     VkSampler v = (VkSampler)nvn_hm_get(&samplers, &k);
     if (!v) {
         v = make_sampler(c, &k);
@@ -1764,14 +1764,15 @@ static VkSampler sampler_for(VkCtx *c, const samp_par *s) {
     return v;
 }
 
-// DLSS started or stopped running: every slot looks its sampler up again (vk_sampler_gen tells the draw caches).
+// Each present (vk_dlaa.c vk_dlaa_frame): DLSS started or stopped running, or its mode changed (resolution.c
+// res_scene_live). On a change every slot looks its sampler up again (vk_sampler_gen tells the draw caches).
 void vk_sampler_dlss_bias(int on) {
+    float b = on ? res_dlss_lod_bias() : 0;
+    if (b == dlss_bias) return;   // only this thread writes it
     lock();
-    if (dlss_bias_on != on) {
-        dlss_bias_on = on;
-        for (int i = 0; i < nsslots; i++) sslots[i].s = sslots[i].sp = VK_NULL_HANDLE;
-        samp_gen++;
-    }
+    dlss_bias = b;
+    for (int i = 0; i < nsslots; i++) sslots[i].s = sslots[i].sp = VK_NULL_HANDLE;
+    samp_gen++;
     unlock();
 }
 

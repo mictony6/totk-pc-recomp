@@ -167,9 +167,16 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS] = "DLSS mode",
     [UI_MENU_DLSS_DESC] = "DLAA draws the 3D scene at full resolution. Quality, Balanced and Performance draw it at 67, 58 "
                           "and 50 % and let DLSS scale it up, for more frames per second; they replace the 3D render "
-                          "scale. Takes effect after a restart.",
+                          "scale.",
     [UI_MENU_DLSS_DLAA] = "DLAA (native)", [UI_MENU_DLSS_QUALITY] = "Quality", [UI_MENU_DLSS_BALANCED] = "Balanced",
     [UI_MENU_DLSS_PERFORMANCE] = "Performance",
+    [UI_MENU_DLSS_MODEL] = "DLSS model",
+    [UI_MENU_DLSS_MODEL_DESC] = "Fastest to slowest (extra GPU time a frame, 1080p scene to 4K on a laptop RTX 4060):\n"
+                                "CNN: about 2.5 ms. The older model: softer, more ghosting.\n"
+                                "Transformer: about 5 ms. Sharper, less ghosting.\n"
+                                "Transformer 2: about 7 to 10 ms. Sharpest and steadiest; nvngx_dlss.dll's own choice.",
+    [UI_MENU_DLSS_MODEL_DEFAULT] = "Transformer 2 (slowest)", [UI_MENU_DLSS_MODEL_TRANSFORMER] = "Transformer (medium)",
+    [UI_MENU_DLSS_MODEL_CNN] = "CNN (fastest)",
 
     [UI_MENU_FPS_LIMIT] = "Frame rate limit",
     [UI_MENU_FPS_LIMIT_DESC] = "The most frames per second the game draws. Above 60 is experimental and needs Game speed "
@@ -184,6 +191,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_CLOTH_REALTIME_DESC] = "Steps cloth and hair by real time as well.",
     [UI_MENU_HIGHFPS_FIX] = "High frame rate fixes",
     [UI_MENU_HIGHFPS_FIX_DESC] = "Corrects physics that misbehave above 30 frames per second, and objects that stay see-through or invisible above 60.",
+    [UI_MENU_FRAME_OVERLAP] = "Frame overlap",
+    [UI_MENU_FRAME_OVERLAP_DESC] = "Lets the GPU finish one frame while the next is prepared, instead of waiting for it every "
+                                   "frame: more frames per second (about 10 more at 4K), most with DLSS, for one frame more of "
+                                   "input delay. Game version 1.4.3.",
     [UI_MENU_GAME_LANG] = "Game language", [UI_MENU_GAME_LANG_DESC] = "Language of the game's text and voices.",
     [UI_MENU_GAME_LANG_AUTO] = "Automatic",
     [UI_MENU_OPERATION_MODE] = "Console mode",
@@ -569,9 +580,17 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS] = "Режим DLSS",
     [UI_MENU_DLSS_DESC] = "DLAA рисует 3D-сцену в полном разрешении. «Качество», «Баланс» и «Производительность» рисуют её "
                           "в 67, 58 и 50 % и масштабируют через DLSS ради большего числа кадров; они заменяют масштаб "
-                          "3D-отрисовки. Действует после перезапуска.",
+                          "3D-отрисовки.",
     [UI_MENU_DLSS_DLAA] = "DLAA (родное)", [UI_MENU_DLSS_QUALITY] = "Качество", [UI_MENU_DLSS_BALANCED] = "Баланс",
     [UI_MENU_DLSS_PERFORMANCE] = "Производительность",
+    [UI_MENU_DLSS_MODEL] = "Модель DLSS",
+    [UI_MENU_DLSS_MODEL_DESC] = "От самой быстрой к самой медленной (дополнительное время GPU на кадр, сцена 1080p в 4K на "
+                                "ноутбучной RTX 4060):\n"
+                                "CNN: около 2,5 мс. Старая модель: мягче, больше шлейфов.\n"
+                                "Transformer: около 5 мс. Чётче, меньше шлейфов.\n"
+                                "Transformer 2: около 7–10 мс. Самая чёткая и стабильная; её выбирает сам nvngx_dlss.dll.",
+    [UI_MENU_DLSS_MODEL_DEFAULT] = "Transformer 2 (самая медленная)", [UI_MENU_DLSS_MODEL_TRANSFORMER] = "Transformer (средняя)",
+    [UI_MENU_DLSS_MODEL_CNN] = "CNN (самая быстрая)",
 
     [UI_MENU_FPS_LIMIT] = "Ограничение частоты кадров",
     [UI_MENU_FPS_LIMIT_DESC] = "Наибольшее число кадров в секунду. Выше 60 — экспериментальный режим, нужна «Скорость "
@@ -585,6 +604,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_CLOTH_REALTIME_DESC] = "Ткань и волосы тоже идут по реальному времени.",
     [UI_MENU_HIGHFPS_FIX] = "Исправления для высокого FPS",
     [UI_MENU_HIGHFPS_FIX_DESC] = "Исправляет физику, которая ломается при частоте выше 30 кадров в секунду, и объекты, которые выше 60 остаются полупрозрачными или невидимыми.",
+    [UI_MENU_FRAME_OVERLAP] = "Перекрытие кадров",
+    [UI_MENU_FRAME_OVERLAP_DESC] = "GPU дорисовывает один кадр, пока готовится следующий, вместо ожидания каждого кадра: "
+                                   "больше кадров в секунду (около 10 в 4K), особенно с DLSS, ценой задержки ввода на один "
+                                   "кадр. Версия игры 1.4.3.",
     [UI_MENU_GAME_LANG] = "Язык игры", [UI_MENU_GAME_LANG_DESC] = "Язык текста и озвучки игры.",
     [UI_MENU_GAME_LANG_AUTO] = "Автоматически",
     [UI_MENU_OPERATION_MODE] = "Режим консоли",
@@ -897,6 +920,10 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_CLOTH_REALTIME_DESC] = "Avança tecidos e cabelos pelo tempo real também.",
     [UI_MENU_HIGHFPS_FIX] = "Correções para alta taxa de quadros",
     [UI_MENU_HIGHFPS_FIX_DESC] = "Corrige a física que se comporta mal acima de 30 quadros por segundo e objetos que ficam transparentes ou invisíveis acima de 60.",
+    [UI_MENU_FRAME_OVERLAP] = "Sobreposição de quadros",
+    [UI_MENU_FRAME_OVERLAP_DESC] = "A GPU termina um quadro enquanto o próximo é preparado, em vez de esperar por ele a cada "
+                                   "quadro: mais quadros por segundo (cerca de 10 a mais em 4K), sobretudo com DLSS, com um "
+                                   "quadro a mais de atraso de entrada. Versão 1.4.3 do jogo.",
     [UI_MENU_GAME_LANG] = "Idioma do jogo", [UI_MENU_GAME_LANG_DESC] = "Idioma dos textos e das vozes do jogo.",
     [UI_MENU_GAME_LANG_AUTO] = "Automático",
     [UI_MENU_OPERATION_MODE] = "Modo do console",
@@ -1255,11 +1282,19 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS] = "Modo do DLSS",
     [UI_MENU_DLSS_DESC] = "DLAA desenha a cena 3D na resolução cheia. Qualidade, Equilibrado e Desempenho a desenham "
                           "em 67, 58 e 50 % e deixam o DLSS ampliá-la, para mais quadros por segundo; eles substituem "
-                          "a escala 3D. Vale após reiniciar.",
+                          "a escala 3D.",
     [UI_MENU_DLSS_DLAA] = "DLAA (nativo)",
     [UI_MENU_DLSS_QUALITY] = "Qualidade",
     [UI_MENU_DLSS_BALANCED] = "Equilibrado",
     [UI_MENU_DLSS_PERFORMANCE] = "Desempenho",
+    [UI_MENU_DLSS_MODEL] = "Modelo do DLSS",
+    [UI_MENU_DLSS_MODEL_DESC] = "Do mais rápido ao mais lento (tempo extra de GPU por quadro, cena 1080p para 4K numa RTX "
+                                "4060 de notebook):\n"
+                                "CNN: cerca de 2,5 ms. O modelo antigo: mais suave, mais rastros.\n"
+                                "Transformer: cerca de 5 ms. Mais nítido, menos rastros.\n"
+                                "Transformer 2: cerca de 7 a 10 ms. O mais nítido e estável; a escolha do próprio nvngx_dlss.dll.",
+    [UI_MENU_DLSS_MODEL_DEFAULT] = "Transformer 2 (mais lento)", [UI_MENU_DLSS_MODEL_TRANSFORMER] = "Transformer (médio)",
+    [UI_MENU_DLSS_MODEL_CNN] = "CNN (mais rápido)",
 };
 
 // Simplified Chinese: this row covers the software keyboard and the whole menu, so the menu and the overlay read Chinese
@@ -1374,6 +1409,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_HIGHFPS_FIX] = "高帧率修正",
     [UI_MENU_HIGHFPS_FIX_DESC] = "修正帧率高于 30 时出现异常的物理效果，"
                                  "以及帧率高于 60 时一直半透明或不可见的物体。",
+    [UI_MENU_FRAME_OVERLAP] = "帧重叠",
+    [UI_MENU_FRAME_OVERLAP_DESC] = "让 GPU 在准备下一帧的同时完成当前帧，而不是每帧都等待它：帧率更高（4K 下约多 10 帧），"
+                                   "开启 DLSS 时最明显，代价是多一帧输入延迟。仅限游戏版本 1.4.3。",
     [UI_MENU_GAME_LANG] = "游戏语言",
     [UI_MENU_GAME_LANG_DESC] = "游戏文本和语音的语言。",
     [UI_MENU_GAME_LANG_AUTO] = "自动",
@@ -1788,11 +1826,18 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_DLAA_DESC] = "用于 3D 场景的 NVIDIA DLSS（NVIDIA RTX 显卡；nvngx_dlss.dll 放在 totk.exe 旁）：边缘更平滑，闪烁更少。HUD "
                           "不受影响。下方的模式决定它的工作分辨率。",
     [UI_MENU_DLSS] = "DLSS 模式",
-    [UI_MENU_DLSS_DESC] = "DLAA 以全分辨率绘制 3D 场景。质量、平衡和性能分别以 67%、58% 和 50% 绘制，再由 DLSS 放大，以获得更高帧率；它们会取代 3D 渲染比例。重启后生效。",
+    [UI_MENU_DLSS_DESC] = "DLAA 以全分辨率绘制 3D 场景。质量、平衡和性能分别以 67%、58% 和 50% 绘制，再由 DLSS 放大，以获得更高帧率；它们会取代 3D 渲染比例。",
     [UI_MENU_DLSS_DLAA] = "DLAA（原生）",
     [UI_MENU_DLSS_QUALITY] = "质量",
     [UI_MENU_DLSS_BALANCED] = "平衡",
     [UI_MENU_DLSS_PERFORMANCE] = "性能",
+    [UI_MENU_DLSS_MODEL] = "DLSS 模型",
+    [UI_MENU_DLSS_MODEL_DESC] = "从快到慢（每帧额外 GPU 时间，笔记本 RTX 4060 上 1080p 场景放大到 4K）：\n"
+                                "CNN：约 2.5 毫秒。旧模型：较柔和，拖影较多。\n"
+                                "Transformer：约 5 毫秒。更清晰，拖影更少。\n"
+                                "Transformer 2：约 7 至 10 毫秒。最清晰、最稳定；nvngx_dlss.dll 自身的选择。",
+    [UI_MENU_DLSS_MODEL_DEFAULT] = "Transformer 2（最慢）", [UI_MENU_DLSS_MODEL_TRANSFORMER] = "Transformer（中等）",
+    [UI_MENU_DLSS_MODEL_CNN] = "CNN（最快）",
 };
 
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}

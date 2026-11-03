@@ -471,20 +471,36 @@ NVN_API(nvnQueueFenceSync) {
     s->fenced = 1;
     s->fence = nvn_fence_last();
 }
+// Frame overlap (TOTK_FRAME_OVERLAP, 1.4.3, live). Each frame TotK's frame pacing (f_70002db8ac) waits, without a
+// timeout, for the sync it fenced after its last submit, and times the wait (two syncs at its object's +0xb8, picked by
+// +0x160). On a Switch the GPU runs each submit as it arrives and little is left by then; here the GPU starts a frame
+// only once the render thread has replayed it, so the wait held that thread through the frame's whole GPU work (3 to
+// 9 ms a frame at 4K with DLSS), and the GPU then idled through the next replay. With the setting that wait is for the
+// fence the previous frame's wait was for: the GPU finishes one frame while the next is replayed, one more frame in
+// flight as on PC. Laptop RTX 4060, 4K output, DLSS performance: 42.5 -> 53.8 fps; DLSS off 59.8 -> 70.9.
+static uint64_t frame_overlap_fence(const Cpu *c, uint64_t fence) {
+    static uint64_t prev;   // the fence the last frame-pacing wait was for (that wait's thread only)
+    if (!RT_V143 || c->x[30] != 0x70002db99cull) return fence;
+    uint64_t p = prev;
+    prev = fence;
+    return p && p < fence && cfg_bool("TOTK_FRAME_OVERLAP") ? p : fence;
+}
+
 // NVNsyncWaitResult nvnSyncWait(const NVNsync *s, uint64_t timeout_ns): a sync never fenced reports a timeout at once;
-// a fenced one is released only after the back end completed that fence value
+// a fenced one is released only after the back end completed that fence value (or an earlier one, frame_overlap_fence)
 NVN_API(nvnSyncWait) {
     const sync_t *s = arg_p(c, 0);
     uint64_t timeout = arg_x(c, 1);
     if (!s->fenced) { ret_x(c, NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED); return; }
     const GfxBackend *b = gfx_backend();
-    if (b->fence_done() >= s->fence) { b->cpu_synced(s->fence); ret_x(c, NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED); return; }
+    uint64_t fence = frame_overlap_fence(c, s->fence);
+    if (b->fence_done() >= fence) { b->cpu_synced(fence); ret_x(c, NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED); return; }
     int ok;
     {
         NVN_BLOCKING();
-        ok = b->fence_wait(s->fence, timeout);
+        ok = b->fence_wait(fence, timeout);
     }
-    if (ok) b->cpu_synced(s->fence);
+    if (ok) b->cpu_synced(fence);
     ret_x(c, ok ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED);
 }
 // void nvnEventBuilderSetDefaults(NVNeventBuilder *b)

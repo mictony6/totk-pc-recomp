@@ -256,6 +256,7 @@ static struct {
     uint64_t mv_frames, mv_none;
     uint64_t why[3];             // history resets: scene size changed, no camera, scene target changed
     int on;                      // the dlaa setting, read at each present (the menu switches it live)
+    unsigned preset;             // the render preset the features were made with (dlss_preset)
 } D = {.mv_ok = -1};
 
 const VkTexImage *vk_dlaa_swap_img;
@@ -266,7 +267,6 @@ static int dl_active(void) { return N.available && !D.failed && D.on; }
 static void dl_fail(const char *what, NgxResult r) {
     rt_log("dlaa: %s failed (%08x): DLAA off for this run", what, (unsigned)r);
     D.failed = 1;
-    vk_sampler_dlss_bias(0);
 }
 
 static int image2d(uint32_t w, uint32_t h, VkFormat f, VkImageUsageFlags usage, VkImage *img, VmaAllocation *mem,
@@ -551,11 +551,19 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
         // IsHDR | MVLowRes | AutoExposure: linear scene light, motion vectors at the render size, no exposure texture
         p_seti(p, "DLSS.Feature.Create.Flags", (1 << 0) | (1 << 1) | (1 << 6));
         p_seti(p, "DLSS.Enable.Output.Subrects", 0);
+        // the model (TOTK_DLSS_MODEL) as the render preset of every quality value; 0 leaves the DLL's own
+        static const char *const presets[] = {"DLAA", "Quality", "Balanced", "Performance", "UltraPerformance",
+                                              "UltraQuality"};
+        for (int i = 0; i < 6; i++) {
+            char name[64];
+            snprintf(name, sizeof name, "DLSS.Hint.Render.Preset.%s", presets[i]);
+            p_setu(p, name, D.preset);
+        }
         NgxResult r = N.create(cb, NGX_FEATURE_SUPERSAMPLING, p, &e->feat);
         if (!NGX_OK(r) || !e->feat) return dl_fail("DLSS feature creation", r);
         D.reset = 1;
-        rt_log("dlaa: DLSS feature created at %ux%u -> %ux%u, quality value %d (scene format %d, depth format %d)", w,
-               h, ow, oh, perf_quality(w, ow), (int)t->format, (int)z->format);
+        rt_log("dlaa: DLSS feature created at %ux%u -> %ux%u, quality value %d, preset %u (scene format %d, depth "
+               "format %d)", w, h, ow, oh, perf_quality(w, ow), D.preset, (int)t->format, (int)z->format);
     }
     if (D.last_color != t->image) D.reset = 1, D.why[2]++, D.last_color = t->image;
     VkImageView cv = vk_exec_target_view(t->img, t->format, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, t->level,
@@ -649,13 +657,28 @@ void vk_dlaa_pass(VkExec *ex) {
     }
 }
 
+// TOTK_DLSS_MODEL as an NGX render preset (NVIDIA's DLSS programming guide, NVSDK_NGX_DLSS_Hint_Render_Preset): K, the
+// DLSS 4 transformer; E, the last CNN preset; 0 the DLL's default (310.9: the second transformer, L or M). GPU time a
+// frame on a laptop RTX 4060, 1080p to 4K: E +2.4 ms, K +5.0, the default +7.1 (L +9.7, M +8.6; F as E, J as K).
+static unsigned dlss_preset(void) {
+    const char *m = cfg_value("TOTK_DLSS_MODEL");
+    return !strcmp(m, "transformer") ? 11 : !strcmp(m, "cnn") ? 5 : 0;
+}
+
 void vk_dlaa_frame(void) {
     vk_dlaa_swap_img = NULL, vk_dlaa_swap_view = VK_NULL_HANDLE;
+    unsigned preset = dlss_preset();
+    if (preset != D.preset) {   // a model changed in play: every feature is made again with it
+        for (int i = 0; i < 3; i++)
+            if (D.sizes[i].out) free_size(&D.sizes[i]);
+        D.last = NULL, D.reset = 1, D.preset = preset;
+        rt_log("dlaa: DLSS model %s", cfg_value("TOTK_DLSS_MODEL"));
+    }
     int on = N.available && cfg_bool("TOTK_DLAA");
+    vk_sampler_dlss_bias(N.available && !D.failed && on);   // also follows a DLSS mode changed in play
     if (on != D.on) {
         rt_log("dlaa: %s", on ? "on" : "off");
         D.on = on;
-        vk_sampler_dlss_bias(dl_active());
         // either way the next DLAA frame starts a new history from an unjittered frame
         D.reset = 1, D.cam_prev_ok = 0, D.jit_ok = D.jit_used = D.armed = D.done = D.gbuf = D.ended = D.up = 0;
         D.hold = 0;

@@ -273,6 +273,7 @@ int res_wants_wide_overlay(const unsigned out[2]);         // not 16:9 on a game
 void res_wanted(unsigned out[2]);                          // the output size TOTK_OUTPUT_RES asks for
 void res_fov_live(void);                                   // TOTK_FOV to the camera (set fov); on a settings change
 void res_grass_live(void);                                 // TOTK_GRASS_DIST to the grass (set grassdist); likewise
+void res_scene_live(void);                                 // render_scale / DLSS: the scene resized in play (1.4.3)
 // ---- code patches (patches.c) and the frame step (frame_rate.c)
 void rt_patches_init(void);                                // after ldr_load: switches from the environment, the patch
                                                            // page committed; logs the sets

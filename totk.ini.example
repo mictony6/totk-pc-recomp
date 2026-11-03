@@ -16,6 +16,10 @@
 # cloth_realtime = 1
 # Fix for physics that bounce at high frame rates.
 # highfps_fix = 1
+# Frame overlap (1.4.3): the GPU finishes one frame while the next is prepared, instead of the game waiting for it
+# every frame. More frames per second (about 10 more at 4K output on a laptop RTX 4060, most with DLSS) for one frame
+# more of input delay. Changes apply at once.
+# frame_overlap = 1
 
 [performance]
 # The keys of this section and of [diagnostics] are for testing and troubleshooting, and take effect at the next start.
@@ -132,7 +136,9 @@
 # tools/make_romfs_patches.py --aspect WxH. Read at start.
 # output_res = 1920x1080
 # 3D render scale: the scene's size relative to the game resolution, game (5/6, the game's own 1600x900 at 1080p) or
-# a percentage (25 to 400, at most 4096 pixels a side); above 100 supersamples the scene (anti-aliasing). Read at start.
+# a percentage (25 to 400, at most 4096 pixels a side); above 100 supersamples the scene (anti-aliasing). On 1.4.3
+# a change applies at once up to 100 % or the value the game started with, whichever is larger (the texture heap is
+# sized for that at start); a larger one, and any change on older versions, after a restart.
 # render_scale = game
 # Sun shadow map resolution (1.4.3): game (the game's own, 960 a side, lowered to as little as 400 with GPU load and
 # distance) or a fixed size a side (960, 1536, 2048; 256 to 4096 accepted). The game draws and filters the larger map
@@ -235,10 +241,14 @@
 # dlaa = 0
 # What DLSS works from: dlaa (the 3D scene at full size), quality, balanced or performance (the scene at 67, 58 or
 # 50 % of the output, scaled up by DLSS; these replace render_scale and sharpen texture filtering to match while DLSS
-# runs). They apply with nvngx_dlss.dll next to totk.exe, on Windows; otherwise the scene follows render_scale. With
-# dlaa = 0 the game's own scaling enlarges that smaller scene instead. Read at start: the game sizes its render targets
-# once.
+# runs). They apply with dlaa = 1 and nvngx_dlss.dll next to totk.exe, on Windows; otherwise the scene follows
+# render_scale. On 1.4.3 a change of either applies at once (the game resizes its scene as when a Switch is docked);
+# on older versions after a restart.
 # dlss = dlaa
+# The DLSS model, fastest to slowest (extra GPU time a frame, 1080p scene to 4K on a laptop RTX 4060): cnn (the older
+# model, about 2.5 ms: softer, more ghosting), transformer (DLSS 4, about 5 ms) or default (nvngx_dlss.dll's own
+# choice, the second transformer on 310.9: about 7 to 10 ms, the sharpest). Changes apply at once.
+# dlss_model = default
 
 # HDR output: hdr = 1 sends the picture as HDR10 (needs HDR on in Windows, "Use HDR", or a Wayland compositor with
 # colour management; without it the picture stays SDR). The game's tonemap keeps highlights up to hdr_peak_nits (your

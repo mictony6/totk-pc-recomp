@@ -82,6 +82,13 @@ site scene main 585e50 bd0cc660 2d420460    # str s0, [x19, #0xcc4] -> ldp s0, s
 site scene main 585e54 1e220140 bd0cc660    # scvtf s0, w10 -> str s0, [x19, #0xcc4]
 site scene main 585e60 bd0cca60 bd0cca61    # str s0, [x19, #0xcc8] -> str s1, [x19, #0xcc8]
 
+# Scene resize in play (runtime/resolution.c res_scene_live): the routine above (main+0x585da0) is the renderer's resize,
+# which the frame's system update (main+0x580858) runs, through the forced dock check (main+0x585bd0), when the
+# system status halfword it reads has bit 0x80 or 0x200 set: the operation mode changed, as when a Switch is docked.
+# Page +112 is a one-shot request: the update ORs it in as bit 0x80 and clears it, so a new size on page +16 takes
+# effect at the game's next frame. x10 and x11 are free: both paths after the test write them before reading them.
+site scene main 580920 794012e8 794012e8 @page:x10 3941c14b 3901c15f 2a0b1d08   # ldrh w8, [x23, #8]; ldrb w11, [x10, #112]; strb wzr, [x10, #112]; orr w8, w8, w11, lsl #7
+
 # Camera aspect ratio for a game resolution that is not 16:9 (upstream game_patches_v143.c and aspect_patch.h
 # aspect_install / aspect_stub; runtime/resolution.c res_init writes the output's width / height to page +56 and
 # switches the set on). Each site leaves the ratio sead's perspective projection (+0xb0) takes in s0: two camera sites
