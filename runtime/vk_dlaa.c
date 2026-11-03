@@ -87,14 +87,11 @@ static int p_getu(const NgxParam *p, const char *n, unsigned *v) { return NGX_OK
 static int p_getf(const NgxParam *p, const char *n, float *v) { return NGX_OK(((GetF)p->vt->slot[G_F])(p, n, v)); }
 static int p_getp(const NgxParam *p, const char *n, void **v) { return NGX_OK(((GetP)p->vt->slot[G_P])(p, n, v)); }
 
-// NGX is brought up only when dlaa is on at start: its device extensions can only be asked for at device creation, and
-// loading the driver's NGX core on every NVIDIA machine would cost start time and change the device with DLAA off. So
-// dlaa applies after a restart; switched off, nothing else of DLAA runs.
-int vk_dlaa_wanted(void) {
-    static int wanted = -1;
-    if (wanted < 0) wanted = cfg_bool("TOTK_DLAA");
-    return wanted;
-}
+// NGX is brought up whenever nvngx_dlss.dll is next to totk.exe (resolution.c res_dlss_dll), whatever dlaa says at
+// start: its device extensions can only be asked for at device creation, so this is what lets dlaa switch on and off
+// in play (vk_dlaa_frame). Without that file DLSS cannot run, and NGX stays unloaded, so machines without DLSS keep
+// their start time and device. Switched off, nothing of DLAA runs per frame.
+int vk_dlaa_wanted(void) { return res_dlss_dll(); }
 
 static int core_load(void) {
     if (N.tried) return N.loaded;
@@ -202,7 +199,6 @@ void vk_dlaa_init(void) {
            driver ? "; the driver needs an update" : "");
 }
 
-int vk_dlaa_available(void) { return vk_dlaa_wanted() && N.available; }
 
 // ---------------------------------------------------------------- where DLAA runs in TotK's frame
 // Measured (TOTK_DUMP, frame 2100 at Lookout Landing, 2560x1440 scene): the G-buffer passes draw into five targets with
@@ -270,6 +266,7 @@ static int dl_active(void) { return N.available && !D.failed && D.on; }
 static void dl_fail(const char *what, NgxResult r) {
     rt_log("dlaa: %s failed (%08x): DLAA off for this run", what, (unsigned)r);
     D.failed = 1;
+    vk_sampler_dlss_bias(0);
 }
 
 static int image2d(uint32_t w, uint32_t h, VkFormat f, VkImageUsageFlags usage, VkImage *img, VmaAllocation *mem,
@@ -658,6 +655,7 @@ void vk_dlaa_frame(void) {
     if (on != D.on) {
         rt_log("dlaa: %s", on ? "on" : "off");
         D.on = on;
+        vk_sampler_dlss_bias(dl_active());
         // either way the next DLAA frame starts a new history from an unjittered frame
         D.reset = 1, D.cam_prev_ok = 0, D.jit_ok = D.jit_used = D.armed = D.done = D.gbuf = D.ended = D.up = 0;
         D.hold = 0;
@@ -725,7 +723,6 @@ void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, cons
     (void)have, (void)nhave, (void)ext, (void)n, (void)max;
 }
 void vk_dlaa_init(void) {}
-int vk_dlaa_available(void) { return 0; }
 void vk_dlaa_pass(VkExec *ex) { (void)ex; }
 void vk_dlaa_frame(void) {}
 void vk_dlaa_draw(VkExec *ex) { (void)ex; }

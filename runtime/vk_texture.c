@@ -26,7 +26,6 @@
 #include "nvn_tex.h"
 #include "tex.h"
 #include "vk.h"
-#include "vk_dlaa.h"
 #include "vk_exec.h"
 #include "platform/platform.h"
 
@@ -108,7 +107,7 @@ static uint64_t gpu_writes;  // GPU writes into mirrored textures so far: Tex.gp
 static uint32_t tex_gen = 1;
 // Bumped with tex_gen and whenever a slot is registered: what vk_texture_by_id returns for any slot may have changed.
 static uint32_t slots_gen = 1;
-static uint32_t samp_gen = 1;   // bumped whenever a sampler slot is registered: vk_sampler_by_id may answer otherwise
+static uint32_t samp_gen = 1;   // bumped whenever a sampler slot is registered or the DLSS bias switches: vk_sampler_by_id may answer otherwise
 static uint64_t n_checks;    // draw-binding storage checks (make_fresh_snap) since the last perf line
 // tex_gen per storage address (hashed): a slot resolves through the entries at its own address only (slot_resolve), so
 // a slot's resolution stays valid while its address's generation does. TotK finalizes and initializes transient
@@ -1662,15 +1661,8 @@ static VkSampler make_sampler(VkCtx *c, const samp_par *d) {
     si.maxLod = d->lod_max > 1000 ? VK_LOD_CLAMP_NONE : d->lod_max;
     if (mf <= NVN_MIN_FILTER_LINEAR) si.maxLod = si.minLod + 0.25f;   // not mipmapped: stay on the base level
     if (si.maxLod < si.minLod) si.maxLod = si.minLod;
-    float lim = c->props.limits.maxSamplerLodBias, bias = d->lod_bias;
-    // DLSS upscaling (resolution.c): the scene's material textures, the filtered mipmapped ones that repeat, are
-    // sampled for the output's resolution; clamped ones (post effects, LUTs, the UI) keep the game's bias. Without DLSS
-    // running (dlaa = 0, or NGX without DLSS) nothing accumulates the extra detail, and the sharper mips only shimmer.
-    if (vk_dlaa_available() && !d->cmp_mode && mf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR &&
-        (si.addressModeU == VK_SAMPLER_ADDRESS_MODE_REPEAT || si.addressModeU == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT ||
-         si.addressModeV == VK_SAMPLER_ADDRESS_MODE_REPEAT || si.addressModeV == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT))
-        bias += res_dlss_lod_bias();
-    si.mipLodBias = fmaxf(-lim, fminf(lim, bias));
+    float lim = c->props.limits.maxSamplerLodBias;
+    si.mipLodBias = fmaxf(-lim, fminf(lim, d->lod_bias));   // with sampler_for's DLSS bias
     // TOTK_ANISO raises the level for filtered, mipmapped colour samplers that repeat on U and V: the surface textures,
     // which tile, so ground and walls seen at a shallow angle stay sharp into the distance. Depth-compare (shadow)
     // samplers, nearest or unmipmapped ones (data maps, LUTs) and clamped ones keep the game's level: clamped samplers
@@ -1738,17 +1730,49 @@ void vk_sampler_register(int id, const samp_par *s) {
     unlock();
 }
 
+// The wrap modes make_sampler gives a repeating address mode: NVN's repeat and mirrored repeat, anything it does not
+// know (REPEAT there), and mirror-clamp on a device without mirror-clamp-to-edge (MIRRORED_REPEAT there).
+static int wrap_repeats(uint8_t w) {
+    switch (w) {
+    case NVN_WRAP_MODE_CLAMP: case NVN_WRAP_MODE_CLAMP_TO_EDGE: case NVN_WRAP_MODE_MIRROR_CLAMP_TO_BORDER:
+    case NVN_WRAP_MODE_CLAMP_TO_BORDER: return 0;
+    case NVN_WRAP_MODE_MIRROR_CLAMP: case NVN_WRAP_MODE_MIRROR_CLAMP_TO_EDGE: return !sf.mirror_clamp_edge;
+    default: return 1;
+    }
+}
+
+// DLSS upscaling (resolution.c res_dlss_lod_bias): while DLSS runs (vk_dlaa.c vk_dlaa_frame), the scene's material
+// textures, the filtered mipmapped ones that repeat on U or V, are sampled for the output's resolution; clamped ones
+// (post effects, LUTs, the UI) keep the game's bias. With dlaa off nothing accumulates the extra detail, and the
+// sharper mips only shimmer. The bias goes into the sampler's key, so both kinds of sampler can exist side by side.
+static int dlss_bias_on;
+
 // Caller holds the lock.
 static VkSampler sampler_for(VkCtx *c, const samp_par *s) {
     samp_par k;
     memset(&k, 0, sizeof k);
     k = *s;
+    sampler_features(c);
+    if (dlss_bias_on && !k.cmp_mode && k.minf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR &&
+        (wrap_repeats(k.ws) || wrap_repeats(k.wt)))
+        k.lod_bias += res_dlss_lod_bias();
     VkSampler v = (VkSampler)nvn_hm_get(&samplers, &k);
     if (!v) {
         v = make_sampler(c, &k);
         nvn_hm_put(&samplers, &k, (void *)v);
     }
     return v;
+}
+
+// DLSS started or stopped running: every slot looks its sampler up again (vk_sampler_gen tells the draw caches).
+void vk_sampler_dlss_bias(int on) {
+    lock();
+    if (dlss_bias_on != on) {
+        dlss_bias_on = on;
+        for (int i = 0; i < nsslots; i++) sslots[i].s = sslots[i].sp = VK_NULL_HANDLE;
+        samp_gen++;
+    }
+    unlock();
 }
 
 VkSampler vk_sampler_for(const samp_par *s) {

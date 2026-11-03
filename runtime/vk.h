@@ -361,7 +361,8 @@ uint32_t vk_texture_slots_gen(void);
 // its storage address is created, dropped, released or taken back into use. Unlocked; read it before the lookup it
 // guards (a lookup may create an entry). 0 when the slot was never registered: nothing is kept under 0.
 uint64_t vk_texture_slot_token(int id);
-uint32_t vk_sampler_gen(void);                      // changes whenever a sampler slot is registered
+uint32_t vk_sampler_gen(void);                      // changes whenever a sampler slot is registered, or the DLSS bias
+void vk_sampler_dlss_bias(int on);                  // vk_dlaa.c: DLSS runs, the scene's textures take its LOD bias
 void vk_texture_gpu_written(const tex_t *t);        // rendered or copied into by the GPU: no re-upload from storage
 void vk_texture_storage_bound_locked(const VkTexImage *img);   // bound as a storage image in the recording submission
 uint64_t vk_texture_last_write(const tex_t *t);    // timeline value of the newest submission recorded to write it; 0: none
