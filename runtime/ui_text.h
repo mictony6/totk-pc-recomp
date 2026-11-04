@@ -16,7 +16,7 @@ typedef enum {
     UI_MENU_FIRST,
     UI_MENU_TITLE = UI_MENU_FIRST,
     UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND, UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO,
-    UI_MENU_TAB_MENU, UI_MENU_TAB_ADVANCED,
+    UI_MENU_TAB_PROFILES, UI_MENU_TAB_MENU, UI_MENU_TAB_ADVANCED,
     UI_MENU_CONTINUE, UI_MENU_QUIT,
     UI_MENU_ON, UI_MENU_OFF, UI_MENU_AUTO, UI_MENU_DEFAULT_MARK,      // "default" beside the default value
     UI_MENU_AFTER_RESTART,    // note on a setting that is read at start
@@ -139,6 +139,15 @@ typedef enum {
     UI_MENU_AMIIBO_NO_TAG, UI_MENU_AMIIBO_TAG_FILE, UI_MENU_AMIIBO_TAG_ID, UI_MENU_AMIIBO_TAG_UID,
     UI_MENU_AMIIBO_READY, UI_MENU_AMIIBO_TAPPED, UI_MENU_AMIIBO_LOAD_FAILED, UI_MENU_AMIIBO_REMOVED,
     UI_MENU_AMIIBO_STATUS,
+
+    // Profiles tab (ui/menu.cpp tab_profiles, save_profile.c): the profile list, the restart into another one and the
+    // new profile dialog with why a name was refused
+    UI_MENU_PROFILES_ABOUT, UI_MENU_PROFILE, UI_MENU_PROFILE_DESC, UI_MENU_PROFILE_DEFAULT,
+    UI_MENU_PROFILE_IN_USE,   // "in use: %s" under the choice while another profile is picked for the next start
+    UI_MENU_PROFILE_RESTART, UI_MENU_PROFILE_RESTART_DESC, UI_MENU_PROFILE_NEW, UI_MENU_PROFILE_NEW_DESC,
+    UI_MENU_PROFILE_NEW_PROMPT, UI_MENU_PROFILE_CREATE, UI_MENU_PROFILE_BAD_NAME, UI_MENU_PROFILE_EXISTS,
+    UI_MENU_PROFILE_FAILED,
+    UI_MENU_PROFILE_CREATED,  // "created: %s", the value of the New profile row after a creation
 
     // Menu tab
     UI_MENU_MENU_LANG, UI_MENU_MENU_LANG_DESC, UI_MENU_MENU_LANG_AUTO,

@@ -25,6 +25,7 @@
 #include "host.h"
 #include "ov.h"
 #include "platform/platform.h"
+#include "save_profile.h"
 
 #define NFP_R_DEVICE_NOT_FOUND 0x8073u     // nfp: no NFC reader on the host
 #define ACCOUNT_R_INVALID 0x7c67u          // MacNativeGames' result for an unknown user handle or uid
@@ -436,7 +437,8 @@ static void obs_memory_pages(Cpu *c) {
         rt_log("AllocateMemoryPages address %#llx size %#llx result %#x", (unsigned long long)a, (unsigned long long)size, r);
 }
 
-// ==== nn::account (account.c): one offline local user whose Uid survives restarts in <profile>/account.uid
+// ==== nn::account (account.c): one offline local user per save profile, whose Uid survives restarts in
+// <save profile>/account.uid (save_profile.c)
 typedef struct { uint64_t lo, hi; } Uid;
 typedef struct { Uid uid; uint64_t token; } UserHandle;
 static PlatMutex account_lock = PLAT_MUTEX_INIT;
@@ -451,7 +453,7 @@ static void make_dirs(const char *dir) {
 // Holding account_lock.
 static void load_uid(void) {
     if (local.lo || local.hi) return;
-    const char *dir = rt_config()->profile;
+    const char *dir = save_profile_dir();   // each save profile is its own local user
     char path[1100];
     make_dirs(dir);
     need(snprintf(path, sizeof path, "%s/account.uid", dir) < (int)sizeof path, "account: path too long");
@@ -553,9 +555,10 @@ static void ov_nickname(Cpu *c) {
     load_uid();
     int ok = out && same_uid(arg_p(c, 1));
     plat_mutex_unlock(&account_lock);
-    if (ok) {
+    if (ok) {   // the save profile's name (at most 32 bytes, save_profile.h), "Local" for the default profile
+        const char *name = *save_profile_active() ? save_profile_active() : "Local";
         memset(out, 0, 33);
-        memcpy(out, "Local", 5);
+        memcpy(out, name, strlen(name));
     }
     ret_x(c, ok ? 0 : ACCOUNT_R_INVALID);
 }

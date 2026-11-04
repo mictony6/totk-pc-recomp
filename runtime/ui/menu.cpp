@@ -42,6 +42,7 @@ extern "C" {
 #include "input_map.h"
 #include "perfmon.h"
 #include "platform/platform.h"
+#include "save_profile.h"
 #include "sysinfo.h"
 #include "ui/menu.h"
 #include "ui_text.h"
@@ -370,7 +371,7 @@ extern "C" void menu_vk_release(void) {
 // TOTK_MENU_TEST_SET=<frame>:<key>=<value>[,<key>=<value>...][;<frame>:...]: cfg_set of each key (TOTK_ prefix
 // optional) at that presented frame; changes live settings with no input, menu open or not. totk.ini is written only by
 // the pseudo-key SAVE=1 (cfg_save, as a row change does; a failed write shows the menu's save note).
-enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_MENU, TAB_ADVANCED, TAB_COUNT };
+enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_PROFILES, TAB_MENU, TAB_ADVANCED, TAB_COUNT };
 enum { TEST_PAGE_FRAMES = 30, TEST_SETS = 16 };
 struct TestSet { uint64_t frame; char key[64], value[64]; };
 static struct {
@@ -753,7 +754,7 @@ static void tab_sound(float scale) {
     opt_end();
 }
 
-// A confirmation is open (Controls: restart, Advanced: reset): B and Esc close it, not the menu; L / R stay on the page.
+// A confirmation is open (Controls and Profiles: restart, Profiles: new profile, Advanced: reset): B and Esc close it, not the menu; L / R stay on the page.
 static bool g_modal;
 
 // The note under the layout: Automatic with a gamepad connected, the layout it picked ("in use: Xbox"). NULL otherwise.
@@ -889,6 +890,101 @@ static void tab_controls(float scale) {
     binds_after_page();
     if (ask) ImGui::OpenPopup("##restart_confirm");   // at the level BeginPopupModal looks it up
     restart_confirm();
+}
+
+// ---- Profiles: the save profile of the next start (save_profile.c), a restart into it, and a new profile. The game
+// mounts its save data once and keeps it open, so the profile in use changes only with a restart.
+static char g_profile_created[SAVE_PROFILE_NAME_BYTES];   // the last profile New profile made, for its row's value
+
+// The new profile dialog: a name, Create and Cancel. Create makes the folder and picks the profile for the next start;
+// a refused name keeps the dialog open with the reason. Enter in the name field is Create.
+static void profile_new_dialog(void) {
+    static char name[SAVE_PROFILE_NAME_BYTES];
+    static int why = SAVE_PROFILE_CREATED;   // the refusal shown under the name; CREATED: none
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("##profile_new", nullptr,
+                                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+    g_modal = true;
+    if (ImGui::IsWindowAppearing()) {
+        name[0] = 0;
+        why = SAVE_PROFILE_CREATED;
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::TextUnformatted(menu_text(UI_MENU_PROFILE_NEW_PROMPT));
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("M").x * 24);
+    bool enter = ImGui::InputText("##profile_name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (why != SAVE_PROFILE_CREATED)
+        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1), "%s",
+                           menu_text(why == SAVE_PROFILE_EXISTS     ? UI_MENU_PROFILE_EXISTS
+                                     : why == SAVE_PROFILE_BAD_NAME ? UI_MENU_PROFILE_BAD_NAME
+                                                                    : UI_MENU_PROFILE_FAILED));
+    ImGui::Spacing();
+    const char *yes = menu_text(UI_MENU_PROFILE_CREATE), *no = menu_text(UI_MENU_RESET_NO);
+    const ImGuiStyle &st = ImGui::GetStyle();
+    float bw = fmaxf(ImGui::CalcTextSize(yes).x, ImGui::CalcTextSize(no).x) + st.FramePadding.x * 4;
+    bool close = ImGui::Button(no, ImVec2(bw, 0));
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!name[0]);
+    bool create = ImGui::Button(yes, ImVec2(bw, 0)) || (enter && name[0]);
+    ImGui::EndDisabled();
+    if (create) {
+        why = save_profile_create(name);
+        if (why == SAVE_PROFILE_CREATED) {
+            snprintf(g_profile_created, sizeof g_profile_created, "%s", name);
+            cfg_set("TOTK_SAVE_PROFILE", name);   // picked for the next start; Restart with this profile follows
+            opt_save_soon();
+            close = true;
+        }
+    }
+    // Esc and B close the dialog; B only while the name field is not being typed into
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+        (!ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)))
+        close = true;
+    if (close) {
+        ImGui::CloseCurrentPopup();
+        opt_focus_key(why == SAVE_PROFILE_CREATED && create ? "##restart" : "##profile_new");
+    }
+    ImGui::EndPopup();
+}
+
+static void tab_profiles(float scale) {
+    // the list is read when the tab opens and after a creation, not every frame
+    static char names[64][SAVE_PROFILE_NAME_BYTES];
+    static int n = -1;
+    static char seen_created[SAVE_PROFILE_NAME_BYTES] = "\x01";
+    if (n < 0 || strcmp(seen_created, g_profile_created) || ImGui::IsWindowAppearing()) {
+        n = save_profile_list(names, 63);
+        snprintf(seen_created, sizeof seen_created, "%s", g_profile_created);
+    }
+    const char *want = cfg_value("TOTK_SAVE_PROFILE"), *active = save_profile_active();
+    // a profile picked in totk.ini whose folder is not there yet (it is made at the next start) is listed too
+    int count = n;
+    bool listed = !*want;
+    for (int i = 0; i < count && !listed; i++) listed = !strcmp(names[i], want);
+    if (!listed && save_profile_name_ok(want)) snprintf(names[count++], sizeof names[0], "%s", want);
+    const char *values[65], *labels[65];
+    values[0] = "", labels[0] = menu_text(UI_MENU_PROFILE_DEFAULT);
+    for (int i = 0; i < count; i++) values[i + 1] = labels[i + 1] = names[i];
+
+    opt_begin("##profiles", scale);
+    opt_text(UI_MENU_PROFILES_ABOUT);
+    char in_use[96];
+    snprintf(in_use, sizeof in_use, menu_text(UI_MENU_PROFILE_IN_USE),
+             *active ? active : menu_text(UI_MENU_PROFILE_DEFAULT));
+    bool other = strcmp(want, active) != 0;   // the next start loads another profile than this one
+    opt_choice_list("TOTK_SAVE_PROFILE", UI_MENU_PROFILE, values, labels, count + 1, UI_MENU_PROFILE_DESC, -1,
+                    other ? in_use : nullptr);
+    bool ask = other && opt_button("##restart", UI_MENU_PROFILE_RESTART, UI_MENU_PROFILE_RESTART_DESC);
+    char created[96] = "";
+    if (*g_profile_created) snprintf(created, sizeof created, menu_text(UI_MENU_PROFILE_CREATED), g_profile_created);
+    bool make = opt_button("##profile_new", UI_MENU_PROFILE_NEW, UI_MENU_PROFILE_NEW_DESC, created);
+    opt_end();
+    g_modal = false;
+    if (ask) ImGui::OpenPopup("##restart_confirm");   // at the level BeginPopupModal looks it up
+    if (make) ImGui::OpenPopup("##profile_new");
+    restart_confirm();
+    if (!g_modal) profile_new_dialog();
 }
 
 static void tab_menu(float scale) {
@@ -1057,8 +1153,8 @@ static void tab_advanced(float scale) {
 }
 
 static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN,   UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND,
-                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_MENU_TAB_MENU,
-                                              UI_MENU_TAB_ADVANCED};
+                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_MENU_TAB_PROFILES,
+                                              UI_MENU_TAB_MENU,     UI_MENU_TAB_ADVANCED};
 static int g_tab;               // the tab shown
 static int g_tab_request = -1;  // select this tab at the next layout; -1 none
 static int g_focus_page = -1;   // this tab's first row takes the cursor once it is shown; -1 none
@@ -1110,6 +1206,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
             case TAB_SOUND: tab_sound(scale); break;
             case TAB_CONTROLS: tab_controls(scale); break;
             case TAB_AMIIBO: tab_amiibo(scale); break;
+            case TAB_PROFILES: tab_profiles(scale); break;
             case TAB_MENU: tab_menu(scale); break;
             case TAB_ADVANCED: tab_advanced(scale); break;
             }
@@ -1133,7 +1230,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     ImGui::SameLine();
     if (ImGui::Button(quit, ImVec2(bw, 0))) gfx_window_request_close();
     bool was_modal = g_modal || binds_modal();
-    if (g_tab != TAB_ADVANCED && g_tab != TAB_CONTROLS) g_modal = false;
+    if (g_tab != TAB_ADVANCED && g_tab != TAB_CONTROLS && g_tab != TAB_PROFILES) g_modal = false;
     if (!was_modal && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)))
         set_open(0);
     ImGui::End();

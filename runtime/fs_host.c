@@ -2,7 +2,8 @@
 // contributors); the probe follows MacNativeGames' romfs.c runtime_fs_probe and fs_host.c runtime_save_probe.
 // nn::fs host implementation of the functions main imports. RomFS paths and
 // handles go to the read-only backend (romfs.c); save, temporary and cache storage are host directories under the
-// profile directory (rt_config()->profile, default build/profile):
+// folder of the save profile in use (save_profile_dir: rt_config()->profile, default build/profile, or a profile
+// under its users/ folder):
 //
 //   <profile>/save/<uid hi><uid lo>/   committed application save data, created on first use as the system launcher
 //                                      does for titles that declare save data
@@ -24,6 +25,7 @@
 #include "host.h"
 #include "platform/platform.h"
 #include "romfs_path.h"
+#include "save_profile.h"
 
 #define TOTK_APPLICATION_ID 0x0100f2c0115b6000ull
 #define FILE_BASE 0x200000000ull
@@ -562,7 +564,7 @@ static uint32_t save_commit(void) {
 static void storage_init(void *param) {
     (void)param;
     if (!*profile)
-        need(snprintf(profile, sizeof profile, "%s", rt_config()->profile) < (int)sizeof profile, "profile path");
+        need(snprintf(profile, sizeof profile, "%s", save_profile_dir()) < (int)sizeof profile, "profile path");
     uint64_t uid[2];
     char p[PATH_CAP];
     make_dirs(profile);

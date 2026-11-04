@@ -55,7 +55,7 @@ static const char *const known[] = {
     "RENDER_SCALE", "REPLAY_ASYNC",
     "REPLAY_CHECK", "RESOLVE_CHECK", "RESTART_WAIT", "ROMFS", "ROMFS_INDEX", "ROMFS_MMAP", "ROMFS_MODS",
     "ROMFS_PATCHES", "ROMFS_PROOF_DIR", "ROMFS_VERIFY", "RSTICK_DEADZONE", "RUMBLE", "RUMBLE_CURVE", "RUMBLE_STRENGTH",
-    "RUMBLE_TRIGGERS", "SHADER_CACHE", "SHADER_MEMO", "SHADOW_BLUR", "SHADOW_RANGE", "SHADOW_RES", "SHADOW_SCALE",
+    "RUMBLE_TRIGGERS", "SAVE_PROFILE", "SHADER_CACHE", "SHADER_MEMO", "SHADOW_BLUR", "SHADOW_RANGE", "SHADOW_RES", "SHADOW_SCALE",
     "SHARED_FONTS", "SHARPNESS", "SHOTS", "SHOTS_CROP", "SHOTS_DIR", "SHOTS_FULL", "SPEED_PROBE", "SPIN", "SPIN_HANDOFF_US",
     "SPLIT_DRAWS", "SPLIT_US", "STICK_DEADZONE", "STICK_SENS", "SWKBD_ANSWER", "SWKBD_TEST", "TEST_PAD",
     "TEST_PREPARE_SHADERS", "TEX_ALIAS", "TEX_MEMO", "TEX_VRAM_PRESSURE", "TIMER_1MS", "TRACE", "TXD_TRANSPOSE",
@@ -86,6 +86,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"UNDERWATER_UPSAMPLE", "display"},
     {"MENU_LANG", "language"}, {"LANG", "language"}, {"OPERATION_MODE", "language"},
     {"VOLUME", "audio"},
+    {"SAVE_PROFILE", "saves"},
     {"MOTION", "input"}, {"RUMBLE_STRENGTH", "input"}, {"RUMBLE_CURVE", "input"}, {"RUMBLE_TRIGGERS", "input"},
     {"PAD_LAYOUT", "input"}, {"PROMPTS", "input"}, {"STICK_DEADZONE", "input"}, {"LSTICK_DEADZONE", "input"}, {"RSTICK_DEADZONE", "input"},
     {"STICK_SENS", "input"},
@@ -161,6 +162,8 @@ static const CfgMeta metas[] = {
     {"ASSUME_FOCUS", "1", "0|1", LIVE},   // read on every focus change (ov_system.c)
     // Sound, Controls, Menu
     {"VOLUME", "100", "0..100", LIVE},
+    // the save profile (save_profile.c): "" the default one, else a folder under <profile dir>/users
+    {"SAVE_PROFILE", "", NULL, RESTART},
     {"MOTION", "1", "0|1", LIVE}, {"RUMBLE_STRENGTH", "130", "0..300", LIVE}, {"RUMBLE_CURVE", "0.6", "0.2..1.5", LIVE},
     {"RUMBLE_TRIGGERS", "0", "0|1", LIVE}, {"PAD_LAYOUT", "auto", "auto|nintendo|xbox", LIVE},
     {"PROMPTS", "nintendo", "nintendo|xbox", RESTART},

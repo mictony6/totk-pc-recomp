@@ -245,7 +245,7 @@ void fs_init(void);                                        // idempotent; paths 
 
 // ---- account (ov_system.c)
 void account_uid(uint64_t out[2]);                         // the local user's nn::account::Uid {lo, hi}, persistent in
-                                                           // <profile>/account.uid; fs_host.c names save data after it
+                                                           // <save profile>/account.uid; fs_host.c names save data after it
 
 // ---- movies (ov_movie.c)
 void movie_tick(Cpu *c);                                   // at every present, on the presenting guest thread: hands

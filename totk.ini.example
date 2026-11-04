@@ -298,6 +298,12 @@
 # Volume in percent (0 to 100), on top of the game's own. Changes while the game runs take effect at once.
 # volume = 100
 
+[saves]
+# Save profile: a separate set of saves for each person who plays on this PC. Empty = the default profile, whose saves
+# are in the profile folder itself; a name = the folder users/<name> in the profile folder (created on first use). The
+# menu's Profiles tab lists, creates and switches profiles. Read at start.
+# save_profile =
+
 [input]
 # Gamepad motion controls (0 = off) and vibration (0 = off).
 # motion = 1
