@@ -258,10 +258,12 @@ static struct {
     int pj_ok;                   // that lookup found the block in the snapshot
     // camera (vk_dlaa_draw) and motion vectors (mv_pass)
     uint64_t cam_addr;           // this frame's scene camera block (c4 of a scene draw's vertex stage), 0: none seen
-    VkBuffer camb;               // two CAM_SLOT slots: this frame's camera block and last frame's (per-object pass)
+    VkBuffer camb;               // CAM_SLOTS slots of CAM_SLOT bytes, host-written: each frame's camera block
     VmaAllocation camb_mem;
+    uint8_t *camb_map;
     double cam_prev[16];         // last frame's view-projection (row-major), valid while cam_prev_ok
-    int cam_slot, cam_prev_ok;   // the camb slot this frame writes / the other slot holds last frame's camera
+    uint32_t cam_last;           // the camb slot mv_pass wrote last (last frame's camera for the per-object pass)
+    int cam_prev_ok;
     VkDescriptorSetLayout mv_dsl;
     VkPipelineLayout mv_layout;
     VkPipeline mv_pipe;
@@ -450,6 +452,7 @@ static void times_begin(VkCommandBuffer cb) {
 #define CAM_BYTES 256u   // vec4 rows 0-15: view, view-projection (3-6), projection, inverse view
 #define CAM_BLOCK 0x940u   // the whole block, kept for the per-object motion pass's vertex shaders (vk_exec_draw.c)
 #define CAM_SLOT 0xa00u    // camb slot stride
+#define CAM_SLOTS 16u      // frames the GPU may still be reading a camb slot of (frame overlap included)
 
 // m inverted in place (row-major 4x4, Gauss-Jordan with partial pivoting). 0: singular.
 static int invert4(double m[16]) {
@@ -501,17 +504,21 @@ static int mv_init(void) {
     VkShaderModuleCreateInfo mi = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = sizeof dlaa_mv_spv,
                                    .pCode = dlaa_mv_spv};
     VkShaderModule m = VK_NULL_HANDLE;
-    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = 2 * CAM_SLOT,
-                             .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
-    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = CAM_SLOTS * CAM_SLOT,
+                             .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT};
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                  .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                           VMA_ALLOCATION_CREATE_MAPPED_BIT};
+    VmaAllocationInfo cinfo;
     if (vkCreateDescriptorSetLayout(c->device, &dci, NULL, &D.mv_dsl) != VK_SUCCESS) goto fail;
     VkPipelineLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
                                      .pSetLayouts = &D.mv_dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pr};
     if (vkCreatePipelineLayout(c->device, &li, NULL, &D.mv_layout) != VK_SUCCESS ||
         vkCreateSampler(c->device, &si, NULL, &D.mv_samp) != VK_SUCCESS ||
         vkCreateShaderModule(c->device, &mi, NULL, &m) != VK_SUCCESS ||
-        vmaCreateBuffer(c->vma, &bi, &ai, &D.camb, &D.camb_mem, NULL) != VK_SUCCESS)
+        vmaCreateBuffer(c->vma, &bi, &ai, &D.camb, &D.camb_mem, &cinfo) != VK_SUCCESS)
         goto fail;
+    D.camb_map = cinfo.pMappedData;
     VkComputePipelineCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
                                       .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                                                 .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = m, .pName = "main"},
@@ -542,10 +549,12 @@ static int mv_pass(VkExec *ex, struct Size *e, VkImageView zv, float jx, float j
         e->chars_ok = 0;
         return 0;
     }
-    int s = D.cam_slot;
-    vkCmdUpdateBuffer(cb, D.camb, (VkDeviceSize)s * CAM_SLOT, CAM_BLOCK, blk);   // last frame's for the next frame
-    full_barrier(cb);
-    D.cam_slot ^= 1;
+    // into the next camb slot from the CPU, for the next frame's per-object pass: no command, so nothing goes past the
+    // recorder thread (vk_rec.h); a slot is written again CAM_SLOTS frames later
+    uint32_t s = (D.cam_last + 1) % CAM_SLOTS;
+    memcpy(D.camb_map + (size_t)s * CAM_SLOT, blk, CAM_BLOCK);
+    vmaFlushAllocation(vk_ctx()->vma, D.camb_mem, (VkDeviceSize)s * CAM_SLOT, CAM_BLOCK);   // a no-op on coherent memory
+    D.cam_last = s;
     double cur[16], prev[16], m[16];
     for (int i = 0; i < 16; i++) cur[i] = blk[12 + i];
     int had_prev = D.cam_prev_ok;
@@ -615,11 +624,11 @@ static int mv_pass(VkExec *ex, struct Size *e, VkImageView zv, float jx, float j
     return 1;
 }
 
-// Last frame's camera block for the per-object motion pass, recorded before this frame's mv_pass: that pass writes
-// this frame's into slot cam_slot and leaves the other slot, last frame's, as it is. 0: none (no history).
+// Last frame's camera block for the per-object motion pass, looked up while the replay lists the draws, before this
+// frame's mv_pass writes its own into the next slot. 0: none (no history).
 int vk_dlaa_prev_camera(VkDescriptorBufferInfo *out, float jitter[2]) {
     if (!dl_active() || !D.cam_prev_ok || !D.camb) return 0;
-    *out = (VkDescriptorBufferInfo){D.camb, (VkDeviceSize)(D.cam_slot ^ 1) * CAM_SLOT, CAM_BLOCK};
+    *out = (VkDescriptorBufferInfo){D.camb, (VkDeviceSize)D.cam_last * CAM_SLOT, CAM_BLOCK};
     jitter[0] = D.jit_ok ? D.jx : 0.0f, jitter[1] = D.jit_ok ? D.jy : 0.0f;
     return 1;
 }
