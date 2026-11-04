@@ -711,6 +711,9 @@ static void tab_screen(float scale) {
     opt_choice("TOTK_DLSS", UI_MENU_DLSS, dlss, 5, UI_MENU_DLSS_DESC);
     static const UiTextId model[] = {UI_MENU_DLSS_MODEL_CNN, UI_MENU_DLSS_MODEL_TRANSFORMER, UI_MENU_DLSS_MODEL_DEFAULT};
     opt_choice("TOTK_DLSS_MODEL", UI_MENU_DLSS_MODEL, model, 3, UI_MENU_DLSS_MODEL_DESC);
+    static const UiTextId chars[] = {UI_MENU_DLSS_CHARS_OFF, UI_MENU_DLSS_CHARS_LIGHT, UI_MENU_DLSS_CHARS_MEDIUM,
+                                     UI_MENU_DLSS_CHARS_FULL};
+    opt_choice("TOTK_DLSS_CHAR_MASK", UI_MENU_DLSS_CHARS, chars, 4, UI_MENU_DLSS_CHARS_DESC);
     rows_color();
     opt_group(UI_MENU_HDR_GROUP);
     opt_toggle("TOTK_HDR", UI_MENU_HDR, UI_MENU_HDR_DESC);

@@ -39,7 +39,7 @@ static const char *const known[] = {
     "BIND_SKIP", "BIND_STATS", "BIND_UP", "BIND_X", "BIND_Y",
     "BIND_ZL", "BIND_ZR", "BLOCK_VIEWS_3D", "BUFFER_WRITE_MASKS", "CLOTH_REALTIME", "COLOR_BRIGHTNESS", "COLOR_CONTRAST", "COLOR_GAMMA",
     "COLOR_PRESET", "COLOR_SATURATION", "CONTACT_DEBUG", "CONTACT_SHADOWS", "CORE_DIAG", "CRIT", "CRIT_OUT",
-    "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLAA_MASKDEBUG", "DLAA_MVDEBUG", "DLAA_OBJMV", "DLAA_SURVEY", "DLAA_TIMES", "DLSS", "DLSS_MODEL", "DLSS_REACTIVE", "DRAW_LOG", "DUMP", "DUMP_BUF", "DUMP_DIR",
+    "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLAA_MASKDEBUG", "DLAA_MVDEBUG", "DLAA_OBJMV", "DLAA_SURVEY", "DLAA_TIMES", "DLSS", "DLSS_CHAR_MASK", "DLSS_MODEL", "DLSS_REACTIVE", "DRAW_LOG", "DUMP", "DUMP_BUF", "DUMP_DIR",
     "DUMP_FROM", "DUMP_LOG", "DUMP_ON", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_TEX_LAYER", "EFFECTS_UPSAMPLE", "EXEFS", "FEEDBACK", "FIX_C0", "FIX_ZERO",
     "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES", "FLIGHT_SPIKE_MS", "FLIGHT_THUMBS", "FOV", "FOV_PATCH",
     "FPS60", "FPS_LIMIT", "FRAME_OVERLAP", "FREEZE_IDLE", "FREE_CORES", "FULLSCREEN", "FXAA", "GPL", "GPL_DRAW_BUILD", "GPU",
@@ -76,7 +76,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
     {"COLOR_GAMMA", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
     {"HDR_UI_NITS", "display"}, {"SHADOW_RES", "display"},
-    {"DLAA", "display"}, {"DLSS", "display"}, {"DLSS_MODEL", "display"},
+    {"DLAA", "display"}, {"DLSS", "display"}, {"DLSS_MODEL", "display"}, {"DLSS_CHAR_MASK", "display"},
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
@@ -132,6 +132,7 @@ static const CfgMeta metas[] = {
     {"DLAA", "0", "0|1", LIVE},   // resolution.c res_scene_live
     {"DLSS", "dlaa", "dlaa|quality|balanced|performance|ultra_performance", LIVE},
     {"DLSS_MODEL", "transformer", "cnn|transformer|default", LIVE},   // fastest first (menu order)   // vk_dlaa.c dlss_preset
+    {"DLSS_CHAR_MASK", "65", "0|35|65|100", LIVE},   // vk_dlaa.c char_bias
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"GRASS_DIST", "100", "100..150", LIVE},   // resolution.c res_grass_live
     {"ANISO", "game", "game|2|4|8|16", RESTART},   // vk_texture.c sampler_features

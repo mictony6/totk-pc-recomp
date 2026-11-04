@@ -177,6 +177,12 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                 "Transformer 2: about 7 to 10 ms. Sharpest and steadiest; nvngx_dlss.dll's own choice.",
     [UI_MENU_DLSS_MODEL_DEFAULT] = "Transformer 2 (slowest)", [UI_MENU_DLSS_MODEL_TRANSFORMER] = "Transformer (medium)",
     [UI_MENU_DLSS_MODEL_CNN] = "CNN (fastest)",
+    [UI_MENU_DLSS_CHARS] = "DLSS character trails",
+    [UI_MENU_DLSS_CHARS_DESC] = "Reduces the faint trails behind moving characters, animals and what they hold: DLSS takes "
+                                "less of the previous frames there. Stronger removes more of the trails and leaves those "
+                                "edges a little less smooth. Applies at once.",
+    [UI_MENU_DLSS_CHARS_OFF] = "Off", [UI_MENU_DLSS_CHARS_LIGHT] = "Light", [UI_MENU_DLSS_CHARS_MEDIUM] = "Medium",
+    [UI_MENU_DLSS_CHARS_FULL] = "Full",
 
     [UI_MENU_FPS_LIMIT] = "Frame rate limit",
     [UI_MENU_FPS_LIMIT_DESC] = "The most frames per second the game draws. Above 60 is experimental and needs Game speed "
@@ -591,6 +597,12 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                 "Transformer 2: около 7–10 мс. Самая чёткая и стабильная; её выбирает сам nvngx_dlss.dll.",
     [UI_MENU_DLSS_MODEL_DEFAULT] = "Transformer 2 (самая медленная)", [UI_MENU_DLSS_MODEL_TRANSFORMER] = "Transformer (средняя)",
     [UI_MENU_DLSS_MODEL_CNN] = "CNN (самая быстрая)",
+    [UI_MENU_DLSS_CHARS] = "Шлейфы персонажей в DLSS",
+    [UI_MENU_DLSS_CHARS_DESC] = "Убирает слабые шлейфы за движущимися персонажами, животными и тем, что они держат: DLSS "
+                                "берёт там меньше от прошлых кадров. Чем сильнее, тем меньше шлейфов и тем чуть менее "
+                                "гладкие края. Действует сразу.",
+    [UI_MENU_DLSS_CHARS_OFF] = "Выкл.", [UI_MENU_DLSS_CHARS_LIGHT] = "Слабо", [UI_MENU_DLSS_CHARS_MEDIUM] = "Средне",
+    [UI_MENU_DLSS_CHARS_FULL] = "Полностью",
 
     [UI_MENU_FPS_LIMIT] = "Ограничение частоты кадров",
     [UI_MENU_FPS_LIMIT_DESC] = "Наибольшее число кадров в секунду. Выше 60 — экспериментальный режим, нужна «Скорость "
@@ -1296,6 +1308,12 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                 "Transformer 2: cerca de 7 a 10 ms. O mais nítido e estável; a escolha do próprio nvngx_dlss.dll.",
     [UI_MENU_DLSS_MODEL_DEFAULT] = "Transformer 2 (mais lento)", [UI_MENU_DLSS_MODEL_TRANSFORMER] = "Transformer (médio)",
     [UI_MENU_DLSS_MODEL_CNN] = "CNN (mais rápido)",
+    [UI_MENU_DLSS_CHARS] = "Rastros de personagens no DLSS",
+    [UI_MENU_DLSS_CHARS_DESC] = "Reduz os rastros fracos atrás de personagens, animais e do que eles seguram em movimento: "
+                                "ali o DLSS usa menos dos quadros anteriores. Mais forte remove mais rastros e deixa essas "
+                                "bordas um pouco menos suaves. Vale na hora.",
+    [UI_MENU_DLSS_CHARS_OFF] = "Desligado", [UI_MENU_DLSS_CHARS_LIGHT] = "Leve", [UI_MENU_DLSS_CHARS_MEDIUM] = "Médio",
+    [UI_MENU_DLSS_CHARS_FULL] = "Total",
 };
 
 // Simplified Chinese: this row covers the software keyboard and the whole menu, so the menu and the overlay read Chinese
@@ -1840,6 +1858,11 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                                 "Transformer 2：约 7 至 10 毫秒。最清晰、最稳定；nvngx_dlss.dll 自身的选择。",
     [UI_MENU_DLSS_MODEL_DEFAULT] = "Transformer 2（最慢）", [UI_MENU_DLSS_MODEL_TRANSFORMER] = "Transformer（中等）",
     [UI_MENU_DLSS_MODEL_CNN] = "CNN（最快）",
+    [UI_MENU_DLSS_CHARS] = "DLSS 角色拖影",
+    [UI_MENU_DLSS_CHARS_DESC] = "减少移动中的角色、动物及其手持物品身后的淡淡拖影：DLSS 在这些位置少用之前的帧。越强拖影越少，"
+                                "这些边缘也略欠平滑。立即生效。",
+    [UI_MENU_DLSS_CHARS_OFF] = "关", [UI_MENU_DLSS_CHARS_LIGHT] = "弱", [UI_MENU_DLSS_CHARS_MEDIUM] = "中",
+    [UI_MENU_DLSS_CHARS_FULL] = "强",
 };
 
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}

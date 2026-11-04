@@ -247,6 +247,12 @@
 # model, about 2.5 ms: softer, more ghosting), transformer (DLSS 4, about 5 ms) or default (nvngx_dlss.dll's own
 # choice, the second transformer on 310.9: about 7 to 10 ms, the sharpest). Changes apply at once.
 # dlss_model = transformer
+# Characters' trails: a character, animal or held item that moves on its own can drag a faint copy of itself where
+# its motion vectors are the camera's only (dlaa_objmv = 0, or a draw the per-object pass leaves out). The G-buffer
+# marks those objects; on them and where they were the frame before, DLSS is told to favour the current frame by this
+# percentage (0, 35, 65 or 100; 0 off). Higher removes more of the trails and leaves those edges a little less smooth.
+# Changes while the game runs take effect at once.
+# dlss_char_mask = 65
 # Per-object motion vectors for DLSS: characters, animals and moving objects get their own motion instead of the
 # camera's, so DLSS keeps their history instead of smearing or rejecting it. Costs some CPU time each frame (about 1-2 ms
 # on a laptop CPU); 0 leaves camera-only motion. Read at start.
