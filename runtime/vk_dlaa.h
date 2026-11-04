@@ -14,8 +14,9 @@ void vk_dlaa_init(void);
 typedef struct VkExec VkExec;
 void vk_dlaa_pass(VkExec *ex);
 void vk_dlaa_frame(void);
-// vk_exec_draw.c, each draw before its fixed state is recorded: notes the scene camera block (vk_dlaa_draw), and moves
-// the viewport of the scene's draws by the frame's jitter (vk_dlaa_viewport, when the viewport is recorded).
+// vk_exec_draw.c, each draw before its fixed state is recorded: notes the scene camera block and puts the frame's jitter
+// into its snapshot copy for the scene's draws with that camera (vk_dlaa_draw), and moves the viewport of the scene's
+// other draws by the jitter (vk_dlaa_viewport, when the viewport is recorded).
 void vk_dlaa_draw(VkExec *ex);
 void vk_dlaa_viewport(VkExec *ex, VkViewport *v);
 // vk_exec_draw.c, once a draw's fragment shader is known: 1 skips the draw (the game's scaling draw when DLSS wrote the

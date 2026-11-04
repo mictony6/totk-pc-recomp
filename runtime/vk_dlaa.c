@@ -246,6 +246,13 @@ static struct {
     uint32_t jframe;
     int jit_ok, jit_used, hold;  // jitter allowed this frame / a draw used it / frames left without it
     uint64_t holds;
+    int pj;                      // the last draw took the jitter in its projection: its viewport is not moved
+    float cam_clean[16];         // this frame's view-projection (rows 3-6) before the jitter went into the copy
+    uint64_t cam_clean_addr;     // the camera block cam_clean came from, 0: none
+    float pj_row[4];             // row 3 as patched last, to tell a patched copy from a fresh one
+    uint64_t pj_gen, pj_addr;    // the snapshot generation and camera block last looked up
+    uint32_t pj_frame;
+    int pj_ok;                   // that lookup found the block in the snapshot
     // camera (vk_dlaa_draw) and motion vectors (mv_pass)
     uint64_t cam_addr;           // this frame's scene camera block (c4 of a scene draw's vertex stage), 0: none seen
     double cam_prev[16];         // last frame's view-projection (row-major), valid while cam_prev_ok
@@ -442,7 +449,8 @@ static int mv_pass(VkCommandBuffer cb, const struct Size *e, VkImageView zv, flo
         return 0;
     }
     double cur[16], prev[16], m[16];
-    for (int i = 0; i < 16; i++) cur[i] = cam[12 + i];   // rows 3-6
+    const float *vp = D.cam_clean_addr == D.cam_addr ? D.cam_clean : cam + 12;   // the rows without the jitter
+    for (int i = 0; i < 16; i++) cur[i] = vp[i];   // rows 3-6
     int had_prev = D.cam_prev_ok;
     memcpy(prev, D.cam_prev, sizeof prev);
     memcpy(D.cam_prev, cur, sizeof cur), D.cam_prev_ok = 1;
@@ -474,10 +482,17 @@ static int mv_pass(VkCommandBuffer cb, const struct Size *e, VkImageView zv, flo
 }
 
 // ---------------------------------------------------------------- jitter
-// The scene's draws (every pass drawing with the scene depth, until the DLAA point) have their viewport moved by a
-// sub-pixel Halton(2,3) offset, which shifts what they rasterise as a jittered projection would; full-screen passes
-// that shade by window position are unaffected. Jitter only follows a frame DLSS ran on: a jittered frame that DLSS
-// does not resolve shakes on screen, so a missed DLAA point stops the jitter for a second.
+// The scene's draws (every pass drawing with the scene depth, until the DLAA point) move by a sub-pixel Halton(2,3)
+// offset; full-screen passes that shade by window position are unaffected. Jitter only follows a frame DLSS ran on: a
+// jittered frame that DLSS does not resolve shakes on screen, so a missed DLAA point stops the jitter for a second.
+// Draws with the scene camera block (vk_dlaa_draw) take the offset in their projection: the uniform snapshot's copy of
+// the block (vk_usnap.c; guest memory keeps the game's values) has the view-projection (rows 3-6) and the projection
+// (rows 7-10) moved, once per copy, and their viewport stays put. A viewport offset moves where a draw rasterises but
+// not the positions its vertex shader outputs, and TotK's water G-buffer draw looks up the half-size linear depth and
+// the scene behind it at its projected position (a vertex output divided by w), point-sampled: the lookup missed the
+// jittered content by the offset, and near half a pixel up it took the neighbouring texel, so distant water flashed
+// once per 16 frames. Other draws (other cameras, none bound) keep the viewport offset. The motion vectors read the
+// block's rows from before the change (D.cam_clean).
 static float halton(uint32_t i, uint32_t b) {
     float f = 1, r = 0;
     for (; i; i /= b) f /= (float)b, r += f * (float)(i % b);
@@ -485,7 +500,7 @@ static float halton(uint32_t i, uint32_t b) {
 }
 
 void vk_dlaa_viewport(VkExec *ex, VkViewport *v) {
-    if (!D.jit_ok || D.ended || !ex->depth.image || ex->depth.image != D.jdepth) return;
+    if (!D.jit_ok || D.ended || !ex->depth.image || ex->depth.image != D.jdepth || D.pj) return;
     v->x += D.jx, v->y += D.jy;
     D.ux = D.jx, D.uy = D.jy, D.jit_used = 1;
 }
@@ -497,6 +512,27 @@ void vk_dlaa_draw(VkExec *ex) {
     if (b->size == 0x940 && b->addr && z->image && z->width >= 640 && z->format == VK_FORMAT_D32_SFLOAT &&
         (!D.jdepth || z->image == D.jdepth))
         D.cam_addr = b->addr;
+    // a scene draw with the scene camera takes the jitter through the camera block's copy (see "jitter" above)
+    int pj = 0;
+    if (D.jit_ok && b->addr && b->addr == D.cam_addr && z->image && z->image == D.jdepth) {
+        uint64_t gen = vk_usnap_gen();
+        if (gen != D.pj_gen || D.cam_addr != D.pj_addr || D.jframe != D.pj_frame) {
+            D.pj_gen = gen, D.pj_addr = D.cam_addr, D.pj_frame = D.jframe;
+            float *cam = (float *)vk_usnap_host(D.cam_addr, CAM_BYTES, 4);
+            D.pj_ok = cam != NULL;
+            if (cam && memcmp(cam + 12, D.pj_row, sizeof D.pj_row)) {   // a fresh copy: not patched yet
+                float kx = 2.0f * D.jx / (float)z->width, ky = -2.0f * D.jy / (float)z->height;
+                if (D.cam_clean_addr != D.cam_addr) memcpy(D.cam_clean, cam + 12, sizeof D.cam_clean), D.cam_clean_addr = D.cam_addr;
+                for (int c = 0; c < 4; c++) {
+                    cam[12 + c] += kx * cam[24 + c], cam[16 + c] += ky * cam[24 + c];   // view-projection, rows 3-6
+                    cam[28 + c] += kx * cam[40 + c], cam[32 + c] += ky * cam[40 + c];   // projection, rows 7-10
+                }
+                memcpy(D.pj_row, cam + 12, sizeof D.pj_row);
+            }
+        }
+        if (D.pj_ok) pj = 1, D.ux = D.jx, D.uy = D.jy, D.jit_used = 1;
+    }
+    if (pj != D.pj) D.pj = pj, ex->dirty |= VK_EXEC_DIRTY_VIEWPORT;
 }
 
 // The jitter moves on right after DLAA ran, not at the present: the replay can record the next frame's scene before
@@ -720,7 +756,7 @@ void vk_dlaa_frame(void) {
     else if (D.hold) D.hold--;
     if (!D.done) D.jit_ok = 0;
     D.armed = D.done = D.jit_used = D.gbuf = D.ended = D.up = 0, D.nodepth = VK_NULL_HANDLE;
-    D.cam_addr = 0;
+    D.cam_addr = 0, D.cam_clean_addr = 0;
 }
 
 // ---------------------------------------------------------------- the game's FXAA shader as DLSS's scaling pass
