@@ -127,7 +127,7 @@ static const CfgMeta metas[] = {
     {"UNDERWATER_UPSAMPLE", "game", "game|smooth", LIVE},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
     {"DLAA", "0", "0|1", LIVE}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance", LIVE},   // resolution.c res_scene_live
-    {"DLSS_MODEL", "default", "cnn|transformer|default", LIVE},   // fastest first (menu order)   // vk_dlaa.c dlss_preset
+    {"DLSS_MODEL", "transformer", "cnn|transformer|default", LIVE},   // fastest first (menu order)   // vk_dlaa.c dlss_preset
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"GRASS_DIST", "100", "100..150", LIVE},   // resolution.c res_grass_live
     {"ANISO", "game", "game|2|4|8|16", RESTART},   // vk_texture.c sampler_features

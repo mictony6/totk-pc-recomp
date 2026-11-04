@@ -141,10 +141,6 @@
 # a change applies at once up to 100 % or the value the game started with, whichever is larger (the texture heap is
 # sized for that at start); a larger one, and any change on older versions, after a restart.
 # render_scale = game
-# Sun shadow map resolution (1.4.3): game (the game's own, 960 a side, lowered to as little as 400 with GPU load and
-# distance) or a fixed size a side (960, 1536, 2048; 256 to 4096 accepted). The game draws and filters the larger map
-# itself. Costs video memory: four layers of 16-bit depth, 18 MiB at 1536. Read at start.
-# shadow_res = game
 # Anti-aliasing: game (the game's own FXAA, unless a RomFS mod turns it off), off, or smaa: SMAA 1x on the tonemapped
 # scene in place of the game's FXAA, before the HUD is drawn, so text stays sharp. 1.4.3. Changes apply at once.
 # aa = game
@@ -178,9 +174,10 @@
 # color_contrast = 100
 # color_saturation = 100
 # color_gamma = 1
-# Sun shadow map size: game (the game's own, which changes with the view and drops to about 400 near the ground, so
-# leaf shadows look blocky and jump) or a fixed 512, 768, 1024, 1536 or 2048. Above 960 the texture heap grows with it.
-# Read at start.
+# Sun shadow map size a side (1.4.3): game (the game's own, 960 at most, which changes with the view and drops to about
+# 400 near the ground, so leaf shadows look blocky and jump) or a fixed 512, 768, 1024, 1536 or 2048. The game draws
+# and filters the fixed size itself. Above 960 the texture heap grows with it: four layers of 16-bit depth, 18 MiB at
+# 1536. Read at start.
 # shadow_res = game
 
 # Shadow map resolution: the game's sun cascades are 960x960 (and its static shadow maps 1440 and 720) whatever the game
@@ -249,7 +246,7 @@
 # The DLSS model, fastest to slowest (extra GPU time a frame, 1080p scene to 4K on a laptop RTX 4060): cnn (the older
 # model, about 2.5 ms: softer, more ghosting), transformer (DLSS 4, about 5 ms) or default (nvngx_dlss.dll's own
 # choice, the second transformer on 310.9: about 7 to 10 ms, the sharpest). Changes apply at once.
-# dlss_model = default
+# dlss_model = transformer
 
 # HDR output: hdr = 1 sends the picture as HDR10 (needs HDR on in Windows, "Use HDR", or a Wayland compositor with
 # colour management; without it the picture stays SDR). The game's tonemap keeps highlights up to hdr_peak_nits (your
