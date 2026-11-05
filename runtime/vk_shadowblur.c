@@ -11,6 +11,8 @@
 // red is then the plain column blur of ours: measured in the Depths it matches to 0.04 of 255 on average. After the
 // merge the shader replaces that blur in red by the depth-aware one, and the result is copied over the game's merged
 // mask, which GTAO's compose and the lighting read.
+// The merge also classifies the lighting's screen tiles from the row's result, so the row's red keeps the plain blur's
+// verdict of lit, dark or in between (shadow_blur.comp).
 // GTAO's compose then enlarges the mask to half size with this depth too (vk_shadowblur_depth, gtao_compose.comp).
 // The depth is the last single-target R32F pass before the blur, which the game downsamples for this mask.
 #include "vk.h"

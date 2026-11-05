@@ -8,6 +8,11 @@
 // pc.axis.y = 1, the column: source is the row's result and keep the game's merged mask, whose red is the plain blur of
 // source (the merge samples it) and whose other channels are other work. Result is keep with the difference between
 // the depth-aware and the plain blur added to red, so any term the merge gave red stays.
+// The merge also sorts the screen into all-lit, all-dark and mixed tiles from the row's result, and only mixed tiles get
+// per-pixel shadow. The plain blur leaks across a silhouette, which is what marks the tile there as mixed; without the
+// leak, the last texel before the edge stays at exactly 1, its tile counts as all lit, and a shadowed pixel at the end of
+// the tile is drawn lit: a thin bright line that shows while an edge sits on a tile's last column. So where the plain
+// blur would have stored a value between 0 and 1, the row's red stays one step inside that range.
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform sampler2D source;
@@ -19,6 +24,7 @@ layout(push_constant) uniform PC { ivec2 size; ivec2 axis; float slope; } pc;
 
 // The game's nine-tap gaussian at one texel per step: the shape measured from its result, centre first.
 const float WEIGHT[5] = float[](0.2270270, 0.1945946, 0.1216216, 0.0540540, 0.0162162);
+const float STEP = 1.0 / 255.0;   // of the RGBA8 mask; the weights sum to just under 1, so values compare as stored
 
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
@@ -39,6 +45,7 @@ void main() {
     }
     vec4 blurred = sum / total;
     if (pc.axis.x == 1) {
+        if (plain >= 0.5 * STEP && plain < 1.0 - 0.5 * STEP) blurred.r = clamp(blurred.r, STEP, 1.0 - STEP);
         imageStore(result, p, blurred);
     } else {
         vec4 merged = texelFetch(keep, p, 0);
