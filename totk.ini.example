@@ -234,6 +234,11 @@
 # at once.
 # underwater_upsample = game
 
+# The game blurs its shadows without looking at depth, which leaves a light strip on shadowed ground beside
+# anything in front of it. depth stops the blur at those edges (two small extra passes); game keeps the original look.
+# Changes apply at once.
+# shadow_blur = game
+
 # NVIDIA DLSS / DLAA for the 3D scene, on NVIDIA RTX GPUs with nvngx_dlss.dll (from NVIDIA's DLSS SDK) next to
 # totk.exe; elsewhere the setting does nothing. The HUD is drawn after it and is not touched. Changes apply at once.
 # dlaa = 0

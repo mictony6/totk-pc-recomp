@@ -150,6 +150,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                    "resolution from one surface detail in four, so lit ground shimmers when the camera "
                                    "moves. Smooth averages the four; Game keeps the game's look.",
     [UI_MENU_LIGHT_NORMALS_GAME] = "Game", [UI_MENU_LIGHT_NORMALS_AVERAGE] = "Smooth",
+    [UI_MENU_SHADOW_BLUR] = "Shadow edges",
+    [UI_MENU_SHADOW_BLUR_DESC] = "The game blurs its shadows without checking depth, which leaves a light strip on shadowed ground beside anything in front of it. Depth-aware stops the blur at those edges. Game keeps the original look. Applies at once.",
+    [UI_MENU_SHADOW_BLUR_DEPTH] = "Depth-aware",
     [UI_MENU_UNDERWATER] = "Shallow water",
     [UI_MENU_UNDERWATER_DESC] = "What shallow water and floating things show through the surface is drawn at half "
                                 "resolution. Smooth scales it up to full resolution with one extra pass; Game keeps "
@@ -569,6 +572,9 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                    "мерцает при движении камеры. Сглаженно: усреднение четырёх; как в игре: без "
                                    "изменений.",
     [UI_MENU_LIGHT_NORMALS_GAME] = "Как в игре", [UI_MENU_LIGHT_NORMALS_AVERAGE] = "Сглаженно",
+    [UI_MENU_SHADOW_BLUR] = "Края теней",
+    [UI_MENU_SHADOW_BLUR_DESC] = "Игра размывает тени без учёта глубины, из-за чего на затенённом фоне рядом с предметами перед ним остаётся светлая полоса. С учётом глубины размытие останавливается на этих краях. Игра сохраняет исходный вид. Применяется сразу.",
+    [UI_MENU_SHADOW_BLUR_DEPTH] = "С учётом глубины",
     [UI_MENU_UNDERWATER] = "Мелкая вода",
     [UI_MENU_UNDERWATER_DESC] = "То, что видно сквозь мелкую воду, игра рисует в половинном разрешении. Сглаженно: "
                                 "увеличение до полного разрешения одним дополнительным проходом; как в игре: без "
@@ -1278,6 +1284,9 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                    "iluminado cintila quando a câmera se move. Suave faz a média dos quatro; Do jogo "
                                    "mantém o visual do jogo.",
     [UI_MENU_LIGHT_NORMALS_GAME] = "Do jogo", [UI_MENU_LIGHT_NORMALS_AVERAGE] = "Suave",
+    [UI_MENU_SHADOW_BLUR] = "Bordas das sombras",
+    [UI_MENU_SHADOW_BLUR_DESC] = "O jogo desfoca as sombras sem considerar a profundidade, o que deixa uma faixa clara no fundo sombreado ao lado do que está na frente dele. Com profundidade, o desfoque para nessas bordas. Jogo mantém o visual original. Aplica na hora.",
+    [UI_MENU_SHADOW_BLUR_DEPTH] = "Com profundidade",
     [UI_MENU_UNDERWATER] = "Água rasa",
     [UI_MENU_UNDERWATER_DESC] = "O que se vê através da água rasa é desenhado na metade da resolução. Suave amplia "
                                 "para a resolução completa com uma passagem extra; Do jogo mantém o visual do jogo.",
@@ -1835,6 +1844,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_LIGHT_NORMALS_DESC] = "游戏以一半分辨率渲染点光源（光根、亮晶晶种子、灯），每四个表面细节只取一个，"
                                    "因此镜头移动时被照亮的地面会闪烁。平滑取四者的平均；游戏保持游戏原样。",
     [UI_MENU_LIGHT_NORMALS_GAME] = "游戏", [UI_MENU_LIGHT_NORMALS_AVERAGE] = "平滑",
+    [UI_MENU_SHADOW_BLUR] = "阴影边缘",
+    [UI_MENU_SHADOW_BLUR_DESC] = "游戏模糊阴影时不考虑深度，使前方物体旁的阴影背景上留下一条亮带。深度感知会让模糊止于这些边缘。“游戏”保留原始效果。立即生效。",
+    [UI_MENU_SHADOW_BLUR_DEPTH] = "深度感知",
     [UI_MENU_UNDERWATER] = "浅水",
     [UI_MENU_UNDERWATER_DESC] = "透过浅水看到的景物以一半分辨率绘制。平滑以一次额外的渲染放大到全分辨率；游戏保持游戏原样。",
     [UI_MENU_CONTACT_SHADOWS] = "接触阴影",

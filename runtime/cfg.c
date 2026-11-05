@@ -55,7 +55,7 @@ static const char *const known[] = {
     "RENDER_SCALE", "REPLAY_ASYNC",
     "REPLAY_CHECK", "RESOLVE_CHECK", "RESTART_WAIT", "ROMFS", "ROMFS_INDEX", "ROMFS_MMAP", "ROMFS_MODS",
     "ROMFS_PATCHES", "ROMFS_PROOF_DIR", "ROMFS_VERIFY", "RSTICK_DEADZONE", "RUMBLE", "RUMBLE_CURVE", "RUMBLE_STRENGTH",
-    "RUMBLE_TRIGGERS", "SHADER_CACHE", "SHADER_MEMO", "SHADOW_RANGE", "SHADOW_RES", "SHADOW_SCALE",
+    "RUMBLE_TRIGGERS", "SHADER_CACHE", "SHADER_MEMO", "SHADOW_BLUR", "SHADOW_RANGE", "SHADOW_RES", "SHADOW_SCALE",
     "SHARED_FONTS", "SHARPNESS", "SHOTS", "SHOTS_CROP", "SHOTS_DIR", "SHOTS_FULL", "SPEED_PROBE", "SPIN", "SPIN_HANDOFF_US",
     "SPLIT_DRAWS", "SPLIT_US", "STICK_DEADZONE", "STICK_SENS", "SWKBD_ANSWER", "SWKBD_TEST", "TEST_PAD",
     "TEST_PREPARE_SHADERS", "TEX_ALIAS", "TEX_MEMO", "TEX_VRAM_PRESSURE", "TIMER_1MS", "TRACE", "TXD_TRANSPOSE",
@@ -82,6 +82,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"PCSS", "display"},
     {"AA", "display"}, {"AO", "display"}, {"AO_STRENGTH", "display"}, {"AO_RADIUS", "display"}, {"AO_FOLIAGE", "display"}, {"AO_GRASS", "display"}, {"AO_LIGHT", "display"}, {"AO_CHAR", "display"}, {"AO_CREASE", "display"}, {"LIGHT_NORMALS", "display"},
     {"EFFECTS_UPSAMPLE", "display"},
+    {"SHADOW_BLUR", "display"},
     {"UNDERWATER_UPSAMPLE", "display"},
     {"MENU_LANG", "language"}, {"LANG", "language"}, {"OPERATION_MODE", "language"},
     {"VOLUME", "audio"},
@@ -124,6 +125,8 @@ static const CfgMeta metas[] = {
     {"AO_FOLIAGE", "minimal", "minimal|full", LIVE}, {"AO_CHAR", "25", "0..100", LIVE},
     {"AO_CREASE", "0", "0..100", LIVE}, {"AO_GRASS", "100", "0..100", LIVE}, {"AO_LIGHT", "100", "0..100", LIVE},
     {"LIGHT_NORMALS", "game", "game|average", LIVE},
+    // the blur of the shadow mask (vk_shadowblur.c); applies at once
+    {"SHADOW_BLUR", "game", "game|depth", LIVE},
     // half-resolution effects composite (vk_upsample.c): on at start (the shader is swapped as shaders load)
     {"EFFECTS_UPSAMPLE", "game", "game|smooth", RESTART},
     // the half-size scene behind water and ice (vk_underwater.c), upsampled when the game writes it; applies at once

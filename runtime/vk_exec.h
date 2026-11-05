@@ -233,6 +233,21 @@ void vk_lightao_pass_end(VkExec *ex);
 void vk_lightao_present(uint64_t frame);
 extern const VkTexImage *vk_lightao_swap_img;
 extern VkImageView vk_lightao_swap_view;
+// vk_shadowblur.c: the game's blurred shadow mask vk_shadowblur_swap_img is sampled through vk_shadowblur_swap_view,
+// the depth-aware blur, by the one pass that reads it (vk_shadowblur_swap_hits, counted by tex_info, ends the swap).
+// vk_shadowblur_watch: tex_info tells vk_shadowblur_sampled what the blur draw samples.
+void vk_shadowblur_draw(VkExec *ex);
+extern int vk_shadowblur_watch;
+void vk_shadowblur_sampled(VkExec *ex, const VkTexImage *img);
+void vk_shadowblur_pass_begin(VkExec *ex);
+void vk_shadowblur_flush(VkExec *ex);
+const VkTexImage *vk_shadowblur_depth(const VkTexImage *mask);
+float vk_shadowblur_slope(void);
+void vk_shadowblur_pass_end(VkExec *ex);
+void vk_shadowblur_present(uint64_t frame);
+extern const VkTexImage *vk_shadowblur_swap_img;
+extern VkImageView vk_shadowblur_swap_view;
+extern uint32_t vk_shadowblur_swap_hits;
 extern const VkTexImage *vk_underwater_swap_img;
 extern VkImageView vk_underwater_swap_view;
 // vk_dlaa.c: once DLSS has scaled the scene this frame, passes larger than the scene's light target vk_dlaa_swap_img

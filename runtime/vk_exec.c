@@ -578,6 +578,7 @@ void vk_exec_pass_begin(VkExec *ex) {
     resolve_rt(ex);
     vk_contact_pass_begin(ex);
     vk_aa_flush(ex);
+    vk_shadowblur_pass_begin(ex);   // before GTAO, which reads the mask it finishes
     vk_gtao_pass_begin(ex);
     vk_lightnorm_pass_begin(ex);
     vk_underwater_pass_begin(ex);
@@ -640,6 +641,7 @@ void vk_exec_pass_end(VkExec *ex) {
     if (vk_dump_armed) vk_dump_pass_end(ex);
     vk_underwater_pass_end(ex);
     vk_lightao_pass_end(ex);
+    vk_shadowblur_pass_end(ex);
     uint64_t stamp = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) + 1;
     for (int i = 0; i < 8; i++)
         if (ex->color[i].image) vk_texture_gpu_written(ex->color[i].tex), tfr_note(&ex->color[i], stamp);

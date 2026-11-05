@@ -351,8 +351,16 @@ void vk_gtao_flush(VkExec *ex) {
         int t = src;
         src = dst, dst = t;
     }
-    float cpc[4] = {1.2f, G.strength, G.kept_ao, G.crease};   // blur beta, strength as a power, characters' AO, crease emphasis
-    run(cb, P_COMPOSE, (VkImageView[5]){G.img[src].view, G.img[I_EDGES].view, mask, VK_NULL_HANDLE, VK_NULL_HANDLE},
+    float cpc[8] = {1.2f, G.strength, G.kept_ao, G.crease, 0, 0, 0, 0};   // blur beta, strength as a power, characters' AO,
+                                                                          // crease emphasis; the shadow's depth allowance
+    // the shadow channel follows depth where vk_shadowblur.c has a depth at the mask's size; both views are bound either
+    // way, because the shader declares them
+    const VkTexImage *md = vk_shadowblur_depth(G.mask);
+    VkImageView mdv = md ? vk_exec_target_view(md, VK_FORMAT_R32_SFLOAT, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT,
+                                               0, 0, 1, 0)
+                         : VK_NULL_HANDLE;
+    cpc[4] = mdv ? vk_shadowblur_slope() : 0.0f;
+    run(cb, P_COMPOSE, (VkImageView[5]){G.img[src].view, G.img[I_EDGES].view, mask, mdv ? mdv : depth, depth},
         (VkSampler[5]){G.point, G.point, G.linear, G.point, G.point}, G.img[I_OUT].view, VK_NULL_HANDLE, cpc, sizeof cpc);
     ex->recorded += n + (2 + G.denoise) * 5;
     if (vk_dump_armed) {   // TOTK_DUMP: the game's finished mask and ours, AO in blue, to compare the two AO passes

@@ -11,9 +11,12 @@ layout(binding = 0) uniform sampler2D ao;       // gtao_denoise.comp: visibility
 layout(binding = 1) uniform sampler2D edges;    // gtao_main.comp: packed edges
 layout(binding = 2) uniform sampler2D mask;     // the game's finished AO mask, quarter resolution (linear sampler)
 layout(binding = 3, rgba8) uniform writeonly image2D out_mask;
+layout(binding = 5) uniform sampler2D mask_depth;   // linear depth at the mask's size (vk_shadowblur.c)
+layout(binding = 6) uniform sampler2D pixel_depth;  // the G-buffer's linear depth
 
 layout(push_constant) uniform Params {
     vec4 opt;   // x: blur beta, y: strength (power of the visibility), z: the AO of characters, w: crease emphasis
+    vec4 shadow;   // x: above 0, the shadow channel follows depth, by this fraction of the pixel's depth (TOTK_SHADOW_BLUR)
 } pc;
 
 #include "gtao_denoise.glsl"
@@ -22,21 +25,47 @@ layout(push_constant) uniform Params {
 // leaving out those of the other kind (character or not; the game gives every character texel the AO 108/255).
 // A plain blend smeared Link's red and alpha onto the first wall pixels around him, which the lighting drew as a thin
 // dark outline; the game's own lighting reads its mask so that his values stay on him.
-vec4 game_mask(vec2 uv, bool kept) {
+// With pc.shadow.x, red, the shadow, also leaves out the texels off the pixel's surface: a background pixel next to a
+// foreground object takes no lit value from it, and the edge follows the depth, which is finer than the mask's texels.
+// d: the pixel's linear depth.
+vec4 game_mask(vec2 uv, bool kept, float d) {
     vec2 qs = vec2(textureSize(mask, 0));
     vec2 t = uv * qs - 0.5;
     ivec2 b = ivec2(floor(t));
     vec2 f = t - vec2(b);
     vec4 s = vec4(0.0);
-    float ws = 0.0;
+    float ws = 0.0, red = 0.0, wr = 0.0, allowed = max(d, 1e-5) * pc.shadow.x;
     for (int j = 0; j < 2; j++)
         for (int i = 0; i < 2; i++) {
             vec4 q = texelFetch(mask, clamp(b + ivec2(i, j), ivec2(0), ivec2(qs) - 1), 0);
             bool ch = abs(q.b * 255.0 - 108.0) < 0.5;
             float w = (i == 1 ? f.x : 1.0 - f.x) * (j == 1 ? f.y : 1.0 - f.y);
             if (ch == kept) s += q * w, ws += w;
+            if (pc.shadow.x > 0.0) {
+                ivec2 c = clamp(b + ivec2(i, j), ivec2(0), ivec2(qs) - 1);
+                float diff = abs(texelFetch(mask_depth, c, 0).x - d);
+                float near = w * (1.0 - smoothstep(allowed, 2.0 * allowed, diff));
+                red += q.r * near, wr += near;
+            }
         }
-    return ws > 1e-4 ? s / ws : textureLod(mask, uv, 0.0);
+    vec4 m = ws > 1e-4 ? s / ws : textureLod(mask, uv, 0.0);
+    // None of the four on the surface: a background pixel right beside a foreground object, whose four texels all landed
+    // on the object. The ring of texels around them holds the background; the plain blend here would be a lit line along
+    // the silhouette that comes and goes as the camera moves. Nearer texels count more.
+    if (pc.shadow.x > 0.0 && wr <= 1e-3) {
+        red = wr = 0.0;
+        for (int j = -1; j < 3; j++)
+            for (int i = -1; i < 3; i++) {
+                if (i >= 0 && i < 2 && j >= 0 && j < 2) continue;
+                ivec2 c = clamp(b + ivec2(i, j), ivec2(0), ivec2(qs) - 1);
+                vec2 gap = vec2(b + ivec2(i, j)) - t;
+                float near = (1.0 - smoothstep(allowed, 2.0 * allowed, abs(texelFetch(mask_depth, c, 0).x - d))) /
+                             (1.0 + dot(gap, gap));
+                red += texelFetch(mask, c, 0).r * near, wr += near;
+            }
+    }
+    if (wr > 1e-3) m.r = red / wr;   // still none: a gap thinner than the mask's texels, the plain blend
+    return m;
 }
 
 void main() {
@@ -44,7 +73,8 @@ void main() {
     ivec2 size = textureSize(ao, 0);
     if (any(greaterThanEqual(p, size))) return;
     vec2 v = denoise(p, pc.opt.x);
-    vec4 m = game_mask((vec2(p) + 0.5) / vec2(size), v.y > 0.5);
+    float d = texelFetch(pixel_depth, ivec2((vec2(p) + 0.25) * vec2(textureSize(pixel_depth, 0)) / vec2(size)), 0).x;
+    vec4 m = game_mask((vec2(p) + 0.5) / vec2(size), v.y > 0.5, d);
     // crease emphasis darkens in proportion to the occlusion already there: open surfaces stay, a corner at half
     // visibility goes to a quarter at 1 (the game's own AO draws its creases darker than GTAO's physical amount)
     float vis = pow(clamp(v.x * OCCLUSION_TERM_SCALE, 0.0, 1.0), pc.opt.y);

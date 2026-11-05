@@ -1443,12 +1443,13 @@ static Twin *twin_update(VkExec *ex, const VkTexImage *img) {
 // samples); in a full-size pass, the game's half-size scene behind water, while ours replaces it, for ours
 // (vk_underwater.c, which also learns here which image that is); in a pass larger than it, the game's occlusion
 // image, while ours with the point lights' lift replaces it (vk_lightao.c); in a pass larger than it, the scene's light
-// target, once DLSS scaled it this frame, for DLSS's output (vk_dlaa.c).
+// target, once DLSS scaled it this frame, for DLSS's output (vk_dlaa.c); the game's blurred shadow mask, while the
+// depth-aware one replaces it, for that (vk_shadowblur.c).
 static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage, int separate, VkDescriptorImageInfo *out) {
     tex_info_lookup(ex, r, h, storage, separate, out);
     if (h && !storage &&
         (vk_gtao_swap_img || vk_lightnorm_swap_img || vk_lightnorm_watch || vk_underwater_swap_img || vk_underwater_watch ||
-         vk_lightao_swap_img || vk_dlaa_swap_img)) {
+         vk_lightao_swap_img || vk_dlaa_swap_img || vk_shadowblur_swap_img || vk_shadowblur_watch)) {
         const VkTexImage *img = vk_texture_by_id_locked((int)(h & 0xfffff), NULL, NULL);
         if (img && img == vk_gtao_swap_img)
             out->imageView = vk_gtao_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL, vk_gtao_swap_hits++;
@@ -1460,7 +1461,10 @@ static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage,
             out->imageView = vk_lightao_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         else if (img && img == vk_dlaa_swap_img && ex->in_pass && ex->pass_w > img->width + 1)
             out->imageView = vk_dlaa_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        else if (img && img == vk_shadowblur_swap_img)
+            out->imageView = vk_shadowblur_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL, vk_shadowblur_swap_hits++;
         if (vk_lightnorm_watch) vk_lightnorm_sampled(ex, img);
+        if (vk_shadowblur_watch) vk_shadowblur_sampled(ex, img);
         if (vk_underwater_watch && ex->in_pass) vk_underwater_sampled(ex, img);
     }
     if (!twin_dispatch || storage || separate || !h || !(r->type & 0x400)) return;
@@ -2152,6 +2156,7 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     if (vk_aa_draw(ex)) return 0;   // the game's FXAA when another anti-aliasing replaces it
     vk_gtao_draw(ex);
     vk_lightnorm_draw(ex);
+    vk_shadowblur_draw(ex);
     int has_vs, has_fs, vs_wait = 0, fs_wait = 0, memo = shader_memo_on();
     const GfxShader *vs, *fs;
     uint32_t gen = memo ? vk_texture_slots_gen() : 0;   // before shader_for, whose lookups may bump it
@@ -3149,6 +3154,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     if (!ex->prog) return warn_once(W_PROGRAM, "a dispatch without a bound program is skipped");
     vk_contact_flush(ex);
     vk_aa_flush(ex);
+    vk_shadowblur_flush(ex);   // before GTAO, which reads the mask it finishes
     vk_gtao_flush(ex);
     vk_lightnorm_flush(ex);
     cb_res(ex);

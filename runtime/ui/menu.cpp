@@ -568,6 +568,12 @@ static void row_underwater(void) {   // vk_underwater.c; Game and Smooth as for 
     opt_choice_list("TOTK_UNDERWATER_UPSAMPLE", UI_MENU_UNDERWATER, vals, names, 2, UI_MENU_UNDERWATER_DESC);
 }
 
+static void row_shadow_blur(void) {   // vk_shadowblur.c
+    static const char *const vals[] = {"game", "depth"};
+    const char *names[] = {menu_text(UI_MENU_LIGHT_NORMALS_GAME), menu_text(UI_MENU_SHADOW_BLUR_DEPTH)};
+    opt_choice_list("TOTK_SHADOW_BLUR", UI_MENU_SHADOW_BLUR, vals, names, 2, UI_MENU_SHADOW_BLUR_DESC);
+}
+
 static void row_gpu(void) {
     const char *vals[MAX_GPUS + 1], *names[MAX_GPUS + 1];
     char idx[MAX_GPUS][4];
@@ -705,6 +711,7 @@ static void tab_screen(float scale) {
     row_ao();
     row_light_normals();
     row_underwater();
+    row_shadow_blur();
     opt_toggle("TOTK_DLAA", UI_MENU_DLAA, UI_MENU_DLAA_DESC);
     static const UiTextId dlss[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
                                     UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
