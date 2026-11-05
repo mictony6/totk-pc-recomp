@@ -252,7 +252,9 @@ static struct {
     int jit_ok, jit_used, hold;  // jitter allowed this frame / a draw used it / frames left without it
     uint64_t holds;
     int pj;                      // the last draw took the jitter in its projection: its viewport is not moved
-    float pj_row[4];             // row 3 as patched last, to tell a patched copy from a fresh one
+    float pj_row[8];             // rows 3-4 as patched last, to tell a patched copy from a fresh one: row 3 alone
+                                 // takes only the horizontal jitter, which is 0 on one Halton phase, so on that phase a
+                                 // still camera would make every fresh copy match it and the jitter would stop
     uint64_t pj_gen, pj_addr;    // the snapshot generation and camera block last looked up
     uint32_t pj_frame;
     int pj_ok;                   // that lookup found the block in the snapshot
