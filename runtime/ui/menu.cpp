@@ -1225,10 +1225,14 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
         ImGui::SetCursorPosY(y + st.FramePadding.y);
         ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1), "%s", menu_text(UI_MENU_SAVE_FAILED));
     }
-    const char *cont = menu_text(UI_MENU_CONTINUE), *quit = menu_text(UI_MENU_QUIT);
-    float bw = fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(quit).x) + st.FramePadding.x * 4;
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 2 - st.ItemSpacing.x, y));
+    const char *cont = menu_text(UI_MENU_CONTINUE), *quit = menu_text(UI_MENU_QUIT), *rest = menu_text(UI_MENU_RESTART_BUTTON);
+    float bw = fmaxf(fmaxf(ImGui::CalcTextSize(cont).x, ImGui::CalcTextSize(quit).x), ImGui::CalcTextSize(rest).x) +
+               st.FramePadding.x * 4;
+    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - st.WindowPadding.x - bw * 3 - st.ItemSpacing.x * 2, y));
     if (ImGui::Button(cont, ImVec2(bw, 0))) set_open(0);
+    ImGui::SameLine();
+    // Restart writes totk.ini, closes the game as Quit does (after a save in progress) and starts it again
+    if (ImGui::Button(rest, ImVec2(bw, 0)) && fs_save_busy() == 0 && cfg_save()) gfx_window_request_restart();
     ImGui::SameLine();
     if (ImGui::Button(quit, ImVec2(bw, 0))) gfx_window_request_close();
     bool was_modal = g_modal || binds_modal();

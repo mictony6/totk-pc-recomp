@@ -293,11 +293,10 @@ static void window_main(void *arg) {
     int cw, ch, ow, oh;
     cfg_window_size(&cw, &ch);
     outer_size(NULL, cw, ch, &ow, &oh);
-    // The window opens behind the user's windows without taking focus: it shows the game's blank loading frames for a
-    // while, and must not cover what the player works on meanwhile. The game still counts itself in focus until the
-    // first WM_ACTIVATEAPP, so loading goes on, and keyboard input waits for the foreground (input_win.c). Its taskbar
-    // button flashes until it is brought up, and TOTK_FULLSCREEN waits for that first activation.
-    // TOTK_BACKGROUND_WINDOW=1 (test runs): no flashing, never fullscreen at start, and F11 keeps the window's place.
+    // The window opens in front and takes the focus, so the game is what the player sees at start, not the console
+    // window it was started from; TOTK_FULLSCREEN applies at that first activation.
+    // TOTK_BACKGROUND_WINDOW=1 (test runs): the window opens behind the user's windows without taking focus, so it
+    // does not cover their work; no flashing, never fullscreen at start, and F11 keeps the window's place.
     int background = g_background = cfg_get("TOTK_BACKGROUND_WINDOW") && atoi(cfg_get("TOTK_BACKGROUND_WINDOW"));
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"TotK Recomp", WND_STYLE, CW_USEDEFAULT, CW_USEDEFAULT, ow, oh, NULL,
                              NULL, inst, NULL);
@@ -313,10 +312,19 @@ static void window_main(void *arg) {
         // The frame was measured at the system DPI; the window may have opened on a monitor at another scale.
         plat_xchg32(&g_dpi, (int32_t)GetDpiForWindow(g_hwnd));
         outer_size(g_hwnd, cw, ch, &ow, &oh);
-        SetWindowPos(g_hwnd, HWND_BOTTOM, 0, 0, ow, oh, SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        if (!background) {
-            FLASHWINFO fw = {.cbSize = sizeof fw, .hwnd = g_hwnd, .dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG};
-            FlashWindowEx(&fw);
+        if (background) {
+            SetWindowPos(g_hwnd, HWND_BOTTOM, 0, 0, ow, oh, SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        } else {
+            SetWindowPos(g_hwnd, HWND_TOP, 0, 0, ow, oh, SWP_NOMOVE | SWP_SHOWWINDOW);
+            // Windows lets only the foreground process take the foreground; the console this was started from may
+            // still hold it, so the window thread joins that window's input queue for the call.
+            HWND fg = GetForegroundWindow();
+            DWORD fg_thread = fg ? GetWindowThreadProcessId(fg, NULL) : 0, me = GetCurrentThreadId();
+            int joined = fg_thread && fg_thread != me && AttachThreadInput(me, fg_thread, TRUE);
+            BringWindowToTop(g_hwnd);
+            SetForegroundWindow(g_hwnd);
+            SetFocus(g_hwnd);
+            if (joined) AttachThreadInput(me, fg_thread, FALSE);
             g_fs_pending = cfg_fullscreen();
         }
         note_applied();
