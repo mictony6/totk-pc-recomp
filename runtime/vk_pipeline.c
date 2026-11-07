@@ -689,6 +689,96 @@ static uint32_t *spirv_dual_source(const uint32_t *w, uint64_t n, uint64_t *out_
     return o;
 }
 
+// Ground mist (Depths and caves): TOTK's half-resolution ray-marched mist slab. Its fragment shader (SPIR-V hash
+// FOG_FS, pass 146 of a Depths frame in a TOTK_DUMP) takes the slab's thickness from a height field times
+// fp_c13[9].x, adds opacity per marching step by fp_c13[0].z and gains the final alpha by fp_c13[4].z.
+// TOTK_FOG_THICK, TOTK_FOG_EXT and TOTK_FOG_ALPHA (default 1) multiply those three constants at pipeline creation:
+// THICK widens the area the mist covers and its depth, EXT makes it close up faster, ALPHA makes what is there more
+// opaque. Each multiplier is applied right after the shader loads its constant, so the uniform data the game writes
+// stays as it is.
+#define FOG_FS 0xf4cd1e37caa0ba45ull
+enum { SPV_OP_NAME = 5, SPV_OP_LOAD = 61, SPV_OP_ACCESS_CHAIN = 65, SPV_OP_FMUL = 133 };
+
+static struct { double k[3]; int init; } fog;
+static const struct { int vec, comp; } fog_site[3] = {{9, 0}, {0, 2}, {4, 2}};
+
+static void fog_init(void) {
+    static const char *const env[3] = {"TOTK_FOG_THICK", "TOTK_FOG_EXT", "TOTK_FOG_ALPHA"};
+    for (int i = 0; i < 3; i++) {
+        const char *e = getenv(env[i]);
+        double v = e ? strtod(e, NULL) : 1;
+        fog.k[i] = v > 0 && v <= 64 ? v : 1;
+    }
+    fog.init = 1;
+    if (fog.k[0] != 1 || fog.k[1] != 1 || fog.k[2] != 1)
+        rt_log("vk_pipeline: ground mist constants scaled: thickness x%g, extinction x%g, alpha x%g", fog.k[0], fog.k[1], fog.k[2]);
+}
+
+// The patched copy of fragment shader w (n words, *out_n its new size), or NULL when it is not the mist shader, no
+// multiplier is set, or its layout is not the expected one.
+static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
+    if (!fog.init) fog_init();
+    if (!w || n < 6 || (fog.k[0] == 1 && fog.k[1] == 1 && fog.k[2] == 1)) return NULL;
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (const uint8_t *b = (const uint8_t *)w, *e = b + n * 4; b < e; b++) h = (h ^ *b) * 0x100000001b3ull;
+    if (h != FOG_FS) return NULL;
+    uint32_t bound = w[3], c13 = 0, flt = 0, loads = 0;
+    uint32_t *val = calloc(bound, sizeof *val), *site = calloc(bound, sizeof *site);   // constant values; chain id -> site + 1
+    uint32_t *o = NULL;
+    if (!val || !site) goto out;
+    for (uint64_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > n) goto out;
+        if (op == SPV_OP_NAME && len >= 3 && !strncmp((const char *)&w[i + 2], "fp_c13", 7)) c13 = w[i + 1];
+        else if (op == SPV_OP_TYPE_FLOAT && len == 3 && w[i + 2] == 32 && !flt) flt = w[i + 1];
+        else if (op == SPV_OP_CONSTANT && len == 4 && w[i + 2] < bound) val[w[i + 2]] = w[i + 3];
+        i += len;
+    }
+    if (!c13 || !flt) goto out;
+    for (uint64_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (op == SPV_OP_ACCESS_CHAIN && len == 7 && w[i + 3] == c13 && w[i + 2] < bound && w[i + 4] < bound &&
+            w[i + 5] < bound && w[i + 6] < bound && val[w[i + 4]] == 0)
+            for (int k = 0; k < 3; k++)
+                if (val[w[i + 5]] == (uint32_t)fog_site[k].vec && val[w[i + 6]] == (uint32_t)fog_site[k].comp) site[w[i + 2]] = k + 1;
+        if (op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]]) loads++;
+        i += len;
+    }
+    if (!loads) goto out;
+    o = malloc((n + 12 + 5 * (uint64_t)loads) * 4);
+    if (!o) goto out;
+    uint32_t kid[3] = {bound, bound + 1, bound + 2}, next = bound + 3;
+    uint64_t m = 5;
+    int declared = 0;
+    memcpy(o, w, 5 * 4);
+    for (uint64_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (op == SPV_OP_FUNCTION && !declared) {   // the constants close the declarations
+            for (int k = 0; k < 3; k++) {
+                float f = (float)fog.k[k];
+                o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = flt, o[m++] = kid[k];
+                memcpy(&o[m], &f, 4), m++;
+            }
+            declared = 1;
+        }
+        memcpy(o + m, w + i, len * 4);
+        if (op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]]) {
+            uint32_t tmp = next++, k = site[w[i + 3]] - 1;
+            o[m + 2] = tmp;   // the load defines tmp; the original id becomes the scaled value
+            m += len;
+            o[m++] = 5u << 16 | SPV_OP_FMUL, o[m++] = w[i + 1], o[m++] = w[i + 2], o[m++] = tmp, o[m++] = kid[k];
+        } else {
+            m += len;
+        }
+        i += len;
+    }
+    o[3] = next;
+    *out_n = m;
+out:
+    free(val), free(site);
+    return o;
+}
+
 // Adds an Output variable for each Location of `missing` (type and width from io) to a module, declared in the entry
 // point interface and initialised as Maxwell reads an unwritten output: (0, 0, 0, 1), the w as the bits of 1.0f whatever
 // the type (attribute memory is untyped); fewer than 4 components are all zero. Existing scalar, vector and pointer types
@@ -1327,7 +1417,7 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
     VkShaderModule vm = VK_NULL_HANDLE, fm = VK_NULL_HANDLE;
     uint64_t vw, fw;
     const uint32_t *vcode = gfx_shader_spirv(s->vs, &vw);
-    uint32_t *vpatched = NULL, *fpatched = NULL;
+    uint32_t *vpatched = NULL, *fpatched = NULL, *fogp = NULL;
     if (l->set1) {   // independent layouts: outputs from the vertex shader's union, not from this fragment shader
         GfxShaderIo fin[32];
         uint32_t missing = vs_union_missing(s, fin);
@@ -1354,6 +1444,8 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
             else vcode = vpatched, vw = n2;
         }
         const uint32_t *fcode = gfx_shader_spirv(s->fs, &fw);
+        uint64_t fn2 = 0;
+        if ((fogp = fog_patch(fcode, fw, &fn2))) fcode = fogp, fw = fn2;
         if (k->dsb) {
             uint64_t n2 = 0;
             uint32_t *d = spirv_dual_source(fcode, fw, &n2);
@@ -1369,7 +1461,7 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
         if (fcode) fm = make_module(fcode, fw);
     }
     vm = make_module(vcode, vw);
-    free(vpatched), free(fpatched);
+    free(vpatched), free(fpatched), free(fogp);
     VkPipeline pipe = VK_NULL_HANDLE;
     if (!vm || (s->fs && !fm)) goto out;
 
@@ -1561,13 +1653,14 @@ static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPi
             uint64_t fw, sw, n2 = 0;
             const uint32_t *fcode = gfx_shader_spirv(s->fs, &fw), *scode = fcode;
             sw = fw;
-            uint32_t *d = NULL;
+            uint32_t *d = NULL, *fogp = fog_patch(fcode, fw, &n2);
+            if (fogp) fcode = fogp, fw = n2;
             if (k->dsb && fcode) {
                 if ((d = spirv_dual_source(fcode, fw, &n2))) fcode = d, fw = n2;
                 else LOG_ONCE("vk_pipeline: SRC1 blend factors but the fragment shader writes no colour output 1");
             }
             patched = fcode ? spirv_set(fcode, fw, 1) : NULL;
-            free(d);
+            free(d), free(fogp);
             if (!patched || !(m = make_module(patched, fw))) goto out;
             st.stage = VK_SHADER_STAGE_FRAGMENT_BIT, st.module = m;
             pin_subgroup32(&st, &rq, scode, sw);
