@@ -145,6 +145,13 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_AO_CREASE] = "GTAO crease emphasis",
     [UI_MENU_AO_CREASE_DESC] = "Darkens corners and creases more than open surfaces, towards the game's own heavier "
                                "look. 0 is GTAO's physical amount.",
+    [UI_MENU_AO_TILT] = "GTAO bumpy ground",
+    [UI_MENU_AO_TILT_DESC] = "How far the normal maps (pebbles, cobbles) may tilt the surface GTAO measures against, in "
+                             "degrees. Lower keeps bumpy ground smooth and light, higher darkens the floor around "
+                             "each bump.",
+    [UI_MENU_AO_MICRO] = "GTAO normal-map crevices",
+    [UI_MENU_AO_MICRO_DESC] = "How much the normal maps' own small crevices (between pebbles, cracks) darken the ground "
+                              "and walls, the same from every view. 100 % is the default, 0 % turns it off.",
     [UI_MENU_LIGHT_NORMALS] = "Point light shimmer",
     [UI_MENU_LIGHT_NORMALS_DESC] = "The game lights its point lights (lightroots, Brightbloom seeds, lamps) at half "
                                    "resolution from one surface detail in four, so lit ground shimmers when the camera "
@@ -186,6 +193,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                 "edges a little less smooth. Applies at once.",
     [UI_MENU_DLSS_CHARS_OFF] = "Off", [UI_MENU_DLSS_CHARS_LIGHT] = "Light", [UI_MENU_DLSS_CHARS_MEDIUM] = "Medium",
     [UI_MENU_DLSS_CHARS_FULL] = "Full",
+    [UI_MENU_DLSS_OBJMV] = "DLSS per-object motion",
+    [UI_MENU_DLSS_OBJMV_DESC] = "Gives moving characters, animals and objects their own motion, so DLSS keeps them clean "
+                                "while they move. Costs CPU time every frame: turn it off if the frame rate is limited by "
+                                "the CPU. Applies at once.",
 
     [UI_MENU_FPS_LIMIT] = "Frame rate limit",
     [UI_MENU_FPS_LIMIT_DESC] = "The most frames per second the game draws. Above 60 is experimental and needs Game speed "
@@ -609,6 +620,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                 "гладкие края. Действует сразу.",
     [UI_MENU_DLSS_CHARS_OFF] = "Выкл.", [UI_MENU_DLSS_CHARS_LIGHT] = "Слабо", [UI_MENU_DLSS_CHARS_MEDIUM] = "Средне",
     [UI_MENU_DLSS_CHARS_FULL] = "Полностью",
+    [UI_MENU_DLSS_OBJMV] = "Движение объектов в DLSS",
+    [UI_MENU_DLSS_OBJMV_DESC] = "Даёт движущимся персонажам, животным и предметам собственное движение, чтобы DLSS держал "
+                                "их чистыми на ходу. Тратит время процессора каждый кадр: выключите, если частоту кадров "
+                                "ограничивает процессор. Действует сразу.",
 
     [UI_MENU_FPS_LIMIT] = "Ограничение частоты кадров",
     [UI_MENU_FPS_LIMIT_DESC] = "Наибольшее число кадров в секунду. Выше 60 — экспериментальный режим, нужна «Скорость "
@@ -1323,6 +1338,10 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                 "bordas um pouco menos suaves. Vale na hora.",
     [UI_MENU_DLSS_CHARS_OFF] = "Desligado", [UI_MENU_DLSS_CHARS_LIGHT] = "Leve", [UI_MENU_DLSS_CHARS_MEDIUM] = "Médio",
     [UI_MENU_DLSS_CHARS_FULL] = "Total",
+    [UI_MENU_DLSS_OBJMV] = "Movimento por objeto no DLSS",
+    [UI_MENU_DLSS_OBJMV_DESC] = "Dá a personagens, animais e objetos em movimento o seu próprio movimento, para o DLSS "
+                                "mantê-los limpos enquanto se movem. Gasta tempo de CPU a cada quadro: desligue se a taxa "
+                                "de quadros for limitada pela CPU. Vale na hora.",
 };
 
 // Simplified Chinese: this row covers the software keyboard and the whole menu, so the menu and the overlay read Chinese
@@ -1875,6 +1894,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                                 "这些边缘也略欠平滑。立即生效。",
     [UI_MENU_DLSS_CHARS_OFF] = "关", [UI_MENU_DLSS_CHARS_LIGHT] = "弱", [UI_MENU_DLSS_CHARS_MEDIUM] = "中",
     [UI_MENU_DLSS_CHARS_FULL] = "强",
+    [UI_MENU_DLSS_OBJMV] = "DLSS 逐对象运动",
+    [UI_MENU_DLSS_OBJMV_DESC] = "为移动中的角色、动物和物体提供各自的运动信息，让 DLSS 在它们移动时保持干净。每帧都会占用 CPU "
+                                "时间：如果帧率受 CPU 限制，请关闭。立即生效。",
 };
 
 #define SWKBD_ONLY(name, ...) static const char *const name[UI_TEXT_COUNT] = {SWKBD(__VA_ARGS__)}

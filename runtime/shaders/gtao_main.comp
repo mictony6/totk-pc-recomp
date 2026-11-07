@@ -37,7 +37,8 @@ layout(push_constant) uniform Params {
     vec4 opt;     // slices, steps per slice, falloff range (fraction of the radius), final value power
     vec4 opt2;    // thin occluder compensation (0: off, XeGTAO's range 0..0.7), vegetation fade (0: none, 1: no AO),
                   // G-buffer normals (1: read), near plane
-    vec4 opt3;    // x: how much characters occlude (0..1), y: how much AO vegetation receives (0..1, TOTK_AO_GRASS)
+    vec4 opt3;    // x: how much characters occlude (0..1), y: how much AO vegetation receives (0..1, TOTK_AO_GRASS),
+                  // z: MAX_TILT in radians (TOTK_AO_TILT), w: MICRO_AO (TOTK_AO_MICRO)
 } pc;
 
 #define PI 3.1415926535897932
@@ -111,7 +112,9 @@ vec3 pixel_normal(ivec2 px, float z) {
 // floor within the radius rise above it, nearly black, and which pebbles turn black changes with the view (flicker).
 // The normal from the depth, turned towards the shading normal by at most MAX_TILT, keeps the smooth shape of curved
 // walls and the gentle normal-map slopes and stops the steep ones.
-#define MAX_TILT 0.31   // radians, about 18 degrees
+// pc.opt3.z is that limit in radians (TOTK_AO_TILT, 18 degrees by default): higher lets the normal maps darken the
+// floor around them more, lower keeps the smooth depth shape.
+#define MAX_TILT pc.opt3.z
 vec3 search_normal(vec3 nd, vec3 ng) {
     float c = dot(nd, ng);
     if (c >= cos(MAX_TILT)) return ng;
@@ -124,7 +127,8 @@ vec3 search_normal(vec3 nd, vec3 ng) {
 // darker by up to MICRO_AO with the angle between the shading normal under the AO pixel and the averaged one around it
 // (shading_normal), the same from every view. Not against the normal from the depth: on walls seen at a grazing angle
 // that one is noisy and the noise shows as stripes.
-#define MICRO_AO 0.10
+// pc.opt3.w is that limit (0.10 by default, TOTK_AO_MICRO).
+#define MICRO_AO pc.opt3.w
 float micro_visibility(vec3 smooth_n, vec3 ng) {
     return 1.0 - clamp((1.0 - dot(smooth_n, ng)) * 0.75, 0.0, MICRO_AO);
 }

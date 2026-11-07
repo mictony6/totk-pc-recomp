@@ -47,7 +47,7 @@ typedef struct { uint64_t blocks, self, side, nearer, none, checked, intact, sti
 
 static struct {
     int on;          // 1 knob on and DLAA on this frame
-    int knob;        // -1 not read
+    int tables;      // -1 not tried, 0 could not be allocated, 1 t[] is there
     Seen *t[2];      // this frame's bound blocks, last frame's
     uint8_t (*bytes[2])[CHECK];   // TOTK_MVPREV_CHECK: the first CHECK bytes of each entry of t[k], NULL without the check
     int timed;       // TOTK_MVOBJ_TIMES: the summary's times
@@ -56,7 +56,7 @@ static struct {
     uint64_t last[BANKS];   // the block the last scene draw bound per binding index
     uint32_t mask;          // binding indices kept (vk_mvprev_want): bones, place and clock from the start
     uint64_t ns_draw, ns_frame;   // time in vk_mvprev_draw and vk_mvprev_frame since the last summary
-} P = {.knob = -1, .mask = 1u << BONES | 1u << PLACE | 1u << CLOCK};
+} P = {.tables = -1, .mask = 1u << BONES | 1u << PLACE | 1u << CLOCK};
 
 static uint32_t slot_of(uint64_t addr, int index) {
     uint64_t h = (addr ^ (uint64_t)index * 0x9E3779B97F4A7C15ull) * 0xff51afd7ed558ccdull;
@@ -174,19 +174,19 @@ static void mvprev_draw_(VkExec *ex) {
 void vk_mvprev_frame(void) {
     // without DLSS (no NGX, no RTX GPU, dlaa = 0) nothing reads last frame's blocks: P.on stays 0, no tables
     if (!vk_dlaa_available()) return;
-    if (P.knob < 0) {
-        P.knob = rt_knob("DLAA_OBJMV", "1");
-        if (P.knob) {
-            P.t[0] = calloc(TABLE, sizeof(Seen)), P.t[1] = calloc(TABLE, sizeof(Seen));
-            if (!P.t[0] || !P.t[1]) P.knob = 0;
-            if (P.knob && rt_knob("MVPREV_CHECK", "0")) {
-                P.bytes[0] = calloc(TABLE, CHECK), P.bytes[1] = calloc(TABLE, CHECK);
-                if (!P.bytes[0] || !P.bytes[1]) free(P.bytes[0]), free(P.bytes[1]), P.bytes[0] = P.bytes[1] = NULL;
-            }
-            P.timed = rt_knob("MVOBJ_TIMES", "0");
+    // the setting switches in play (F1 menu): the tables wait for the first frame that wants them
+    int want = cfg_bool("TOTK_DLAA") && cfg_bool("TOTK_DLAA_OBJMV");
+    if (want && P.tables < 0) {
+        P.tables = 1;
+        P.t[0] = calloc(TABLE, sizeof(Seen)), P.t[1] = calloc(TABLE, sizeof(Seen));
+        if (!P.t[0] || !P.t[1]) P.tables = 0;
+        if (P.tables && rt_knob("MVPREV_CHECK", "0")) {
+            P.bytes[0] = calloc(TABLE, CHECK), P.bytes[1] = calloc(TABLE, CHECK);
+            if (!P.bytes[0] || !P.bytes[1]) free(P.bytes[0]), free(P.bytes[1]), P.bytes[0] = P.bytes[1] = NULL;
         }
+        P.timed = rt_knob("MVOBJ_TIMES", "0");
     }
-    int on = P.knob && cfg_bool("TOTK_DLAA");
+    int on = want && P.tables > 0;
     if (on != (P.on > 0)) {
         P.on = on ? 1 : -1;
         if (P.t[0]) memset(P.t[0], 0, TABLE * sizeof(Seen)), memset(P.t[1], 0, TABLE * sizeof(Seen));

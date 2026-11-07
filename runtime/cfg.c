@@ -31,7 +31,7 @@ static int save_ok = 1;                         // the last cfg_save_to wrote (o
 // logged as unknown. A new variable goes here too, or its ini key logs a harmless "unknown key" line.
 static const char *const known[] = {
     "AA", "AA_LOG", "AB", "AMIIBO_DIR", "ANISO", "AO", "AO_CHAR", "AO_CREASE", "AO_DENOISE", "AO_FOLIAGE", "AO_GRASS", "AO_KEPT", "AO_LIGHT",
-    "AO_LOG", "AO_RADIUS", "AO_SLICES", "AO_STEPS", "AO_STRENGTH", "AO_TRACE", "APP_POOL", "ASPECT", "ASPECT_PATCH",
+    "AO_LOG", "AO_MICRO", "AO_RADIUS", "AO_SLICES", "AO_STEPS", "AO_STRENGTH", "AO_TILT", "AO_TRACE", "APP_POOL", "ASPECT", "ASPECT_PATCH",
     "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_OFF", "AUDIO_PREFILL_MS",
     "BACKGROUND_WINDOW", "BIND_A", "BIND_B", "BIND_DOWN", "BIND_L", "BIND_LCLICK", "BIND_LEFT", "BIND_LSTICK_DOWN", "BIND_LSTICK_LEFT",
     "BIND_LSTICK_RIGHT", "BIND_LSTICK_UP", "BIND_MINUS",
@@ -76,11 +76,11 @@ static const struct { const char *key, *section; } sections[] = {
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
     {"COLOR_GAMMA", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
     {"HDR_UI_NITS", "display"}, {"SHADOW_RES", "display"},
-    {"DLAA", "display"}, {"DLSS", "display"}, {"DLSS_MODEL", "display"}, {"DLSS_CHAR_MASK", "display"},
+    {"DLAA", "display"}, {"DLSS", "display"}, {"DLSS_MODEL", "display"}, {"DLSS_CHAR_MASK", "display"}, {"DLAA_OBJMV", "display"},
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
-    {"AA", "display"}, {"AO", "display"}, {"AO_STRENGTH", "display"}, {"AO_RADIUS", "display"}, {"AO_FOLIAGE", "display"}, {"AO_GRASS", "display"}, {"AO_LIGHT", "display"}, {"AO_CHAR", "display"}, {"AO_CREASE", "display"}, {"LIGHT_NORMALS", "display"},
+    {"AA", "display"}, {"AO", "display"}, {"AO_STRENGTH", "display"}, {"AO_RADIUS", "display"}, {"AO_FOLIAGE", "display"}, {"AO_GRASS", "display"}, {"AO_LIGHT", "display"}, {"AO_CHAR", "display"}, {"AO_CREASE", "display"}, {"AO_TILT", "display"}, {"AO_MICRO", "display"}, {"LIGHT_NORMALS", "display"},
     {"EFFECTS_UPSAMPLE", "display"},
     {"SHADOW_BLUR", "display"},
     {"UNDERWATER_UPSAMPLE", "display"},
@@ -123,7 +123,7 @@ static const CfgMeta metas[] = {
     {"AA", "game", "game|off|smaa", LIVE}, {"AO", "game", "game|gtao", LIVE},
     {"AO_STRENGTH", "100", "0..300", LIVE}, {"AO_RADIUS", "1", "0.25..5", LIVE},
     {"AO_FOLIAGE", "minimal", "minimal|full", LIVE}, {"AO_CHAR", "25", "0..100", LIVE},
-    {"AO_CREASE", "0", "0..100", LIVE}, {"AO_GRASS", "100", "0..100", LIVE}, {"AO_LIGHT", "100", "0..100", LIVE},
+    {"AO_CREASE", "0", "0..100", LIVE}, {"AO_TILT", "18", "0..90", LIVE}, {"AO_MICRO", "100", "0..300", LIVE}, {"AO_GRASS", "100", "0..100", LIVE}, {"AO_LIGHT", "100", "0..100", LIVE},
     {"LIGHT_NORMALS", "game", "game|average", LIVE},
     // the blur of the shadow mask (vk_shadowblur.c); applies at once
     {"SHADOW_BLUR", "game", "game|depth", LIVE},
@@ -136,6 +136,7 @@ static const CfgMeta metas[] = {
     {"DLSS", "dlaa", "dlaa|quality|balanced|performance|ultra_performance", LIVE},
     {"DLSS_MODEL", "transformer", "cnn|transformer|default", LIVE},   // fastest first (menu order)   // vk_dlaa.c dlss_preset
     {"DLSS_CHAR_MASK", "65", "0|35|65|100", LIVE},   // vk_dlaa.c char_bias
+    {"DLAA_OBJMV", "1", "0|1", LIVE},   // vk_mvprev.c vk_mvprev_frame
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"GRASS_DIST", "100", "100..150", LIVE},   // resolution.c res_grass_live
     {"ANISO", "game", "game|2|4|8|16", RESTART},   // vk_texture.c sampler_features

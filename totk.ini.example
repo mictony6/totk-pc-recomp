@@ -216,6 +216,13 @@
 # ao_crease: darkens GTAO's corners and creases more than open surfaces, towards the game's own heavier look, in percent
 # (0 to 100; 0 is GTAO's physical amount).
 # ao_crease = 0
+# ao_tilt: how far the normal maps (pebbles, cobbles) may tilt the surface GTAO measures occlusion against, in degrees
+# (0 to 90). Lower keeps bumpy ground like the shrine floors smooth and light; higher darkens the floor around each bump
+# (and flickers with the view). 18 is the default.
+# ao_tilt = 18
+# ao_micro: how much the normal maps' own small crevices (between pebbles, cracks) darken the surface on top of GTAO,
+# in percent (0 to 300; 100 is the default, 0 turns it off). The same from every view, so it does not flicker.
+# ao_micro = 100
 
 # Point light shimmer (1.4.3): game or average. The game lights its point lights (lightroots, Brightbloom seeds,
 # lamps) at half resolution from a copy of the surface normals that keeps one pixel in four, so lit ground and walls
@@ -260,7 +267,8 @@
 # dlss_char_mask = 65
 # Per-object motion vectors for DLSS: characters, animals and moving objects get their own motion instead of the
 # camera's, so DLSS keeps their history instead of smearing or rejecting it. Costs some CPU time each frame (about 1-2 ms
-# on a laptop CPU); 0 leaves camera-only motion. Read at start.
+# on a laptop CPU); 0 leaves camera-only motion, which can raise the frame rate where the CPU limits it. Changes while
+# the game runs take effect at once.
 # dlaa_objmv = 1
 
 # HDR output: hdr = 1 sends the picture as HDR10 (needs HDR on in Windows, "Use HDR", or a Wayland compositor with

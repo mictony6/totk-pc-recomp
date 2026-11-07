@@ -72,6 +72,8 @@ static struct {
     float char_occ;                     // how much characters occlude what is around them (TOTK_AO_CHAR, percent, 25)
     int denoise;                        // denoise passes, the compose's included (TOTK_AO_DENOISE)
     float slices, steps;                // horizon directions and samples per direction (TOTK_AO_SLICES, TOTK_AO_STEPS)
+    float micro;                        // most the normal maps darken by themselves (TOTK_AO_MICRO, percent of 0.10, 100)
+    float tilt;                         // radians the search normal may turn towards the shading normal (TOTK_AO_TILT, degrees, 18)
     float crease;                       // crease emphasis (TOTK_AO_CREASE, percent: 0 none, 100 a half-visible corner to a quarter)
     float kept_ao;                      // the AO characters get: 108/255, as every character pixel of the game's
                                         // finished mask (1.4.3); TOTK_AO_KEPT (0..255) overrides it for tests
@@ -128,6 +130,10 @@ static void update_mode(void) {
     G.denoise = nd < 1 ? 1 : nd > 8 ? 8 : nd;
     int cr = cfg_int("TOTK_AO_CREASE");
     G.crease = (float)(cr < 0 ? 0 : cr > 100 ? 100 : cr) / 100.0f;
+    int tl = cfg_int("TOTK_AO_TILT");
+    G.tilt = (float)(tl < 0 ? 0 : tl > 90 ? 90 : tl) * 0.017453293f;
+    int mc = cfg_int("TOTK_AO_MICRO");
+    G.micro = 0.10f * (float)(mc < 0 ? 0 : mc > 300 ? 300 : mc) / 100.0f;
     int cp = cfg_int("TOTK_AO_CHAR");
     G.char_occ = (float)(cp < 0 ? 0 : cp > 100 ? 100 : cp) / 100.0f;
     int gr = cfg_int("TOTK_AO_GRASS");
@@ -337,7 +343,7 @@ void vk_gtao_flush(VkExec *ex) {
                      (float)G.dw, (float)G.dh, 1.0f / (float)G.dw, 1.0f / (float)G.dh,
                      G.slices, G.steps, 0.615f, 2.2f,   // slices, steps (TOTK_AO_SLICES, TOTK_AO_STEPS), falloff range, power
                      G.thin, G.fade, gnormal ? 1.0f : 0.0f, znear,   // TOTK_AO_FOLIAGE; the G-buffer's normals
-                     G.char_occ, G.grass, 0, 0};
+                     G.char_occ, G.grass, G.tilt, G.micro};
     run(cb, P_MAIN, (VkImageView[5]){depth, VK_NULL_HANDLE, material, albedo, gnormal}, pt, G.img[I_AO].view,
         G.img[I_EDGES].view, mpc, sizeof mpc);
     // denoise passes back and forth between the two visibility images, the compose's own the last: XeGTAO leaves the

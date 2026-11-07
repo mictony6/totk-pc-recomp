@@ -554,6 +554,8 @@ static void row_ao(void) {
     opt_slider("TOTK_AO_LIGHT", UI_MENU_AO_LIGHT, 0, 100, UI_MENU_AO_LIGHT_DESC, 5, "%.0f %%");
     opt_slider("TOTK_AO_CHAR", UI_MENU_AO_CHAR, 0, 100, UI_MENU_AO_CHAR_DESC, 5, "%.0f %%");
     opt_slider("TOTK_AO_CREASE", UI_MENU_AO_CREASE, 0, 100, UI_MENU_AO_CREASE_DESC, 5, "%.0f %%");
+    opt_slider("TOTK_AO_TILT", UI_MENU_AO_TILT, 0, 90, UI_MENU_AO_TILT_DESC, 1, "%.0f deg");
+    opt_slider("TOTK_AO_MICRO", UI_MENU_AO_MICRO, 0, 300, UI_MENU_AO_MICRO_DESC, 10, "%.0f %%");
 }
 
 static void row_light_normals(void) {
@@ -721,6 +723,7 @@ static void tab_screen(float scale) {
     static const UiTextId chars[] = {UI_MENU_DLSS_CHARS_OFF, UI_MENU_DLSS_CHARS_LIGHT, UI_MENU_DLSS_CHARS_MEDIUM,
                                      UI_MENU_DLSS_CHARS_FULL};
     opt_choice("TOTK_DLSS_CHAR_MASK", UI_MENU_DLSS_CHARS, chars, 4, UI_MENU_DLSS_CHARS_DESC);
+    opt_toggle("TOTK_DLAA_OBJMV", UI_MENU_DLSS_OBJMV, UI_MENU_DLSS_OBJMV_DESC);
     rows_color();
     opt_group(UI_MENU_HDR_GROUP);
     opt_toggle("TOTK_HDR", UI_MENU_HDR, UI_MENU_HDR_DESC);
