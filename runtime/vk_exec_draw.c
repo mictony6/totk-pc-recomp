@@ -2137,6 +2137,76 @@ static int pipe_memo_on(void) {
     return PM.on;
 }
 
+// TOTK_DRAW_REPEAT=<hash>:<n>[,<hash>:<n>...]: draws with that fragment shader are drawn n times in all (same pipeline and
+// state, so alpha-blended layers compound: opacity 1-(1-a)^n). rep_cur: extra draws for the draw just set up.
+#define REP_MAX 16
+static struct { uint64_t h; int n; } rep[REP_MAX];
+static int rep_n, rep_cur;
+
+static uint64_t fs_spv_hash(const GfxShader *fs) {
+    static struct { const GfxShader *s; uint64_t h; } tab[1024];
+    static int n;
+    for (int i = 0; i < n; i++)
+        if (tab[i].s == fs) return tab[i].h;
+    uint64_t words = 0, h = 0xcbf29ce484222325ull;
+    const uint8_t *b = (const uint8_t *)gfx_shader_spirv(fs, &words);
+    for (uint64_t k = 0; k < words * 4; k++) h = (h ^ b[k]) * 0x100000001b3ull;
+    if (n < 1024) tab[n].s = fs, tab[n].h = h, n++;
+    return h;
+}
+
+// TOTK_DRAW_HIDE=<from>-<to>:<hash>[,<hash>...][;<from>-<to>:...]: draws whose fragment shader's SPIR-V hash (FNV-1a 64 of
+// the SPIR-V words' bytes, hex: the fs column of TOTK_DUMP's passes.txt) is listed are not drawn in presents from..to.
+// A debugging aid for finding which draws make an effect: one run can hide a different group in each frame range and
+// compare the screenshots (TOTK_SHOTS). hide_cur: the draw prepare_draw just set up is one of them.
+#define HIDE_MAX 64
+static struct { uint64_t from, to, h; } hide[HIDE_MAX];
+static int hide_n = -1, hide_cur;
+
+static int fs_hidden(const GfxShader *fs) {
+    if (hide_n < 0) {
+        hide_n = 0;
+        const char *e = getenv("TOTK_DRAW_HIDE");
+        if (!e) e = "";
+        while (*e && hide_n < HIDE_MAX) {
+            char *end;
+            uint64_t from = strtoull(e, &end, 10), to = *end == '-' ? strtoull(end + 1, &end, 10) : from;
+            if (*end != ':') break;
+            e = end + 1;
+            for (;;) {
+                uint64_t h = strtoull(e, &end, 16);
+                if (end == e) break;
+                if (hide_n < HIDE_MAX) hide[hide_n].from = from, hide[hide_n].to = to, hide[hide_n++].h = h;
+                e = end;
+                if (*e != ',') break;
+                e++;
+            }
+            if (*e == ';') e++;
+            else break;
+        }
+        const char *r = getenv("TOTK_DRAW_REPEAT");
+        while (r && *r && rep_n < REP_MAX) {
+            char *end;
+            uint64_t h = strtoull(r, &end, 16);
+            if (end == r || *end != ':') break;
+            int n = (int)strtol(end + 1, &end, 10);
+            if (n >= 2 && n <= 16) rep[rep_n].h = h, rep[rep_n++].n = n;
+            r = *end == ',' ? end + 1 : "";
+        }
+        if (rep_n) rt_log("vk_exec: TOTK_DRAW_REPEAT repeats draws of %d shaders", rep_n);
+        if (hide_n) rt_log("vk_exec: TOTK_DRAW_HIDE hides draws of %d (frames, shader) entries", hide_n);
+    }
+    if (!fs) return 0;
+    uint64_t h = fs_spv_hash(fs);
+    for (int k = 0; k < rep_n; k++)
+        if (rep[k].h == h) rep_cur = rep[k].n;
+    if (!hide_n) return 0;
+    uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) + 1;
+    for (int k = 0; k < hide_n; k++)
+        if (hide[k].h == h && f >= hide[k].from && f <= hide[k].to) return 1;
+    return 0;
+}
+
 // Pass, shaders, pipeline, fixed state and resources for a draw. 0: the draw is skipped.
 static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     if (ex->render_disabled) return 0;
@@ -2267,6 +2337,8 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     if (fbl & ex->fb_dirty) feedback_barrier(ex);
     feedback_written(ex, &s);
     bind_vertex_buffers(ex);
+    rep_cur = 0;
+    hide_cur = fs_hidden(s.fs);
     if (vk_dump_armed) vk_dump_draw(ex, &s, p, info);
     if (vk_hdr_track) vk_hdr_draw(ex, info);
     vk_exec_oq_draw(ex);
@@ -3039,7 +3111,8 @@ static void bind_index(VkExec *ex, const void *data, uint64_t bytes, VkIndexType
 
 static void op_draw(VkExec *ex, const p_draw *d) {
     c0_binst = (uint32_t)d->base_instance;
-    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, 0)) return;
+    hide_cur = rep_cur = 0;
+    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, 0) || hide_cur) return;
     vk_exec_frame.draws++;
     uint32_t inst = d->instances > 0 ? (uint32_t)d->instances : 1, first = (uint32_t)d->first, n = (uint32_t)d->count;
     if (d->prim == NVN_DRAW_PRIMITIVE_QUADS && n >= 4) {   // quads become two triangles each
@@ -3063,6 +3136,7 @@ static void op_draw(VkExec *ex, const p_draw *d) {
         vkCmdDrawIndexed(ex->cb, n + 1, inst, 0, 0, (uint32_t)d->base_instance);
     } else {
         vkCmdDraw(ex->cb, n, inst, first, (uint32_t)d->base_instance);
+        for (int r = 1; r < rep_cur; r++) vkCmdDraw(ex->cb, n, inst, first, (uint32_t)d->base_instance), ex->recorded++;
     }
     ex->recorded++;
 }
@@ -3091,7 +3165,8 @@ static void op_draw_idx(VkExec *ex, const p_draw_idx *d) {
     static const uint32_t isize[3] = {1, 2, 4};
     if (d->itype < 0 || d->itype > 2) return warn_once(W_INDEX, "index type %d is unknown: draw skipped", d->itype);
     int restart = restart_for(ex, d->prim, d->itype);
-    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, restart)) return;
+    hide_cur = rep_cur = 0;
+    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, restart) || hide_cur) return;
     vk_exec_frame.draws++;
     uint64_t bytes = (uint64_t)d->count * isize[d->itype];
     VkMemSpan sp;
@@ -3117,9 +3192,11 @@ static void op_draw_idx(VkExec *ex, const p_draw_idx *d) {
         vk_mem_count(sp.cls, VK_MUSE_IB, bytes);
         VK_MEM_BOUND(sp);
     }
-    vkCmdDrawIndexed(ex->cb, (uint32_t)d->count, d->instances > 0 ? (uint32_t)d->instances : 1, 0, d->base_vertex,
-                     (uint32_t)d->base_instance);
-    ex->recorded++;
+    for (int r = 0; r < (rep_cur > 1 ? rep_cur : 1); r++) {
+        vkCmdDrawIndexed(ex->cb, (uint32_t)d->count, d->instances > 0 ? (uint32_t)d->instances : 1, 0, d->base_vertex,
+                         (uint32_t)d->base_instance);
+        ex->recorded++;
+    }
     if (d->itype != NVN_INDEX_TYPE_UNSIGNED_BYTE) mvobj_draw(ex, d, sp.buffer, sp.offset);
 }
 
