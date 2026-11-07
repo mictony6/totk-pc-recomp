@@ -79,6 +79,16 @@ extern "C" int menu_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res)
     case WM_MOUSEWHEEL:
         if (menu_is_open()) menu_event_wheel(0, (float)GET_WHEEL_DELTA_WPARAM(w) / WHEEL_DELTA);
         return 0;
+    case WM_CHAR: {   // UTF-16 units: a character outside the BMP arrives as a high then a low surrogate
+        static unsigned high;
+        if (!menu_is_open()) return 0;
+        unsigned c = (unsigned)w;
+        if (c >= 0xD800 && c < 0xDC00) { high = c; return 0; }
+        if (c >= 0xDC00 && c < 0xE000) { c = high ? 0x10000 + ((high - 0xD800) << 10) + (c - 0xDC00) : 0; }
+        high = 0;
+        if (c >= 32 && c != 127) menu_event_char(c);   // control characters are keys, handled above
+        return 0;
+    }
     case WM_SETFOCUS:
     case WM_KILLFOCUS:
         menu_event_focus(m == WM_SETFOCUS);

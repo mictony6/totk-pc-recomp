@@ -41,7 +41,25 @@ static ImGuiKey key_of(SDL_Scancode sc) {
 
 extern "C" void menu_sdl_event(const SDL_Event *e) {
     float d = (float)gfx_window_sdl_density();
+    // SDL3 sends text events only while text input is started for the window: on while the menu is open
+    static bool text_on;
+    if (menu_is_open() != text_on) {
+        if (SDL_Window *w = SDL_GetKeyboardFocus()) {
+            if (menu_is_open()) SDL_StartTextInput(w); else SDL_StopTextInput(w);
+            text_on = menu_is_open();
+        }
+    }
     switch (e->type) {
+    case SDL_EVENT_TEXT_INPUT:
+        if (!menu_is_open()) return;
+        for (const unsigned char *p = (const unsigned char *)e->text.text; *p;) {   // UTF-8 to code points
+            unsigned c = *p, n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+            c = n == 1 ? c : c & (0xFF >> (n + 1));
+            for (unsigned i = 1; i < n && p[i]; i++) c = (c << 6) | (p[i] & 0x3F);
+            for (unsigned i = 0; i < n && *p; i++) p++;
+            if (c >= 32 && c != 127) menu_event_char(c);
+        }
+        return;
     case SDL_EVENT_KEY_DOWN:
         // Esc with the menu open (opened by F1 too) is not a toggle here: it goes to the menu, which closes itself
         if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_F1 ||
