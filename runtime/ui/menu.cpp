@@ -748,6 +748,8 @@ static void tab_screen(float scale) {
                                      UI_MENU_DLSS_CHARS_FULL};
     opt_choice("TOTK_DLSS_CHAR_MASK", UI_MENU_DLSS_CHARS, chars, 4, UI_MENU_DLSS_CHARS_DESC);
     opt_toggle("TOTK_DLAA_OBJMV", UI_MENU_DLSS_OBJMV, UI_MENU_DLSS_OBJMV_DESC);
+    static const UiTextId reflex[] = {UI_MENU_REFLEX_OFF, UI_MENU_REFLEX_ON, UI_MENU_REFLEX_BOOST};
+    opt_choice("TOTK_REFLEX", UI_MENU_REFLEX, reflex, 3, UI_MENU_REFLEX_DESC);
     rows_color();
     opt_slider("TOTK_WHITE_POINT", UI_MENU_WHITE_POINT, 1, 4, UI_MENU_WHITE_POINT_DESC, 0.1f, "%.1f");
     opt_group(UI_MENU_HDR_GROUP);
