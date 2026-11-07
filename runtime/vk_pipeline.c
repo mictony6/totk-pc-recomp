@@ -689,18 +689,25 @@ static uint32_t *spirv_dual_source(const uint32_t *w, uint64_t n, uint64_t *out_
     return o;
 }
 
-// Ground mist (Depths and caves): TOTK's half-resolution ray-marched mist slab. Its fragment shader (SPIR-V hash
-// FOG_FS, pass 146 of a Depths frame in a TOTK_DUMP) takes the slab's thickness from a height field times
-// fp_c13[9].x, adds opacity per marching step by fp_c13[0].z and gains the final alpha by fp_c13[4].z.
-// TOTK_FOG_THICK, TOTK_FOG_EXT and TOTK_FOG_ALPHA (default 1) multiply those three constants at pipeline creation:
-// THICK widens the area the mist covers and its depth, EXT makes it close up faster, ALPHA makes what is there more
-// opaque. Each multiplier is applied right after the shader loads its constant, so the uniform data the game writes
-// stays as it is.
+// Ground mist (Depths and caves): TOTK's half-resolution ray-marched mist slab (pass 146 of a Depths frame in a
+// TOTK_DUMP). Its vertex shader (SPIR-V hash FOG_VS) lifts a mesh to the height field's height times vp_c13[9].x; its
+// fragment shader (FOG_FS) takes the slab's thickness from the same field times fp_c13[9].x, adds opacity per marching
+// step by fp_c13[0].z, gains the final alpha by fp_c13[4].z and marches 5 to 15 steps along a ray (SMin with 15).
+// Multipliers (environment, default 1; read at pipeline creation, so a restart applies them):
+//   TOTK_FOG_THICK   slab thickness, in both shaders so the mesh grows with the slab (the fragment shader alone is
+//                    cut off at the mesh's top)
+//   TOTK_FOG_EXT     opacity gained per step: the mist closes up faster
+//   TOTK_FOG_ALPHA   final alpha gain: what is there gets more opaque
+//   TOTK_FOG_STEPS   most marching steps (default 15): more steps, less banding in a thick slab
+// Each multiplier goes right after the shader loads its constant, so the uniform data the game writes stays as it is.
+#define FOG_VS 0xec0b0d6b71d3cdc4ull
 #define FOG_FS 0xf4cd1e37caa0ba45ull
-enum { SPV_OP_NAME = 5, SPV_OP_LOAD = 61, SPV_OP_ACCESS_CHAIN = 65, SPV_OP_FMUL = 133 };
+enum { SPV_OP_NAME = 5, SPV_OP_LOAD = 61, SPV_OP_ACCESS_CHAIN = 65, SPV_OP_FMUL = 133, SPV_OP_EXT_INST = 12,
+       GLSL_SMIN = 39, FOG_MAXSTEPS = 15 };
 
-static struct { double k[3]; int init; } fog;
-static const struct { int vec, comp; } fog_site[3] = {{9, 0}, {0, 2}, {4, 2}};
+static struct { double k[3]; int steps, init; } fog;
+static const struct { int vec, comp, knob; } fog_fs_site[3] = {{9, 0, 0}, {0, 2, 1}, {4, 2, 2}},
+                                              fog_vs_site[1] = {{9, 0, 0}};
 
 static void fog_init(void) {
     static const char *const env[3] = {"TOTK_FOG_THICK", "TOTK_FOG_EXT", "TOTK_FOG_ALPHA"};
@@ -709,45 +716,58 @@ static void fog_init(void) {
         double v = e ? strtod(e, NULL) : 1;
         fog.k[i] = v > 0 && v <= 64 ? v : 1;
     }
+    const char *e = getenv("TOTK_FOG_STEPS");
+    long st = e ? strtol(e, NULL, 10) : FOG_MAXSTEPS;
+    fog.steps = st >= 5 && st <= 128 ? (int)st : FOG_MAXSTEPS;
     fog.init = 1;
-    if (fog.k[0] != 1 || fog.k[1] != 1 || fog.k[2] != 1)
-        rt_log("vk_pipeline: ground mist constants scaled: thickness x%g, extinction x%g, alpha x%g", fog.k[0], fog.k[1], fog.k[2]);
+    if (fog.k[0] != 1 || fog.k[1] != 1 || fog.k[2] != 1 || fog.steps != FOG_MAXSTEPS)
+        rt_log("vk_pipeline: ground mist: thickness x%g, extinction x%g, alpha x%g, up to %d steps", fog.k[0], fog.k[1],
+               fog.k[2], fog.steps);
 }
 
-// The patched copy of fragment shader w (n words, *out_n its new size), or NULL when it is not the mist shader, no
-// multiplier is set, or its layout is not the expected one.
+// The patched copy of shader w (n words, *out_n its new size) when it is the mist's vertex or fragment shader and a
+// multiplier applies to it; NULL otherwise, or when its layout is not the expected one.
 static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
     if (!fog.init) fog_init();
-    if (!w || n < 6 || (fog.k[0] == 1 && fog.k[1] == 1 && fog.k[2] == 1)) return NULL;
+    if (!w || n < 6 || (fog.k[0] == 1 && fog.k[1] == 1 && fog.k[2] == 1 && fog.steps == FOG_MAXSTEPS)) return NULL;
     uint64_t h = 0xcbf29ce484222325ull;
     for (const uint8_t *b = (const uint8_t *)w, *e = b + n * 4; b < e; b++) h = (h ^ *b) * 0x100000001b3ull;
-    if (h != FOG_FS) return NULL;
-    uint32_t bound = w[3], c13 = 0, flt = 0, loads = 0;
+    int vs = h == FOG_VS;
+    if (!vs && h != FOG_FS) return NULL;
+    const char *name = vs ? "vp_c13" : "fp_c13";
+    int nsite = vs ? 1 : 3, with_steps = !vs && fog.steps != FOG_MAXSTEPS;
+    const typeof(fog_fs_site[0]) *sites = vs ? fog_vs_site : fog_fs_site;
+    uint32_t bound = w[3], cb = 0, flt = 0, sint = 0, loads = 0, smins = 0;
     uint32_t *val = calloc(bound, sizeof *val), *site = calloc(bound, sizeof *site);   // constant values; chain id -> site + 1
     uint32_t *o = NULL;
     if (!val || !site) goto out;
     for (uint64_t i = 5; i < n;) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
         if (!len || i + len > n) goto out;
-        if (op == SPV_OP_NAME && len >= 3 && !strncmp((const char *)&w[i + 2], "fp_c13", 7)) c13 = w[i + 1];
+        if (op == SPV_OP_NAME && len >= 3 && !strncmp((const char *)&w[i + 2], name, 7)) cb = w[i + 1];
         else if (op == SPV_OP_TYPE_FLOAT && len == 3 && w[i + 2] == 32 && !flt) flt = w[i + 1];
+        else if (op == SPV_OP_TYPE_INT && len == 4 && w[i + 2] == 32 && w[i + 3] == 1 && !sint) sint = w[i + 1];
         else if (op == SPV_OP_CONSTANT && len == 4 && w[i + 2] < bound) val[w[i + 2]] = w[i + 3];
         i += len;
     }
-    if (!c13 || !flt) goto out;
+    if (!cb || !flt || (with_steps && !sint)) goto out;
     for (uint64_t i = 5; i < n;) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
-        if (op == SPV_OP_ACCESS_CHAIN && len == 7 && w[i + 3] == c13 && w[i + 2] < bound && w[i + 4] < bound &&
+        if (op == SPV_OP_ACCESS_CHAIN && len == 7 && w[i + 3] == cb && w[i + 2] < bound && w[i + 4] < bound &&
             w[i + 5] < bound && w[i + 6] < bound && val[w[i + 4]] == 0)
-            for (int k = 0; k < 3; k++)
-                if (val[w[i + 5]] == (uint32_t)fog_site[k].vec && val[w[i + 6]] == (uint32_t)fog_site[k].comp) site[w[i + 2]] = k + 1;
+            for (int k = 0; k < nsite; k++)
+                if (val[w[i + 5]] == (uint32_t)sites[k].vec && val[w[i + 6]] == (uint32_t)sites[k].comp && fog.k[sites[k].knob] != 1)
+                    site[w[i + 2]] = k + 1;
         if (op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]]) loads++;
+        if (with_steps && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
+            val[w[i + 6]] == FOG_MAXSTEPS)
+            smins++;
         i += len;
     }
-    if (!loads) goto out;
-    o = malloc((n + 12 + 5 * (uint64_t)loads) * 4);
+    if (!loads && !smins) goto out;
+    o = malloc((n + 16 + 5 * (uint64_t)loads) * 4);
     if (!o) goto out;
-    uint32_t kid[3] = {bound, bound + 1, bound + 2}, next = bound + 3;
+    uint32_t kid[3] = {bound, bound + 1, bound + 2}, sid = bound + 3, next = bound + 4;
     uint64_t m = 5;
     int declared = 0;
     memcpy(o, w, 5 * 4);
@@ -759,15 +779,19 @@ static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
                 o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = flt, o[m++] = kid[k];
                 memcpy(&o[m], &f, 4), m++;
             }
+            if (with_steps) o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = sint, o[m++] = sid, o[m++] = (uint32_t)fog.steps;
             declared = 1;
         }
         memcpy(o + m, w + i, len * 4);
         if (op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]]) {
-            uint32_t tmp = next++, k = site[w[i + 3]] - 1;
+            uint32_t tmp = next++, k = sites[site[w[i + 3]] - 1].knob;
             o[m + 2] = tmp;   // the load defines tmp; the original id becomes the scaled value
             m += len;
             o[m++] = 5u << 16 | SPV_OP_FMUL, o[m++] = w[i + 1], o[m++] = w[i + 2], o[m++] = tmp, o[m++] = kid[k];
         } else {
+            if (with_steps && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
+                val[w[i + 6]] == FOG_MAXSTEPS)
+                o[m + 6] = sid;
             m += len;
         }
         i += len;
@@ -1418,6 +1442,9 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
     uint64_t vw, fw;
     const uint32_t *vcode = gfx_shader_spirv(s->vs, &vw);
     uint32_t *vpatched = NULL, *fpatched = NULL, *fogp = NULL;
+    uint64_t vn2 = 0;
+    uint32_t *vfog = fog_patch(vcode, vw, &vn2);
+    if (vfog) vcode = vfog, vw = vn2;
     if (l->set1) {   // independent layouts: outputs from the vertex shader's union, not from this fragment shader
         GfxShaderIo fin[32];
         uint32_t missing = vs_union_missing(s, fin);
@@ -1461,7 +1488,7 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
         if (fcode) fm = make_module(fcode, fw);
     }
     vm = make_module(vcode, vw);
-    free(vpatched), free(fpatched), free(fogp);
+    free(vpatched), free(fpatched), free(fogp), free(vfog);
     VkPipeline pipe = VK_NULL_HANDLE;
     if (!vm || (s->fs && !fm)) goto out;
 
@@ -1641,9 +1668,13 @@ static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPi
         uint64_t vw, sw, n2 = 0;
         const uint32_t *vcode = gfx_shader_spirv(s->vs, &vw), *scode = vcode;
         sw = vw;
+        uint32_t *vfog = fog_patch(vcode, vw, &n2);
+        if (vfog) vcode = vfog, vw = n2;
         if (pk->missing && (patched = spirv_add_outputs(vcode, vw, pk->missing, pk->fin, &n2))) vcode = patched, vw = n2;
         else if (pk->missing) LOG_ONCE("vk_pipeline: cannot add missing vertex outputs (mask %#x)", pk->missing);
-        if (!(m = make_module(vcode, vw))) goto out;
+        m = make_module(vcode, vw);
+        free(vfog);
+        if (!m) goto out;
         st.stage = VK_SHADER_STAGE_VERTEX_BIT, st.module = m;
         pin_subgroup32(&st, &rq, scode, sw);
         pi.stageCount = 1, pi.pStages = &st, pi.pViewportState = &vp, pi.pRasterizationState = &rs;
