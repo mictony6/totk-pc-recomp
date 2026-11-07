@@ -746,6 +746,18 @@ int plat_watch_write(uint64_t addr, int len, void (*fn)(uintptr_t rip, uintptr_t
     return armed > 0;
 }
 
+// The console of this process is the game's own: the game was started from Explorer or a shortcut, not from a terminal
+// the player opened. True when this process is the only one attached to it, or when the process that re-ran or
+// restarted this one was (OWN_CONSOLE tells).
+#define OWN_CONSOLE "TOTK_OWN_CONSOLE"
+static volatile LONG g_console_hidden;
+
+static int console_is_own(void) {
+    const char *e = getenv(OWN_CONSOLE);
+    DWORD pid;
+    return (e && *e) || GetConsoleProcessList(&pid, 1) == 1;
+}
+
 // A fresh process gets a fresh layout: Windows places DLLs, heaps and thread stacks at random addresses. The parent
 // waits and exits with the child's code.
 void plat_reexec(void) {
@@ -754,10 +766,13 @@ void plat_reexec(void) {
     STARTUPINFOW si = {.cb = sizeof si};
     PROCESS_INFORMATION pi;
     wchar_t *cmd = _wcsdup(GetCommandLineW());   // CreateProcessW may write its command line
+    int own = console_is_own();   // the child inherits the console; this process lets go of it once the child has it
+    if (own) SetEnvironmentVariableA(OWN_CONSOLE, "1");
     if (!cmd || !CreateProcessW(NULL, cmd, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
         fprintf(stderr, "FATAL: re-running the process failed (error %lu)\n", GetLastError());
         ExitProcess(70);
     }
+    if (own) FreeConsole();   // else this waiting parent would keep the child's console open
     CloseHandle(pi.hThread);
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD code = 70;
@@ -1611,13 +1626,32 @@ int plat_restart(void) {
     STARTUPINFOW si = {.cb = sizeof si};
     PROCESS_INFORMATION pi;
     wchar_t *cmd = _wcsdup(GetCommandLineW());   // CreateProcessW may write its command line
-    BOOL ok = cmd && CreateProcessW(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    int hidden = InterlockedCompareExchange(&g_console_hidden, 1, 1);
+    if (hidden) SetEnvironmentVariableA(OWN_CONSOLE, "1");   // this process let go of its console: the new one has none to show
+    BOOL ok = cmd && CreateProcessW(NULL, cmd, NULL, NULL, FALSE, hidden ? CREATE_NO_WINDOW : 0, NULL, NULL, &si, &pi);
     free(cmd);
+    SetEnvironmentVariableA(OWN_CONSOLE, NULL);
     plat_setenv(RESTART_WAIT, NULL);
     if (!ok) return 0;
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     return 1;
+}
+
+// Lets go of the console, which closes its window (a Windows Terminal tab too) once nothing else is attached. Hiding
+// the window would not do under Windows Terminal: GetConsoleWindow is a hidden stand-in there.
+int plat_console_hide(void) {
+    int own = console_is_own();
+    SetEnvironmentVariableA(OWN_CONSOLE, NULL);
+    if (!own) return 0;
+    FreeConsole();
+    InterlockedExchange(&g_console_hidden, 1);
+    return 1;
+}
+
+void plat_error_box(const char *text) {
+    if (!InterlockedCompareExchange(&g_console_hidden, 1, 1)) return;
+    MessageBoxA(NULL, text, "TotK Recomp", MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
 }
 
 int plat_restart_wait(uint32_t timeout_ms) {

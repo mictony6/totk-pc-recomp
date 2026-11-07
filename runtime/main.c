@@ -248,6 +248,11 @@ static void crash_handler(const PlatCrash *x) {
     }
     kern_free_cores_note();
     fflush(stderr);
+    {
+        char box[400];
+        snprintf(box, sizeof box, "The game crashed: %s (%#x).\n\nThe log is logs\totk.log next to totk.exe.", x->what, x->code);
+        plat_error_box(box);
+    }
     plat_exit(71);
 }
 

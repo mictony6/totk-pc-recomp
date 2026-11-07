@@ -325,6 +325,9 @@ static void window_main(void *arg) {
             SetForegroundWindow(g_hwnd);
             SetFocus(g_hwnd);
             if (joined) AttachThreadInput(me, fg_thread, FALSE);
+            // The console a double-clicked game opened is of no use once the window is up; TOTK_CONSOLE=1 keeps it
+            const char *keep = cfg_get("TOTK_CONSOLE");
+            if (!(keep && atoi(keep))) plat_console_hide();
             g_fs_pending = cfg_fullscreen();
         }
         note_applied();

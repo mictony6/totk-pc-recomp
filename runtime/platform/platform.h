@@ -425,3 +425,11 @@ int plat_restart(void);
 // In a process plat_restart started: waits, at most timeout_ms, until the process that started it has exited. 1 after
 // the wait, -1 on timeout, 0 when there is nothing to wait for (not started by plat_restart, or that process is gone).
 int plat_restart_wait(uint32_t timeout_ms);
+
+// ---- console window (Windows): hidden once the game window is up, so a double-clicked game shows only its window
+// Hides the console window when this process is the only one attached to it, so one the player opened and started the
+// game from stays. 1 when hidden (plat_error_box then speaks for the console), 0 otherwise and on other platforms.
+int plat_console_hide(void);
+// A message box with the text, but only while plat_console_hide has hidden the console: the player would not see a
+// fatal error otherwise. The text is where the log is.
+void plat_error_box(const char *text);

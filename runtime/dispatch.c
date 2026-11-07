@@ -47,6 +47,14 @@ void rt_fatal(const char *fmt, ...) {
     rt_vlogf(fmt, ap);
     rt_log_raw("\n", 1);
     va_end(ap);
+    {   // with the console hidden, the player sees the error here
+        char box[1200], msg[900];
+        va_start(ap, fmt);
+        vsnprintf(msg, sizeof msg, fmt, ap);
+        va_end(ap);
+        snprintf(box, sizeof box, "The game stopped: %s\n\nThe log is logs\totk.log next to totk.exe.", msg);
+        plat_error_box(box);
+    }
     // A failed allocation (malloc, realloc, VirtualAlloc) means the commit limit was reached: this line tells a leak of
     // ours (process private bytes near the limit) from a machine short of page file.
     double proc, used, limit;

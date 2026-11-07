@@ -1717,6 +1717,9 @@ int plat_restart(void) {
     return e == 0;
 }
 
+int plat_console_hide(void) { return 0; }
+void plat_error_box(const char *text) { (void)text; }
+
 int plat_restart_wait(uint32_t timeout_ms) {
     const char *v = getenv(RESTART_WAIT);
     if (!v) return 0;
