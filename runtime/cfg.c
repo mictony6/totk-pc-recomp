@@ -41,7 +41,7 @@ static const char *const known[] = {
     "COLOR_PRESET", "COLOR_SATURATION", "CONSOLE", "CONTACT_DEBUG", "CONTACT_SHADOWS", "CORE_DIAG", "CRIT", "CRIT_OUT",
     "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLAA_MASKDEBUG", "DLAA_MVDEBUG", "DLAA_OBJMV", "DLAA_SURVEY", "DLAA_TIMES", "DLSS", "DLSS_CHAR_MASK", "DLSS_MODEL", "DLSS_REACTIVE", "DRAW_LOG", "DUMP", "DUMP_BUF", "DUMP_DIR",
     "DUMP_FROM", "DUMP_LOG", "DUMP_ON", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_TEX_LAYER", "EFFECTS_UPSAMPLE", "EXEFS", "FEEDBACK", "FIX_C0", "FIX_ZERO",
-    "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES", "FLIGHT_SPIKE_MS", "FLIGHT_THUMBS", "FOV", "FOV_PATCH",
+    "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES", "FLIGHT_SPIKE_MS", "FLIGHT_THUMBS", "FOG_ALPHA", "FOG_EXT", "FOG_STEPS", "FOG_THICK", "FOV", "FOV_PATCH",
     "FPS60", "FPS_LIMIT", "FRAME_OVERLAP", "FREEZE_IDLE", "FREE_CORES", "FULLSCREEN", "FXAA", "GPL", "GPL_DRAW_BUILD", "GPU",
     "GPU_INDEX", "GPU_NAME", "GRASS_DIST", "GRASS_DIST_PATCH", "HDR", "HDR_GAME_NITS", "HDR_PEAK_NITS", "HDR_UI_NITS", "HIGHFPS_FIX", "INPUT",
     "INPUT_RECORD", "INPUT_SCRIPT", "LANG", "LIB_PREBUILD", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS",
@@ -84,6 +84,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"EFFECTS_UPSAMPLE", "display"},
     {"SHADOW_BLUR", "display"},
     {"UNDERWATER_UPSAMPLE", "display"},
+    {"FOG_THICK", "display"}, {"FOG_EXT", "display"}, {"FOG_ALPHA", "display"}, {"FOG_STEPS", "display"},
     {"MENU_LANG", "language"}, {"LANG", "language"}, {"OPERATION_MODE", "language"},
     {"VOLUME", "audio"},
     {"SAVE_PROFILE", "saves"},
@@ -126,6 +127,9 @@ static const CfgMeta metas[] = {
     {"AO_FOLIAGE", "minimal", "minimal|full", LIVE}, {"AO_CHAR", "25", "0..100", LIVE},
     {"AO_CREASE", "0", "0..100", LIVE}, {"AO_TILT", "18", "0..90", LIVE}, {"AO_MICRO", "100", "0..300", LIVE}, {"AO_GRASS", "100", "0..100", LIVE}, {"AO_LIGHT", "100", "0..100", LIVE},
     {"LIGHT_NORMALS", "game", "game|average", LIVE},
+    // the ground mist of caves and the Depths (vk_pipeline.c fog_patch, vk_exec_draw.c support_fill); applies at once
+    {"FOG_THICK", "100", "50..300", LIVE}, {"FOG_EXT", "100", "50..400", LIVE}, {"FOG_ALPHA", "100", "50..400", LIVE},
+    {"FOG_STEPS", "15", "5..64", LIVE},
     // the blur of the shadow mask (vk_shadowblur.c); applies at once
     {"SHADOW_BLUR", "game", "game|depth", LIVE},
     // half-resolution effects composite (vk_upsample.c): on at start (the shader is swapped as shaders load)

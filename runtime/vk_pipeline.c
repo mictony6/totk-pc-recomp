@@ -691,53 +691,32 @@ static uint32_t *spirv_dual_source(const uint32_t *w, uint64_t n, uint64_t *out_
 
 // Ground mist (Depths and caves): TOTK's half-resolution ray-marched mist slab (pass 146 of a Depths frame in a
 // TOTK_DUMP). Its vertex shader (SPIR-V hash FOG_VS) lifts a mesh to the height field's height times vp_c13[9].x; its
-// fragment shader (FOG_FS) takes the slab's thickness from the same field times fp_c13[9].x, adds opacity per marching
-// step by fp_c13[0].z, gains the final alpha by fp_c13[4].z and marches 5 to 15 steps along a ray (SMin with 15).
-// Multipliers (environment, default 1; read at pipeline creation, so a restart applies them):
-//   TOTK_FOG_THICK   slab thickness, in both shaders so the mesh grows with the slab (the fragment shader alone is
-//                    cut off at the mesh's top)
-//   TOTK_FOG_EXT     opacity gained per step: the mist closes up faster
-//   TOTK_FOG_ALPHA   final alpha gain: what is there gets more opaque
-//   TOTK_FOG_STEPS   most marching steps (default 15): more steps, less banding in a thick slab
-// Each multiplier goes right after the shader loads its constant, so the uniform data the game writes stays as it is.
+// fragment shader (VK_FOG_FS) takes the slab's thickness from the same field times fp_c13[9].x, adds opacity per
+// marching step by fp_c13[0].z, gains the final alpha by fp_c13[4].z and marches 5 to 15 steps along a ray (SMin with 15).
+// fog_patch makes each of those four read a multiplier from the support buffer instead (render scale slots
+// VK_FOG_SLOT+0..3, written by vk_exec_draw.c support_fill from TOTK_FOG_THICK, _EXT, _ALPHA and _STEPS), so the menu
+// changes them at once. Each multiplier goes right after the shader loads its constant, so the uniform data the game
+// writes stays as it is. The vertex shader gets the thickness too: with the fragment shader's alone, the slab grows
+// past the mesh and is cut off flat at its top.
 #define FOG_VS 0xec0b0d6b71d3cdc4ull
-#define FOG_FS 0xf4cd1e37caa0ba45ull
 enum { SPV_OP_NAME = 5, SPV_OP_LOAD = 61, SPV_OP_ACCESS_CHAIN = 65, SPV_OP_FMUL = 133, SPV_OP_EXT_INST = 12,
-       GLSL_SMIN = 39, FOG_MAXSTEPS = 15 };
+       SPV_OP_CONVERT_F_TO_S = 110, SPV_SC_UNIFORM = 2, GLSL_SMIN = 39, FOG_MAXSTEPS = 15, SB_RENDER_SCALE = 5 };
 
-static struct { double k[3]; int steps, init; } fog;
-static const struct { int vec, comp, knob; } fog_fs_site[3] = {{9, 0, 0}, {0, 2, 1}, {4, 2, 2}},
+static const struct { int vec, comp, slot; } fog_fs_site[3] = {{9, 0, 0}, {0, 2, 1}, {4, 2, 2}},   // thickness, extinction, alpha
                                               fog_vs_site[1] = {{9, 0, 0}};
 
-static void fog_init(void) {
-    static const char *const env[3] = {"TOTK_FOG_THICK", "TOTK_FOG_EXT", "TOTK_FOG_ALPHA"};
-    for (int i = 0; i < 3; i++) {
-        const char *e = getenv(env[i]);
-        double v = e ? strtod(e, NULL) : 1;
-        fog.k[i] = v > 0 && v <= 64 ? v : 1;
-    }
-    const char *e = getenv("TOTK_FOG_STEPS");
-    long st = e ? strtol(e, NULL, 10) : FOG_MAXSTEPS;
-    fog.steps = st >= 5 && st <= 128 ? (int)st : FOG_MAXSTEPS;
-    fog.init = 1;
-    if (fog.k[0] != 1 || fog.k[1] != 1 || fog.k[2] != 1 || fog.steps != FOG_MAXSTEPS)
-        rt_log("vk_pipeline: ground mist: thickness x%g, extinction x%g, alpha x%g, up to %d steps", fog.k[0], fog.k[1],
-               fog.k[2], fog.steps);
-}
-
-// The patched copy of shader w (n words, *out_n its new size) when it is the mist's vertex or fragment shader and a
-// multiplier applies to it; NULL otherwise, or when its layout is not the expected one.
+// The patched copy of shader w (n words, *out_n its new size) when it is the mist's vertex or fragment shader; NULL
+// otherwise, or when its layout is not the expected one.
 static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
-    if (!fog.init) fog_init();
-    if (!w || n < 6 || (fog.k[0] == 1 && fog.k[1] == 1 && fog.k[2] == 1 && fog.steps == FOG_MAXSTEPS)) return NULL;
+    if (!w || n < 6) return NULL;
     uint64_t h = 0xcbf29ce484222325ull;
     for (const uint8_t *b = (const uint8_t *)w, *e = b + n * 4; b < e; b++) h = (h ^ *b) * 0x100000001b3ull;
     int vs = h == FOG_VS;
-    if (!vs && h != FOG_FS) return NULL;
+    if (!vs && h != VK_FOG_FS) return NULL;
     const char *name = vs ? "vp_c13" : "fp_c13";
-    int nsite = vs ? 1 : 3, with_steps = !vs && fog.steps != FOG_MAXSTEPS;
+    int nsite = vs ? 1 : 3;
     const typeof(fog_fs_site[0]) *sites = vs ? fog_vs_site : fog_fs_site;
-    uint32_t bound = w[3], cb = 0, flt = 0, sint = 0, loads = 0, smins = 0;
+    uint32_t bound = w[3], cb = 0, sup = 0, flt = 0, sint = 0, pf = 0, nsites = 0, nsmin = 0;
     uint32_t *val = calloc(bound, sizeof *val), *site = calloc(bound, sizeof *site);   // constant values; chain id -> site + 1
     uint32_t *o = NULL;
     if (!val || !site) goto out;
@@ -745,53 +724,62 @@ static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
         if (!len || i + len > n) goto out;
         if (op == SPV_OP_NAME && len >= 3 && !strncmp((const char *)&w[i + 2], name, 7)) cb = w[i + 1];
+        else if (op == SPV_OP_NAME && len >= 5 && !strncmp((const char *)&w[i + 2], "support_buffer", 15)) sup = w[i + 1];
         else if (op == SPV_OP_TYPE_FLOAT && len == 3 && w[i + 2] == 32 && !flt) flt = w[i + 1];
         else if (op == SPV_OP_TYPE_INT && len == 4 && w[i + 2] == 32 && w[i + 3] == 1 && !sint) sint = w[i + 1];
+        else if (op == SPV_OP_TYPE_POINTER && len == 4 && w[i + 2] == SPV_SC_UNIFORM && w[i + 3] == flt && flt && !pf) pf = w[i + 1];
         else if (op == SPV_OP_CONSTANT && len == 4 && w[i + 2] < bound) val[w[i + 2]] = w[i + 3];
         i += len;
     }
-    if (!cb || !flt || (with_steps && !sint)) goto out;
+    if (!cb || !sup || !flt || !sint || !pf) goto out;
     for (uint64_t i = 5; i < n;) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
         if (op == SPV_OP_ACCESS_CHAIN && len == 7 && w[i + 3] == cb && w[i + 2] < bound && w[i + 4] < bound &&
             w[i + 5] < bound && w[i + 6] < bound && val[w[i + 4]] == 0)
             for (int k = 0; k < nsite; k++)
-                if (val[w[i + 5]] == (uint32_t)sites[k].vec && val[w[i + 6]] == (uint32_t)sites[k].comp && fog.k[sites[k].knob] != 1)
-                    site[w[i + 2]] = k + 1;
-        if (op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]]) loads++;
-        if (with_steps && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
+                if (val[w[i + 5]] == (uint32_t)sites[k].vec && val[w[i + 6]] == (uint32_t)sites[k].comp) site[w[i + 2]] = k + 1;
+        if (op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]]) nsites++;
+        if (!vs && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
             val[w[i + 6]] == FOG_MAXSTEPS)
-            smins++;
+            nsmin++;
         i += len;
     }
-    if (!loads && !smins) goto out;
-    o = malloc((n + 16 + 5 * (uint64_t)loads) * 4);
+    if (!nsites || (!vs && !nsmin)) goto out;   // a layout other than the one this was written for
+    o = malloc((n + 24 + 16 * (uint64_t)(nsites + nsmin)) * 4);
     if (!o) goto out;
-    uint32_t kid[3] = {bound, bound + 1, bound + 2}, sid = bound + 3, next = bound + 4;
+    uint32_t cmem = bound, cslot[4] = {bound + 1, bound + 2, bound + 3, bound + 4}, next = bound + 5;
     uint64_t m = 5;
     int declared = 0;
     memcpy(o, w, 5 * 4);
     for (uint64_t i = 5; i < n;) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
-        if (op == SPV_OP_FUNCTION && !declared) {   // the constants close the declarations
-            for (int k = 0; k < 3; k++) {
-                float f = (float)fog.k[k];
-                o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = flt, o[m++] = kid[k];
-                memcpy(&o[m], &f, 4), m++;
-            }
-            if (with_steps) o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = sint, o[m++] = sid, o[m++] = (uint32_t)fog.steps;
+        if (op == SPV_OP_FUNCTION && !declared) {   // the int constants close the declarations
+            o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = sint, o[m++] = cmem, o[m++] = SB_RENDER_SCALE;
+            for (int k = 0; k < 4; k++)
+                o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = sint, o[m++] = cslot[k], o[m++] = VK_FOG_SLOT + k;
             declared = 1;
         }
+        int is_load = op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]];
+        int is_smin = !vs && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
+                      val[w[i + 6]] == FOG_MAXSTEPS;
+        uint32_t pid = next, mid = next + 1;
+        if (is_smin) {   // the step limit: the float slot, as an int, in place of the constant 15
+            next += 3;
+            o[m++] = 6u << 16 | SPV_OP_ACCESS_CHAIN, o[m++] = pf, o[m++] = pid, o[m++] = sup, o[m++] = cmem, o[m++] = cslot[3];
+            o[m++] = 4u << 16 | SPV_OP_LOAD, o[m++] = flt, o[m++] = mid, o[m++] = pid;
+            o[m++] = 4u << 16 | SPV_OP_CONVERT_F_TO_S, o[m++] = sint, o[m++] = next - 1, o[m++] = mid;
+        }
         memcpy(o + m, w + i, len * 4);
-        if (op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]]) {
-            uint32_t tmp = next++, k = sites[site[w[i + 3]] - 1].knob;
+        if (is_smin) o[m + 6] = next - 1;
+        if (is_load) {
+            uint32_t tmp = next + 2, k = sites[site[w[i + 3]] - 1].slot;
+            next += 3;
             o[m + 2] = tmp;   // the load defines tmp; the original id becomes the scaled value
             m += len;
-            o[m++] = 5u << 16 | SPV_OP_FMUL, o[m++] = w[i + 1], o[m++] = w[i + 2], o[m++] = tmp, o[m++] = kid[k];
+            o[m++] = 6u << 16 | SPV_OP_ACCESS_CHAIN, o[m++] = pf, o[m++] = pid, o[m++] = sup, o[m++] = cmem, o[m++] = cslot[k];
+            o[m++] = 4u << 16 | SPV_OP_LOAD, o[m++] = flt, o[m++] = mid, o[m++] = pid;
+            o[m++] = 5u << 16 | SPV_OP_FMUL, o[m++] = w[i + 1], o[m++] = w[i + 2], o[m++] = tmp, o[m++] = mid;
         } else {
-            if (with_steps && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
-                val[w[i + 6]] == FOG_MAXSTEPS)
-                o[m + 6] = sid;
             m += len;
         }
         i += len;
