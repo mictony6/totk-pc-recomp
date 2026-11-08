@@ -700,7 +700,7 @@ static uint32_t *spirv_dual_source(const uint32_t *w, uint64_t n, uint64_t *out_
 // past the mesh and is cut off flat at its top.
 #define FOG_VS 0xec0b0d6b71d3cdc4ull
 enum { SPV_OP_NAME = 5, SPV_OP_LOAD = 61, SPV_OP_ACCESS_CHAIN = 65, SPV_OP_FMUL = 133, SPV_OP_EXT_INST = 12,
-       SPV_OP_CONVERT_F_TO_S = 110, SPV_SC_UNIFORM = 2, GLSL_SMIN = 39, FOG_MAXSTEPS = 15, SB_RENDER_SCALE = 5 };
+       SPV_OP_CONVERT_F_TO_S = 110, SPV_OP_FDIV = 136, SPV_SC_UNIFORM = 2, GLSL_FLOOR = 8, GLSL_SMIN = 39, FOG_MAXSTEPS = 15, SB_RENDER_SCALE = 5 };
 
 static const struct { int vec, comp, slot; } fog_fs_site[3] = {{9, 0, 0}, {0, 2, 1}, {4, 2, 2}},   // thickness, extinction, alpha
                                               fog_vs_site[1] = {{9, 0, 0}};
@@ -718,8 +718,12 @@ static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
     const typeof(fog_fs_site[0]) *sites = vs ? fog_vs_site : fog_fs_site;
     uint32_t bound = w[3], cb = 0, sup = 0, flt = 0, sint = 0, pf = 0, nsites = 0, nsmin = 0;
     uint32_t *val = calloc(bound, sizeof *val), *site = calloc(bound, sizeof *site);   // constant values; chain id -> site + 1
-    uint32_t *o = NULL;
-    if (!val || !site) goto out;
+    // The step count is floor(ray length) clamped to 5..15: cvt_src maps the id of an OpConvertFToS to its operand, flr_src
+    // the id of a GLSL Floor to its operand, and flr_site marks the Floor that feeds the clamp (nfloor of them).
+    uint32_t *cvt_src = calloc(bound, sizeof *cvt_src), *flr_src = calloc(bound, sizeof *flr_src);
+    uint8_t *flr_site = calloc(bound, 1);
+    uint32_t *o = NULL, nfloor = 0;
+    if (!val || !site || !cvt_src || !flr_src || !flr_site) goto out;
     for (uint64_t i = 5; i < n;) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
         if (!len || i + len > n) goto out;
@@ -739,15 +743,21 @@ static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
             for (int k = 0; k < nsite; k++)
                 if (val[w[i + 5]] == (uint32_t)sites[k].vec && val[w[i + 6]] == (uint32_t)sites[k].comp) site[w[i + 2]] = k + 1;
         if (op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]]) nsites++;
+        if (!vs && op == SPV_OP_CONVERT_F_TO_S && len == 4 && w[i + 2] < bound && w[i + 3] < bound) cvt_src[w[i + 2]] = w[i + 3];
+        if (!vs && op == SPV_OP_EXT_INST && len == 6 && w[i + 4] == GLSL_FLOOR && w[i + 2] < bound && w[i + 5] < bound)
+            flr_src[w[i + 2]] = w[i + 5];
         if (!vs && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
-            val[w[i + 6]] == FOG_MAXSTEPS)
+            val[w[i + 6]] == FOG_MAXSTEPS) {
             nsmin++;
+            uint32_t x = w[i + 5] < bound ? cvt_src[w[i + 5]] : 0;   // the Floor behind the clamp's int
+            if (x && x < bound && flr_src[x] && !flr_site[x]) flr_site[x] = 1, nfloor++;
+        }
         i += len;
     }
-    if (!nsites || (!vs && !nsmin)) goto out;   // a layout other than the one this was written for
-    o = malloc((n + 24 + 16 * (uint64_t)(nsites + nsmin)) * 4);
+    if (!nsites || (!vs && !(nsmin && nfloor))) goto out;   // a layout other than the one this was written for
+    o = malloc((n + 32 + 24 * (uint64_t)(nsites + nsmin + nfloor)) * 4);
     if (!o) goto out;
-    uint32_t cmem = bound, cslot[4] = {bound + 1, bound + 2, bound + 3, bound + 4}, next = bound + 5;
+    uint32_t cmem = bound, cslot[4] = {bound + 1, bound + 2, bound + 3, bound + 4}, cf15 = bound + 5, next = bound + 6;
     uint64_t m = 5;
     int declared = 0;
     memcpy(o, w, 5 * 4);
@@ -757,12 +767,21 @@ static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
             o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = sint, o[m++] = cmem, o[m++] = SB_RENDER_SCALE;
             for (int k = 0; k < 4; k++)
                 o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = sint, o[m++] = cslot[k], o[m++] = VK_FOG_SLOT + k;
+            o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = flt, o[m++] = cf15, o[m++] = 0x41700000;   // 15.0f
             declared = 1;
         }
         int is_load = op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]];
         int is_smin = !vs && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
                       val[w[i + 6]] == FOG_MAXSTEPS;
         uint32_t pid = next, mid = next + 1;
+        int is_floor = !vs && op == SPV_OP_EXT_INST && len == 6 && w[i + 4] == GLSL_FLOOR && w[i + 2] < bound && flr_site[w[i + 2]];
+        if (is_floor) {   // the ray length is scaled by steps / 15 before the floor, so the count follows the setting
+            next += 4;
+            o[m++] = 6u << 16 | SPV_OP_ACCESS_CHAIN, o[m++] = pf, o[m++] = pid, o[m++] = sup, o[m++] = cmem, o[m++] = cslot[3];
+            o[m++] = 4u << 16 | SPV_OP_LOAD, o[m++] = flt, o[m++] = mid, o[m++] = pid;
+            o[m++] = 5u << 16 | SPV_OP_FDIV, o[m++] = flt, o[m++] = pid + 2, o[m++] = mid, o[m++] = cf15;
+            o[m++] = 5u << 16 | SPV_OP_FMUL, o[m++] = flt, o[m++] = pid + 3, o[m++] = w[i + 5], o[m++] = pid + 2;
+        }
         if (is_smin) {   // the step limit: the float slot, as an int, in place of the constant 15
             next += 3;
             o[m++] = 6u << 16 | SPV_OP_ACCESS_CHAIN, o[m++] = pf, o[m++] = pid, o[m++] = sup, o[m++] = cmem, o[m++] = cslot[3];
@@ -771,6 +790,7 @@ static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
         }
         memcpy(o + m, w + i, len * 4);
         if (is_smin) o[m + 6] = next - 1;
+        if (is_floor) o[m + 5] = pid + 3;
         if (is_load) {
             uint32_t tmp = next + 2, k = sites[site[w[i + 3]] - 1].slot;
             next += 3;
@@ -787,7 +807,7 @@ static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
     o[3] = next;
     *out_n = m;
 out:
-    free(val), free(site);
+    free(val), free(site), free(cvt_src), free(flr_src), free(flr_site);
     return o;
 }
 
