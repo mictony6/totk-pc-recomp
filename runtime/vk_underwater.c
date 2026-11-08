@@ -128,7 +128,11 @@ static void free_image(VkCtx *c, Img *m) {
 static int ensure_image(VkCtx *c, uint32_t w, uint32_t h) {
     if (U.out.img && U.w == w && U.h == h) return 1;
     if (U.out.img) {
-        if (U.nold == 8) return 0;
+        if (U.nold == 8) {   // a full list of retired sizes: wait for the GPU, free them (as vk_dlaa.c does)
+            vkDeviceWaitIdle(c->device);
+            for (int i = 0; i < U.nold; i++) free_image(c, &U.old[i]);
+            U.nold = 0;
+        }
         U.old[U.nold++] = U.out;
         memset(&U.out, 0, sizeof U.out);
     }

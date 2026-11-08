@@ -84,7 +84,7 @@ static struct {
     VkPipelineLayout layout;
     VkPipeline pipe[NPIPE];
     VkSampler point, linear;
-    Img img[NIMG], old[8][NIMG];        // old: earlier sizes, which recorded work may still use (freed at release)
+    Img img[NIMG], old[8][NIMG];        // old: earlier sizes, which recorded work may still use (freed when the list is full, and at release)
     int nold, fresh;                    // fresh: the images are still in UNDEFINED layout
     uint32_t w, h;                      // GTAO size: half the G-buffer's
     const VkTexImage *depth;            // the G-buffer's linear depth
@@ -228,7 +228,12 @@ static int ensure_images(VkCtx *c, uint32_t w, uint32_t h) {
                                        VK_FORMAT_R8G8B8A8_UNORM};
     if (G.img[0].img && G.w == w && G.h == h) return 1;
     if (G.img[0].img) {
-        if (G.nold == 8) return 0;
+        if (G.nold == 8) {   // switching render scale back and forth fills the list: free the retired sizes, as vk_dlaa.c does
+            vkDeviceWaitIdle(c->device);
+            for (int i = 0; i < G.nold; i++)
+                for (int k = 0; k < NIMG; k++) free_image(c, &G.old[i][k]);
+            G.nold = 0;
+        }
         memcpy(G.old[G.nold++], G.img, sizeof G.img);
         memset(G.img, 0, sizeof G.img);
     }

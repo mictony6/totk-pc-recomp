@@ -185,7 +185,12 @@ static void update_mode(void) {
 static int ensure_images(VkCtx *c, uint32_t w, uint32_t h) {
     if (A.copy.img && A.w == w && A.h == h) return 1;
     if (A.copy.img) {
-        if (A.nold == 8) return 0;
+        if (A.nold == 8) {   // a full list of retired sizes: wait for the GPU, free them (as vk_dlaa.c does)
+            vkDeviceWaitIdle(c->device);
+            for (int i = 0; i < A.nold; i++)
+                for (int k = 0; k < 3; k++) free_image(c, &A.old[i][k]);
+            A.nold = 0;
+        }
         A.old[A.nold][0] = A.copy, A.old[A.nold][1] = A.edges, A.old[A.nold][2] = A.weights, A.nold++;
         memset(&A.copy, 0, sizeof A.copy), memset(&A.edges, 0, sizeof A.edges), memset(&A.weights, 0, sizeof A.weights);
     }
