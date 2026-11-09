@@ -1443,6 +1443,83 @@ static void write_back(Tex *e) {
     e->gpu_dirty = 0;
 }
 
+// A render target the CPU reads next frame, handed back without the CPU waiting on the GPU (frame overlap; vk_exec.c
+// watch_point): the part that ends at a readback point copies the image into a host staging buffer
+// (vk_texture_rb_record, replay thread), and once the point is reached the game thread converts the rows into the
+// storage layout (vk_texture_rb_apply). vk_texture_write_back records a GPU copy of its own and waits for it with the
+// replay thread's submissions queued behind the texture lock: freezes of up to a second.
+static int owned_dirty(uint64_t addr, uint64_t size, Tex **hit);
+#define RBK_N 4
+static struct {
+    VkBuffer buf;
+    VmaAllocation alloc;
+    uint8_t *map;
+    uint64_t cap, addr, fence;
+    Region g;
+    NVNcopyRegion r;
+} rbk[RBK_N];
+static unsigned rbk_next;
+
+int vk_texture_rb_record(VkCommandBuffer cb, const tex_t *t) {
+    VkCtx *c = vk_ctx();
+    lock();
+    Tex *e = entry_of(t);
+    VkImageAspectFlags aspect;
+    int slot = 0;
+    if (e && e->pub.image && e->pub.mirrored && e->pub.levels == 1 && e->pub.layers == 1 &&
+        t->d.target != NVN_TEXTURE_TARGET_3D && !e->f.astc_bw && !e->f.expand_rgb && read_aspect(e, &aspect)) {
+        view_t v = {.set_levels = 1, .set_layers = 1};
+        NVNcopyRegion r = {.width = (int)t->d.width, .height = (int)t->d.height, .depth = 1};
+        Region g;
+        uint64_t need = 0;
+        if (region_of(&e->t, &v, &r, 0, 0, &g)) need = g.wb * g.hb * (uint64_t)g.nz;
+        unsigned i = rbk_next % RBK_N;
+        if (need && rbk[i].cap < need) {
+            if (rbk[i].buf) vmaDestroyBuffer(c->vma, rbk[i].buf, rbk[i].alloc), rbk[i].buf = VK_NULL_HANDLE;
+            VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = need,
+                                     .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+            VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                          .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+            VmaAllocationInfo info;
+            if (vmaCreateBuffer(c->vma, &bi, &ai, &rbk[i].buf, &rbk[i].alloc, &info) == VK_SUCCESS)
+                rbk[i].map = info.pMappedData, rbk[i].cap = need;
+            else rbk[i].cap = 0;
+        }
+        if (need && rbk[i].cap >= need) {
+            VkBufferImageCopy rg = {.bufferOffset = 0,
+                                    .imageSubresource = {aspect, g.level, g.layer0, 1},
+                                    .imageOffset = {0, 0, 0}, .imageExtent = {(uint32_t)r.width, (uint32_t)r.height, 1}};
+            barrier(cb, ALL_RW, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            vkCmdCopyImageToBuffer(cb, e->pub.image, VK_IMAGE_LAYOUT_GENERAL, rbk[i].buf, 1, &rg);
+            barrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT,
+                    VK_ACCESS_2_HOST_READ_BIT);
+            rbk[i].addr = e->pub.addr, rbk[i].fence = e->gpu_fence, rbk[i].g = g, rbk[i].r = r;
+            slot = (int)i + 1;
+            rbk_next++;
+        }
+    }
+    unlock();
+    return slot;
+}
+
+void vk_texture_rb_apply(int slot, uint64_t addr) {
+    if (slot < 1 || slot > RBK_N || rbk[slot - 1].addr != addr) return;
+    VkCtx *c = vk_ctx();
+    lock();
+    Tex *hit[8];
+    int n = owned_dirty(addr, 1, NULL) ? owned_dirty(addr, 1, hit) : 0;
+    for (int i = 0; i < n && i < 8; i++) {
+        Tex *e = hit[i];
+        if (e->pub.addr != addr) continue;
+        uint32_t now;
+        if (storage_rewritten(e, e->gpu_gen, &now) == 1) continue;   // the CPU wrote it since: its bytes stay
+        vmaInvalidateAllocation(c->vma, rbk[slot - 1].alloc, 0, VK_WHOLE_SIZE);
+        storage_texels(&e->t, &rbk[slot - 1].g, &rbk[slot - 1].r, rbk[slot - 1].map, 1);
+        if (e->gpu_fence == rbk[slot - 1].fence) e->gpu_dirty = 0;   // nothing newer was rendered since
+    }
+    unlock();
+}
+
 // Mirrored textures overlapping [addr, addr+size) that the GPU wrote since their last write-back.
 static int owned_dirty(uint64_t addr, uint64_t size, Tex **hit) {
     int n = 0;

@@ -50,7 +50,7 @@ static int qhead, qn, qcap;
 // Readback points (vk_exec.c vk_exec_readback): a part that ends right after a GPU copy the CPU reads back signals the
 // next value of VkCtx.readback. rb_ring (st_lock) holds the newest points with the value of their submission.
 #define RB_RING 16
-typedef struct { uint64_t fence, value; } RbPoint;
+typedef struct { uint64_t fence, value, tex_addr, tex_slot; } RbPoint;   // a render target the point's part copied for the CPU: its address and staging slot (vk_texture_rb_record)
 static RbPoint rb_ring[RB_RING];
 static uint64_t rb_value;         // newest readback value handed out (sub_lock)
 
@@ -411,9 +411,17 @@ VkCommandBuffer vk_sync_split_readback(void) {
     uint64_t v = ++rb_value;
     VkCommandBuffer cb = split(v);
     plat_mutex_lock(&st_lock);
-    rb_ring[v % RB_RING] = (RbPoint){cur_fence, v};
+    rb_ring[v % RB_RING] = (RbPoint){cur_fence, v, 0, 0};
     plat_mutex_unlock(&st_lock);
     return cb;
+}
+
+// The render target the newest readback point's part copied (vk_exec.c tex_point): once the point is reached the staged
+// image goes into the target's storage (vk_texture_rb_apply) for the CPU's reads.
+void vk_sync_readback_tex(uint64_t addr, uint64_t slot) {
+    plat_mutex_lock(&st_lock);
+    rb_ring[rb_value % RB_RING].tex_addr = addr, rb_ring[rb_value % RB_RING].tex_slot = slot;
+    plat_mutex_unlock(&st_lock);
 }
 
 // The newest readback point of the submissions with values in (lo, hi]: those are replayed in order, so it is the one
@@ -439,6 +447,14 @@ int vk_sync_readback_wait(uint64_t lo, uint64_t hi) {
     }
     perf_end(PERF_FENCE, p0);
     perf_gpu_wait(p0);
+    for (int i = 0; i < RB_RING; i++) {   // the render targets those points copied go into their storage
+        uint64_t a = 0, n = 0;
+        plat_mutex_lock(&st_lock);
+        if (rb_ring[i].tex_addr && rb_ring[i].fence > lo && rb_ring[i].fence <= hi && rb_ring[i].value <= v)
+            a = rb_ring[i].tex_addr, n = rb_ring[i].tex_slot, rb_ring[i].tex_addr = 0;
+        plat_mutex_unlock(&st_lock);
+        if (a) vk_texture_rb_apply((int)n, a);
+    }
     return 1;
 }
 

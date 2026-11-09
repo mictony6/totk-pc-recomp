@@ -391,6 +391,8 @@ int vk_texture_read_image(const tex_t *t, const view_t *v, const NVNcopyRegion *
                           uint64_t img);            // always from the image (GPU copy, waited for); 0 on failure
 int vk_texture_cpu_stale(uint64_t addr, uint64_t size);    // a GPU-written mirrored texture there has stale storage
 uint64_t vk_texture_dirty_fence(uint64_t addr, uint64_t size);   // newest recorded writer of such a texture; 0: none
+int vk_texture_rb_record(VkCommandBuffer cb, const tex_t *t);   // frame overlap: copies the target's image to a staging buffer, returns its slot (0: not done)
+void vk_texture_rb_apply(int slot, uint64_t addr);               // after the readback point: the staged rows into the storage
 void vk_texture_write_back(uint64_t addr, uint64_t size);   // writes those images back into their storage (waits)
 void vk_texture_range_gone(uint64_t lo, uint64_t size, VmaAllocation alloc);   // vk_pool_fini: drop the images there
 void vk_texture_stats(uint64_t *images, uint64_t *uploads, uint64_t *reuploads);
@@ -431,6 +433,7 @@ VkCommandBuffer vk_sync_split(void);
 // vk_sync_split whose part also signals the next readback point (vk_exec.c vk_exec_readback).
 VkCommandBuffer vk_sync_split_readback(void);
 int vk_sync_readback_wait(uint64_t lo, uint64_t hi);   // GfxBackend.readback_wait
+void vk_sync_readback_tex(uint64_t addr, uint64_t slot);   // the newest readback point's part copied this render target
 // Runs fn(arg) on the completion thread once fence is done on the GPU (event writes, counter reports, sync state).
 // Callbacks run in the order they were added, after those of earlier values; a value already done runs at once there.
 void vk_completion_add(uint64_t fence, void (*fn)(void *), void *arg);

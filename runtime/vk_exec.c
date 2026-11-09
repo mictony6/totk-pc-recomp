@@ -646,6 +646,12 @@ void vk_exec_pass_end(VkExec *ex) {
     for (int i = 0; i < 8; i++)
         if (ex->color[i].image) vk_texture_gpu_written(ex->color[i].tex), tfr_note(&ex->color[i], stamp);
     if (ex->depth.image) vk_texture_gpu_written(ex->depth.tex), tfr_note(&ex->depth, stamp);
+    if (RT_V143 && ex->pass_ncolor == 1 && ex->color[0].image && ex->color[0].tex && nvn_frame_overlap()) {   // the grass map
+        const tex_t *t = ex->color[0].tex;
+        if (t->d.width == 128 && t->d.height == 128 && t->d.format == NVN_FORMAT_RGBA8 && t->pool &&
+            (t->pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_CACHED))
+            vk_exec_readback_tex(t);
+    }
 }
 
 VkCommandBuffer vk_exec_inline_begin(int *reopen) {
@@ -843,6 +849,37 @@ void vk_exec_readback(VkExec *ex, const VkMemSpan *d, uint64_t size) {
     n_parts++;
 }
 
+// TotK's grass system renders a 128x128 RGBA8 map of cut and trampled grass into a CPU-cached pool every frame, early in
+// it, and its CPU code reads the bytes next frame (cut blades, insects, the cut itself; vk_texture.c
+// vk_texture_write_back_small). With frame overlap the wait is for the previous frame, so the CPU got the map of the
+// frame before and cuts were missed or counted twice. After the pass the part copies the map into a staging buffer and
+// ends with a readback point; once the overlapped wait has reached it the staged rows go into the map's storage
+// (vk_sync.c vk_sync_readback_wait), so the CPU has the map of the frame it follows, and the CPU never waits on the GPU
+// for the copy.
+static const tex_t *tex_list[4];
+static int tex_n;
+void vk_exec_readback_tex(const tex_t *t) {
+    if (tex_n < 4) tex_list[tex_n++] = t;
+}
+static void tex_point(VkExec *ex) {
+    int n = tex_n, slot[4] = {0}, any = 0, rec = 0;
+    tex_n = 0;
+    if (!nvn_frame_overlap()) return;
+    for (int i = 0; i < n; i++)
+        if ((slot[i] = vk_texture_rb_record(ex->cb, tex_list[i]))) any = 1, rec += 3;
+    if (!any) return;
+    ex->recorded += rec;
+    ex->cb = vk_sync_split_readback();
+    for (int i = 0; i < n; i++)
+        if (slot[i]) vk_sync_readback_tex((uintptr_t)tex_list[i]->mem, (uint64_t)slot[i]);
+    part_start = ex->recorded;
+    part_t0 = kern_now_ns();
+    split_draws = 0;
+    ex->dirty = VK_EXEC_DIRTY_ALL;
+    vk_exec_draw_new_cb();
+    n_parts++;
+}
+
 static void walk(VkExec *ex, const op_hdr *h, int depth) {
     for (;;) {
         if (h->size < sizeof *h || (h->size & 7) || h->op >= OP_COUNT_)
@@ -921,6 +958,7 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
             break;
         default: rt_fatal("vk: op %s has no replay handler", nvn_op_name(h->op));
         }
+        if (tex_n && !ex->in_pass) tex_point(ex);
         if (split_draws >= split_n) maybe_split(ex);
         h = nvn_op_next(h);
     }
