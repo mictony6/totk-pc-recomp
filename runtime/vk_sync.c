@@ -18,6 +18,7 @@
 #include "host.h"
 #include "nvn_api.h"
 #include "vk.h"
+#include "vk_exec.h"
 #include "platform/platform.h"
 
 #define WEAK __attribute__((weak))
@@ -50,7 +51,10 @@ static int qhead, qn, qcap;
 // Readback points (vk_exec.c vk_exec_readback): a part that ends right after a GPU copy the CPU reads back signals the
 // next value of VkCtx.readback. rb_ring (st_lock) holds the newest points with the value of their submission.
 #define RB_RING 16
-typedef struct { uint64_t fence, value, tex_addr, tex_slot; } RbPoint;   // a render target the point's part copied for the CPU: its address and staging slot (vk_texture_rb_record)
+// tex_addr, tex_slot: a render target the point's part copied for the CPU, its address and staging slot
+// (vk_texture_rb_record). buf_slot: an optional point (vk_sync_readback_optional): not waited for, its staged buffers
+// (vk_exec.c stage_point) go to guest memory if it is reached by the wait.
+typedef struct { uint64_t fence, value, tex_addr, tex_slot, buf_slot; } RbPoint;
 static RbPoint rb_ring[RB_RING];
 static uint64_t rb_value;         // newest readback value handed out (sub_lock)
 
@@ -411,7 +415,7 @@ VkCommandBuffer vk_sync_split_readback(void) {
     uint64_t v = ++rb_value;
     VkCommandBuffer cb = split(v);
     plat_mutex_lock(&st_lock);
-    rb_ring[v % RB_RING] = (RbPoint){cur_fence, v, 0, 0};
+    rb_ring[v % RB_RING] = (RbPoint){cur_fence, v, 0, 0, 0};
     plat_mutex_unlock(&st_lock);
     return cb;
 }
@@ -424,29 +428,70 @@ void vk_sync_readback_tex(uint64_t addr, uint64_t slot) {
     plat_mutex_unlock(&st_lock);
 }
 
-// The newest readback point of the submissions with values in (lo, hi]: those are replayed in order, so it is the one
-// the CPU reads last. Points older than the ring are long done.
+static uint64_t rb_opt_seen, rb_opt_applied;   // game thread: optional points the waits found, and applied (perf log)
+
+// The point just made (vk_sync_split_readback) is optional: staging slot of vk_exec.c stage_point.
+void vk_sync_readback_optional(uint64_t slot) {
+    plat_mutex_lock(&st_lock);
+    rb_ring[rb_value % RB_RING].buf_slot = slot;
+    plat_mutex_unlock(&st_lock);
+}
+
+// The newest readback point of the submissions with values in (lo, hi] that is not optional: those are replayed in
+// order, so it is the one the CPU reads last. Points older than the ring are long done. Optional points there that the
+// GPU has reached by then hand their staged buffers to guest memory, oldest first.
 int vk_sync_readback_wait(uint64_t lo, uint64_t hi) {
     vk_sync_start();
     plat_mutex_lock(&st_lock);
-    int replayed = issued >= hi;
-    uint64_t v = 0;
-    for (int i = 0; i < RB_RING; i++)
-        if (rb_ring[i].fence > lo && rb_ring[i].fence <= hi && rb_ring[i].value > v) v = rb_ring[i].value;
+    int replayed = issued >= hi, nopt = 0;
+    uint64_t v = 0, opt_v[RB_RING];
+    for (int i = 0; i < RB_RING; i++) {
+        if (rb_ring[i].fence <= lo || rb_ring[i].fence > hi) continue;
+        if (rb_ring[i].buf_slot) opt_v[nopt++] = rb_ring[i].value;
+        else if (rb_ring[i].value > v) v = rb_ring[i].value;
+    }
     plat_mutex_unlock(&st_lock);
     if (!replayed) return 0;
-    if (!v) return 1;
     VkCtx *c = vk_ctx();
-    uint64_t p0 = perf_begin();
-    VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
-                              .pSemaphores = &c->readback, .pValues = &v};
-    VkResult r = vkWaitSemaphores(c->device, &wi, UINT64_MAX);
-    if (r != VK_SUCCESS) {
-        vk_device_fault_report(r);
-        rt_fatal("vk: vkWaitSemaphores on readback point %llu failed (%d; device lost?)", (unsigned long long)v, (int)r);
+    if (v) {
+        uint64_t p0 = perf_begin();
+        VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
+                                  .pSemaphores = &c->readback, .pValues = &v};
+        VkResult r = vkWaitSemaphores(c->device, &wi, UINT64_MAX);
+        if (r != VK_SUCCESS) {
+            vk_device_fault_report(r);
+            rt_fatal("vk: vkWaitSemaphores on readback point %llu failed (%d; device lost?)", (unsigned long long)v, (int)r);
+        }
+        perf_end(PERF_FENCE, p0);
+        perf_gpu_wait(p0);
     }
-    perf_end(PERF_FENCE, p0);
-    perf_gpu_wait(p0);
+    if (nopt) {
+        uint64_t reached = 0;
+        if (vkGetSemaphoreCounterValue(c->device, c->readback, &reached) != VK_SUCCESS) reached = 0;
+        for (int j = 1; j < nopt; j++)   // oldest first: a newer copy of the same buffer goes in last
+            for (int k = j; k > 0 && opt_v[k - 1] > opt_v[k]; k--) {
+                uint64_t t = opt_v[k];
+                opt_v[k] = opt_v[k - 1], opt_v[k - 1] = t;
+            }
+        for (int j = 0; j < nopt; j++) {
+            if (opt_v[j] > reached) break;
+            uint64_t slot = 0;
+            plat_mutex_lock(&st_lock);
+            RbPoint *p = &rb_ring[opt_v[j] % RB_RING];
+            if (p->value == opt_v[j]) slot = p->buf_slot, p->buf_slot = 0;
+            plat_mutex_unlock(&st_lock);
+            if (slot) {
+                rb_opt_applied++;
+                vk_exec_readback_apply(slot);
+            }
+        }
+        uint64_t before = rb_opt_seen;
+        rb_opt_seen += (uint64_t)nopt;
+        if ((rt_trace & RT_TRACE_PERF) && before / 1200 != rb_opt_seen / 1200)
+            rt_log("perf: optional readback points: %llu of %llu reached by the wait", (unsigned long long)rb_opt_applied,
+                   (unsigned long long)rb_opt_seen);
+    }
+    if (!v) return 1;
     for (int i = 0; i < RB_RING; i++) {   // the render targets those points copied go into their storage
         uint64_t a = 0, n = 0;
         plat_mutex_lock(&st_lock);

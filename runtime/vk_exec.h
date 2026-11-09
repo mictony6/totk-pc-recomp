@@ -120,6 +120,9 @@ void vk_exec_barrier(VkExec *ex);
 // After a GPU copy of size bytes into the CPU-visible span d, outside a pass: with frame overlap, a readback point.
 void vk_exec_readback(VkExec *ex, const VkMemSpan *d, uint64_t size);
 void vk_exec_readback_buf(uint64_t addr, uint64_t size);   // a buffer the CPU reads next frame: back at a readback point
+void vk_exec_readback_buf_staged(uint64_t addr, uint64_t size);   // the same at an optional point (vk_exec.c stage_point)
+void vk_exec_readback_apply(uint64_t slot);   // vk_sync.c: an optional point reached, its staged buffers into guest memory
+void vk_sync_readback_optional(uint64_t slot);   // vk_sync.c: the readback point just made is optional
 void vk_exec_readback_tex(const tex_t *t);   // a render target the CPU reads next frame: copied at a readback point after its pass
 // vk_texture.c (TOTK_TEX_ALIAS): commands that must run at the replay's current position. vk_exec_inline_begin returns
 // the command buffer being recorded after a full barrier (an open pass is ended; *reopen says so), or VK_NULL_HANDLE

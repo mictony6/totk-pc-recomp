@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "cfg.h"
+#include "fs.h"
 #include "host.h"
 #include "nvn_api.h"
 #include "nvn_hmap.h"
@@ -1024,18 +1025,21 @@ static uint64_t fs_spv_hash(const GfxShader *fs);
 // frame, so the CPU found the buffer of two frames before (the mirror's bytes reach guest memory only with the
 // end-of-submission write-back) and drew about half again as much: in a shrine GPU time went from 14 to 22 ms a frame,
 // and leaving the write-back of these buffers out with overlap off did the same. The buffers it writes go to
-// vk_exec_readback_buf, which copies them back after the dispatch and ends the part with a readback point.
+// vk_exec_readback_buf_staged, which copies them to a staging slot after the dispatch and ends the part with an optional
+// readback point: the CPU gets them if the GPU is past it at the wait, and does not wait for it.
 #define VK_READBACK_CS 0x8d15007aadc9628bull
 // In shrines a 23232-byte buffer (1.4.3: 0x1ba68e000, one copy, CPU-visible, mirrored) is written by a dozen shaders a
 // frame, and the CPU reads what this compute shader, about halfway through the frame, leaves in it for the next frame's
 // ambient lighting. With frame overlap it sometimes read the copy of the frame before and the indirect light of walls
 // and floors dipped for a frame (flicker). A readback point after any one of the other writers left the dips in;
-// after this one alone they were gone, as with overlap off.
+// after this one alone they were gone, as with overlap off; an optional point (vk_exec_readback_buf_staged) left them
+// in, so in a shrine (romfs.c romfs_in_dungeon) the point is waited for. It runs in the Depths too, writing the same
+// block, where waiting took about 2 ms a frame (61 -> 52 fps walking with DLAA): there its point is optional.
 #define VK_READBACK_CS_AMBIENT 0xec2dbdc463f171a9ull
-static int readback_cs;   // the dispatch being set up runs one of them (op_dispatch, op_dispatch_ind)
+static int readback_cs;   // the dispatch being set up runs VK_READBACK_CS (1) or VK_READBACK_CS_AMBIENT (2)
 static int readback_cs_is(const GfxShader *cs) {
     uint64_t h = fs_spv_hash(cs);
-    return h == VK_READBACK_CS || h == VK_READBACK_CS_AMBIENT;
+    return h == VK_READBACK_CS ? 1 : h == VK_READBACK_CS_AMBIENT ? 2 : 0;
 }
 // Small buffers a draw writes are results the CPU reads, and go to vk_exec_readback_buf as well. TotK's vertex shaders
 // write 64-byte records into rings of them (about 20 draws in a minute of play), and one ring hands an ability, while
@@ -1068,7 +1072,10 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
         if (bind_range(ex, b->addr - lead, b->size ? b->size + lead : 0, align, max, ubo ? VK_MUSE_UBO : VK_MUSE_SSBO,
                        written ? (int)mask : 0, &bi)) {
             if (written && bi.buffer != VK_NULL_HANDLE) note_written(ex, b->addr - lead, bi.range);
-            if (written && readback_cs && bi.buffer != VK_NULL_HANDLE) vk_exec_readback_buf(b->addr - lead, bi.range);
+            if (written && readback_cs && bi.buffer != VK_NULL_HANDLE) {
+                if (readback_cs == 2 && romfs_in_dungeon()) vk_exec_readback_buf(b->addr - lead, bi.range);
+                else vk_exec_readback_buf_staged(b->addr - lead, bi.range);
+            }
             if (written && st != NVN_STAGE_CS && bi.range <= VK_READBACK_DRAW_MAX && bi.buffer != VK_NULL_HANDLE)
                 vk_exec_readback_buf(b->addr - lead, bi.range);
             return bi;
