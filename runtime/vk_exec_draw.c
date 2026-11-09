@@ -1017,6 +1017,17 @@ static void wb_diag(int st, const GfxShaderRes *r, uint64_t addr, uint64_t size,
            (unsigned long long)size, mask, names[why]);
 }
 
+static uint64_t fs_spv_hash(const GfxShader *fs);
+// A compute shader whose output the CPU reads in the frame that follows (SPIR-V hash, as fs_spv_hash): in 1.4.3 TotK
+// writes a 5312-byte buffer each frame (two of them, alternating, in a CPU-visible pool) with three compute dispatches,
+// this one last, and its CPU sizes the next frame's rendering from it. With frame overlap the wait is for the previous
+// frame, so the CPU found the buffer of two frames before (the mirror's bytes reach guest memory only with the
+// end-of-submission write-back) and drew about half again as much: in a shrine GPU time went from 14 to 22 ms a frame,
+// and leaving the write-back of these buffers out with overlap off did the same. The buffers it writes go to
+// vk_exec_readback_buf, which copies them back after the dispatch and ends the part with a readback point.
+#define VK_READBACK_CS 0x8d15007aadc9628bull
+static int readback_cs;   // the dispatch being set up runs VK_READBACK_CS (op_dispatch)
+
 static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *r, int written) {
     if (!__atomic_load_n(&LIM.ubo_max, __ATOMIC_ACQUIRE)) limits_init();
     uint64_t max = LIM.sbo_max, align = LIM.sbo_align;
@@ -1040,6 +1051,7 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
         if (bind_range(ex, b->addr - lead, b->size ? b->size + lead : 0, align, max, ubo ? VK_MUSE_UBO : VK_MUSE_SSBO,
                        written ? (int)mask : 0, &bi)) {
             if (written && bi.buffer != VK_NULL_HANDLE) note_written(ex, b->addr - lead, bi.range);
+            if (written && readback_cs && bi.buffer != VK_NULL_HANDLE) vk_exec_readback_buf(b->addr - lead, bi.range);
             return bi;
         }
         if (b->addr) warn_once(W_SSBO_ALIGN, "storage buffer %#llx is not backed or not aligned: a zero buffer is bound",
@@ -3267,8 +3279,10 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     bind_pipeline(ex, VK_PIPELINE_BIND_POINT_COMPUTE, p);
     c0_dim[0] = (uint32_t)d->x, c0_dim[1] = (uint32_t)d->y, c0_dim[2] = (uint32_t)d->z;
     twin_dispatch = 1;
+    readback_cs = fs_spv_hash(cs) == VK_READBACK_CS;
     bind_resources(ex, info);
     twin_dispatch = 0;
+    readback_cs = 0;
     vkCmdDispatch(ex->cb, (uint32_t)d->x, (uint32_t)d->y, (uint32_t)d->z);
     ex->recorded++;
     if (vk_dump_armed) vk_dump_dispatch(ex, cs, p, info, d);
