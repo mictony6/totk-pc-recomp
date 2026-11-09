@@ -252,9 +252,9 @@ static struct {
     int jit_ok, jit_used, hold;  // jitter allowed this frame / a draw used it / frames left without it
     uint64_t holds;
     int pj;                      // the last draw took the jitter in its projection: its viewport is not moved
-    float pj_row[8];             // rows 3-4 as patched last, to tell a patched copy from a fresh one: row 3 alone
-                                 // takes only the horizontal jitter, which is 0 on one Halton phase, so on that phase a
-                                 // still camera would make every fresh copy match it and the jitter would stop
+    // pj_memo keeps rows 3-4 of each camera block as patched last, to tell a patched copy from a fresh one: row 3 alone
+    // takes only the horizontal jitter, which is 0 on one Halton phase, so on that phase a still camera would make every
+    // fresh copy match it and the jitter would stop
     uint64_t pj_gen, pj_addr;    // the snapshot generation and camera block last looked up
     uint32_t pj_frame;
     int pj_ok;                   // that lookup found the block in the snapshot
@@ -817,6 +817,21 @@ void vk_dlaa_viewport(VkExec *ex, VkViewport *v) {
     D.ux = D.jx, D.uy = D.jy, D.jit_used = 1;
 }
 
+// The rows 3-4 each camera block's copy was last patched to (a patched copy matches, a fresh one does not). A scene
+// can bind more than one block, and in turn: with Ultrahand the draws alternate between two, and a single memo took
+// the first block's already patched copy for a fresh one when its draws came back, so it was patched again and the
+// later draws got the jitter twice.
+static float *pj_memo(uint64_t addr) {
+    static struct { uint64_t addr; float row[8]; } t[8];
+    static unsigned next;
+    for (int i = 0; i < 8; i++)
+        if (t[i].addr == addr) return t[i].row;
+    unsigned i = next++ & 7;
+    memset(&t[i], 0, sizeof t[i]);
+    t[i].addr = addr;
+    return t[i].row;
+}
+
 void vk_dlaa_draw(VkExec *ex) {
     if (!dl_active() || D.ended) return;
     static int survey = -1;   // TOTK_DLAA_SURVEY=1 (test): what is drawn into the armed light target
@@ -862,13 +877,14 @@ void vk_dlaa_draw(VkExec *ex) {
             D.pj_gen = gen, D.pj_addr = D.cam_addr, D.pj_frame = D.jframe;
             float *cam = (float *)vk_usnap_host(D.cam_addr, CAM_BYTES, 4);
             D.pj_ok = cam != NULL;
-            if (cam && memcmp(cam + 12, D.pj_row, sizeof D.pj_row)) {   // a fresh copy: not patched yet
+            float *memo = cam ? pj_memo(D.cam_addr) : NULL;   // this block's rows as patched last
+            if (cam && memcmp(cam + 12, memo, 8 * sizeof(float))) {   // a fresh copy: not patched yet
                 float kx = 2.0f * D.jx / (float)z->width, ky = -2.0f * D.jy / (float)z->height;
                 for (int c = 0; c < 4; c++) {
                     cam[12 + c] += kx * cam[24 + c], cam[16 + c] += ky * cam[24 + c];   // view-projection, rows 3-6
                     cam[28 + c] += kx * cam[40 + c], cam[32 + c] += ky * cam[40 + c];   // projection, rows 7-10
                 }
-                memcpy(D.pj_row, cam + 12, sizeof D.pj_row);
+                memcpy(memo, cam + 12, 8 * sizeof(float));
             }
         }
         if (D.pj_ok) pj = 1, D.ux = D.jx, D.uy = D.jy, D.jit_used = 1;
