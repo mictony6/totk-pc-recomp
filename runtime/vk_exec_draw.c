@@ -1027,13 +1027,6 @@ static uint64_t fs_spv_hash(const GfxShader *fs);
 // vk_exec_readback_buf, which copies them back after the dispatch and ends the part with a readback point.
 #define VK_READBACK_CS 0x8d15007aadc9628bull
 static int readback_cs;   // the dispatch being set up runs VK_READBACK_CS (op_dispatch)
-// Small buffers a draw writes are results the CPU reads, and go to vk_exec_readback_buf as well. TotK's vertex shaders
-// write 64-byte records into rings of them (about 20 draws in a minute of play), and one ring hands an ability, while
-// Ultrahand or Recall is in use, a pointer to the object it works on: with frame overlap the CPU read a copy the GPU
-// had last written during an earlier use of the ability, followed the pointer to an object deleted since and crashed
-// in main+0x155ec, called from main+0x1bd01e0 (crashes within minutes of building with overlap, none without it, and
-// none in 20 minutes with overlap since these buffers come back at a readback point).
-#define VK_READBACK_DRAW_MAX 0x100
 
 static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *r, int written) {
     if (!__atomic_load_n(&LIM.ubo_max, __ATOMIC_ACQUIRE)) limits_init();
@@ -1059,8 +1052,6 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
                        written ? (int)mask : 0, &bi)) {
             if (written && bi.buffer != VK_NULL_HANDLE) note_written(ex, b->addr - lead, bi.range);
             if (written && readback_cs && bi.buffer != VK_NULL_HANDLE) vk_exec_readback_buf(b->addr - lead, bi.range);
-            if (written && st != NVN_STAGE_CS && bi.range <= VK_READBACK_DRAW_MAX && bi.buffer != VK_NULL_HANDLE)
-                vk_exec_readback_buf(b->addr - lead, bi.range);
             return bi;
         }
         if (b->addr) warn_once(W_SSBO_ALIGN, "storage buffer %#llx is not backed or not aligned: a zero buffer is bound",

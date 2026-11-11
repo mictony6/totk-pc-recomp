@@ -479,8 +479,7 @@ NVN_API(nvnQueueFenceSync) {
 // fence the previous frame's wait was for: the GPU finishes one frame while the next is replayed, one more frame in
 // flight as on PC. Laptop RTX 4060, 4K output, DLSS performance: 42.5 -> 53.8 fps; DLSS off 59.8 -> 70.9.
 // The bytes the frame copies back for the CPU (the ambient light terms, vk_exec.c vk_exec_readback; the grass map,
-// vk_exec_readback_tex; the buffer the next frame's rendering is sized from and the small results draws write, such as
-// the object an ability works on, vk_exec_readback_buf) are still waited
+// vk_exec_readback_tex; the buffer the next frame's rendering is sized from, vk_exec_readback_buf) are still waited
 // for: nvnSyncWait also waits for the readback points of the submissions after the previous fence. Off by default all
 // the same: the CPU also reads what shaders write into mirrored buffers (the 23 KiB block at 0x1b7c8e000 in shrines),
 // which reaches guest memory only with the end-of-submission write-back, so the game reads it a frame late at random and
