@@ -15,7 +15,7 @@
 // thread is in a long kernel call, is written as `tstall <tid> <ms into the window> <ms stopping> <rip>...` with the
 // chain where the thread stopped) and, after a present at least <ms> after the previous one, writes
 // that interval's samples (plus the 20 ms before) to <TOTK_PROFILE>.f<frame>: the profile format, one `stack 1` line per
-// sample, and `tstack <tid> <ms into the window> <rip>...` lines that keep the thread and the time. At most 64 dumps.
+// sample, and `tstack <tid> <ms into the window> <rip>...` lines that keep the thread and the time. The last 64 dumps stay.
 #include <windows.h>
 #include <psapi.h>
 #include <tlhelp32.h>
@@ -176,12 +176,18 @@ static void write_modules(FILE *f) {
 // The sampler, between ticks: the samples of the window the render thread asked for.
 static void slow_dump(void) {
     uint64_t lo = (uint64_t)dump_lo, hi = (uint64_t)dump_hi, frame = (uint64_t)dump_frame;
-    static int dumps;
+    static unsigned dumps;
+    static uint64_t kept[SLOW_DUMPS];   // frames of the files on disk; once all are used the oldest is deleted, so a long
+                                        // session that slows down ends with profiles of the slow part, not of its start
     char path[1100];
+    if (dumps >= SLOW_DUMPS) {
+        snprintf(path, sizeof path, "%s.f%llu", out_path, (unsigned long long)kept[dumps % SLOW_DUMPS]);
+        remove(path);
+    }
     snprintf(path, sizeof path, "%s.f%llu", out_path, (unsigned long long)frame);
-    FILE *f = dumps < SLOW_DUMPS ? fopen(path, "w") : NULL;
+    FILE *f = fopen(path, "w");
     if (f) {
-        dumps++;
+        kept[dumps++ % SLOW_DUMPS] = frame;
         fprintf(f, "totk-prof 1\nbase %llx\nperiod_us 1000\nframe %llu interval_ms %.1f\nmain %u render %u replay %u\n",
                 (unsigned long long)(uintptr_t)GetModuleHandleW(NULL), (unsigned long long)frame, (hi - lo) / 1e6 - 20,
                 main_tid, render_tid, replay_tid);
