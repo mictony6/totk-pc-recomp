@@ -1565,6 +1565,10 @@ void plat_mem_info(float *used_mb, float *total_mb, float *proc_mb) {
     if (f) fclose(f);
 }
 
+void plat_memory_census(char *out, size_t cap) {   // only the Windows build breaks its memory down by allocation
+    snprintf(out, cap, "no allocation census on this platform");
+}
+
 void plat_process_memory(uint64_t *resident, uint64_t *private_bytes) {
     *resident = *private_bytes = 0;
     FILE *f = fopen("/proc/self/status", "r");

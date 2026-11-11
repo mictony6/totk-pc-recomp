@@ -408,6 +408,9 @@ void plat_commit_info(double *proc_mb, double *used_mb, double *limit_mb);
 // This process's memory in bytes: resident (the working set) and private (Windows: committed private bytes; Linux: the
 // resident anonymous pages). 0 when unknown.
 void plat_process_memory(uint64_t *resident, uint64_t *private_bytes);
+// Writes one line saying where this process's committed memory is: totals by kind (private, mapped, image) and the
+// largest allocations with their committed and resident sizes. For finding what fills RAM in a long session.
+void plat_memory_census(char *out, size_t cap);
 
 // ---- child processes: a program with stdin and stdout piped to us (stderr discarded), no console window.
 typedef struct PlatChild PlatChild;

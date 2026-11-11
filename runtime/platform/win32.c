@@ -1538,6 +1538,57 @@ void plat_process_memory(uint64_t *resident, uint64_t *private_bytes) {
         *resident = pm.WorkingSetSize, *private_bytes = pm.PrivateUsage;
 }
 
+typedef struct { uintptr_t base; uint64_t commit; DWORD kind; } CensusAlloc;
+
+void plat_memory_census(char *out, size_t cap) {
+    uint64_t total[3] = {0, 0, 0};                         // private, mapped, image
+    CensusAlloc *a = NULL;
+    size_t n = 0, room = 0;
+    MEMORY_BASIC_INFORMATION mbi;
+    for (uintptr_t p = 0; VirtualQuery((void *)p, &mbi, sizeof mbi) == sizeof mbi;
+         p = (uintptr_t)mbi.BaseAddress + mbi.RegionSize) {
+        if (mbi.State != MEM_COMMIT) continue;
+        int k = mbi.Type == MEM_PRIVATE ? 0 : mbi.Type == MEM_MAPPED ? 1 : 2;
+        total[k] += mbi.RegionSize;
+        if (n && a[n - 1].base == (uintptr_t)mbi.AllocationBase) { a[n - 1].commit += mbi.RegionSize; continue; }
+        if (n == room) {
+            room = room ? room * 2 : 4096;
+            CensusAlloc *g = realloc(a, room * sizeof *a);
+            if (!g) break;
+            a = g;
+        }
+        a[n++] = (CensusAlloc){(uintptr_t)mbi.AllocationBase, mbi.RegionSize, mbi.Type};
+    }
+    int top[6], nt = 0;                                    // indexes of the largest allocations, biggest first
+    for (size_t i = 0; i < n; i++) {
+        int at = nt;
+        while (at > 0 && a[top[at - 1]].commit < a[i].commit) at--;
+        if (at >= 6) continue;
+        if (nt < 6) nt++;
+        for (int j = nt - 1; j > at; j--) top[j] = top[j - 1];
+        top[at] = (int)i;
+    }
+    int w = snprintf(out, cap, "committed: private %.0f MiB, mapped %.0f MiB, image %.0f MiB in %zu allocations; largest:",
+                     total[0] / 1048576.0, total[1] / 1048576.0, total[2] / 1048576.0, n);
+    for (int t = 0; t < nt && w > 0 && (size_t)w < cap; t++) {
+        const CensusAlloc *c = &a[top[t]];
+        uint64_t res = 0, pages = c->commit >> 12;         // resident pages of this allocation, asked in chunks
+        for (uint64_t at = 0; at < pages; at += 16384) {
+            uint64_t m = pages - at < 16384 ? pages - at : 16384;
+            PSAPI_WORKING_SET_EX_INFORMATION *ws = malloc(m * sizeof *ws);
+            if (!ws) break;
+            for (uint64_t i = 0; i < m; i++) ws[i].VirtualAddress = (void *)(c->base + ((at + i) << 12));
+            if (K32QueryWorkingSetEx(GetCurrentProcess(), ws, (DWORD)(m * sizeof *ws)))
+                for (uint64_t i = 0; i < m; i++) res += ws[i].VirtualAttributes.Valid;
+            free(ws);
+        }
+        w += snprintf(out + w, cap - w, " %s%p %.0f MiB (%.0f resident, %s)", t ? "; " : "", (void *)c->base,
+                      c->commit / 1048576.0, res * 4096.0 / 1048576.0,
+                      c->kind == MEM_PRIVATE ? "private" : c->kind == MEM_MAPPED ? "mapped" : "image");
+    }
+    free(a);
+}
+
 // ---- child processes
 
 struct PlatChild {

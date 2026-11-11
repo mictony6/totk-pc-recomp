@@ -11,6 +11,7 @@
 #include "host.h"
 #include "perfmon.h"
 #include "prof.h"
+#include "vk.h"
 #include "platform/platform.h"
 
 volatile uint32_t prof_render_tid, prof_main_tid, prof_replay_tid;
@@ -134,6 +135,26 @@ static void ft_report(uint64_t now, const char *tag) {
                    w->wait[PERF_TEX] / 1e6, w->wait[PERF_ASTC] / 1e6, w->replay / 1e6,
                    (w->wait[PERF_FENCE] + w->wait[PERF_DRAIN]) / 1e6, w->wait[PERF_PACE] / 1e6);
         }
+    }
+    {   // memory next to the frame times, so a log of a session that slowed down shows what grew: pools the GPU mirror
+        // walks on every submit, video memory in use, this process's private bytes
+        VkMemStats ms;
+        uint64_t used = 0, budget = 0;
+        int exact = 0;
+        double proc = -1, sys_used = 0, sys_limit = 0;
+        vk_mem_stats(&ms);
+        int have_vram = vk_mem_vram(&used, &budget, &exact);
+        plat_commit_info(&proc, &sys_used, &sys_limit);
+        float ram_used = -1, ram_total = -1, working_set = -1;   // resident bytes: private far above this means paging
+        plat_mem_info(&ram_used, &ram_total, &working_set);
+        rt_log("frametime:   memory: mirror pools %llu imported, %llu physical, %llu virtual; vram %.0f of %.0f MiB%s; process private %.0f MiB, resident %.0f MiB; RAM in use %.0f of %.0f MiB; system commit %.0f of %.0f MiB",
+               (unsigned long long)ms.imported_pools, (unsigned long long)ms.physical_pools,
+               (unsigned long long)ms.virtual_pools, have_vram ? used / 1048576.0 : -1.0,
+               have_vram ? budget / 1048576.0 : -1.0, exact ? "" : " (own allocations)", proc, (double)working_set,
+               (double)ram_used, (double)ram_total, sys_used, sys_limit);
+        char census[1024];
+        plat_memory_census(census, sizeof census);
+        rt_log("frametime:   memory: %s", census);
     }
     memset(&ft, 0, sizeof ft);
     ft.t0 = now;
