@@ -706,133 +706,6 @@ static uint32_t *spirv_dual_source(const uint32_t *w, uint64_t n, uint64_t *out_
     return o;
 }
 
-// Ground mist (Depths and caves): TOTK's half-resolution ray-marched mist slab (pass 146 of a Depths frame in a
-// TOTK_DUMP). Its vertex shader (SPIR-V hash FOG_VS) lifts a mesh to the height field's height times vp_c13[9].x; its
-// fragment shader (VK_FOG_FS) takes the slab's thickness from the same field times fp_c13[9].x, adds opacity per
-// marching step by fp_c13[0].z, gains the final alpha by fp_c13[4].z and marches 5 to 15 steps along a ray (SMin with 15).
-// fog_patch makes each of those four read a multiplier from the support buffer instead (render scale slots
-// VK_FOG_SLOT+0..3, written by vk_exec_draw.c support_fill from TOTK_FOG_THICK, _EXT, _ALPHA and _STEPS), so the menu
-// can change them. Each multiplier goes right after the shader loads its constant, so the uniform data the game
-// writes stays as it is. The vertex shader gets the thickness too: with the fragment shader's alone, the slab grows
-// past the mesh and is cut off flat at its top. With all four at the game's values the shaders stay unpatched: the
-// patched fragment shader cost about 0.8 ms a frame while walking in the Depths (RTX 4060 laptop, 1440p DLAA), so the
-// settings apply after a restart (cfg.c) and cost nothing until one is changed.
-#define FOG_VS 0xec0b0d6b71d3cdc4ull
-enum { SPV_OP_NAME = 5, SPV_OP_LOAD = 61, SPV_OP_ACCESS_CHAIN = 65, SPV_OP_FMUL = 133, SPV_OP_EXT_INST = 12,
-       SPV_OP_CONVERT_F_TO_S = 110, SPV_OP_FDIV = 136, SPV_SC_UNIFORM = 2, GLSL_FLOOR = 8, GLSL_SMIN = 39, FOG_MAXSTEPS = 15, SB_RENDER_SCALE = 5 };
-
-static const struct { int vec, comp, slot; } fog_fs_site[3] = {{9, 0, 0}, {0, 2, 1}, {4, 2, 2}},   // thickness, extinction, alpha
-                                              fog_vs_site[1] = {{9, 0, 0}};
-
-// The patched copy of shader w (n words, *out_n its new size) when it is the mist's vertex or fragment shader; NULL
-// otherwise, or when its layout is not the expected one.
-static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
-    if (!w || n < 6) return NULL;
-    if (cfg_int("TOTK_FOG_THICK") == 100 && cfg_int("TOTK_FOG_EXT") == 100 && cfg_int("TOTK_FOG_ALPHA") == 100 &&
-        cfg_int("TOTK_FOG_STEPS") == FOG_MAXSTEPS)
-        return NULL;
-    uint64_t h = 0xcbf29ce484222325ull;
-    for (const uint8_t *b = (const uint8_t *)w, *e = b + n * 4; b < e; b++) h = (h ^ *b) * 0x100000001b3ull;
-    int vs = h == FOG_VS;
-    if (!vs && h != VK_FOG_FS) return NULL;
-    const char *name = vs ? "vp_c13" : "fp_c13";
-    int nsite = vs ? 1 : 3;
-    const typeof(fog_fs_site[0]) *sites = vs ? fog_vs_site : fog_fs_site;
-    uint32_t bound = w[3], cb = 0, sup = 0, flt = 0, sint = 0, pf = 0, nsites = 0, nsmin = 0;
-    uint32_t *val = calloc(bound, sizeof *val), *site = calloc(bound, sizeof *site);   // constant values; chain id -> site + 1
-    // The step count is floor(ray length) clamped to 5..15: cvt_src maps the id of an OpConvertFToS to its operand, flr_src
-    // the id of a GLSL Floor to its operand, and flr_site marks the Floor that feeds the clamp (nfloor of them).
-    uint32_t *cvt_src = calloc(bound, sizeof *cvt_src), *flr_src = calloc(bound, sizeof *flr_src);
-    uint8_t *flr_site = calloc(bound, 1);
-    uint32_t *o = NULL, nfloor = 0;
-    if (!val || !site || !cvt_src || !flr_src || !flr_site) goto out;
-    for (uint64_t i = 5; i < n;) {
-        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
-        if (!len || i + len > n) goto out;
-        if (op == SPV_OP_NAME && len >= 3 && !strncmp((const char *)&w[i + 2], name, 7)) cb = w[i + 1];
-        else if (op == SPV_OP_NAME && len >= 5 && !strncmp((const char *)&w[i + 2], "support_buffer", 15)) sup = w[i + 1];
-        else if (op == SPV_OP_TYPE_FLOAT && len == 3 && w[i + 2] == 32 && !flt) flt = w[i + 1];
-        else if (op == SPV_OP_TYPE_INT && len == 4 && w[i + 2] == 32 && w[i + 3] == 1 && !sint) sint = w[i + 1];
-        else if (op == SPV_OP_TYPE_POINTER && len == 4 && w[i + 2] == SPV_SC_UNIFORM && w[i + 3] == flt && flt && !pf) pf = w[i + 1];
-        else if (op == SPV_OP_CONSTANT && len == 4 && w[i + 2] < bound) val[w[i + 2]] = w[i + 3];
-        i += len;
-    }
-    if (!cb || !sup || !flt || !sint || !pf) goto out;
-    for (uint64_t i = 5; i < n;) {
-        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
-        if (op == SPV_OP_ACCESS_CHAIN && len == 7 && w[i + 3] == cb && w[i + 2] < bound && w[i + 4] < bound &&
-            w[i + 5] < bound && w[i + 6] < bound && val[w[i + 4]] == 0)
-            for (int k = 0; k < nsite; k++)
-                if (val[w[i + 5]] == (uint32_t)sites[k].vec && val[w[i + 6]] == (uint32_t)sites[k].comp) site[w[i + 2]] = k + 1;
-        if (op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]]) nsites++;
-        if (!vs && op == SPV_OP_CONVERT_F_TO_S && len == 4 && w[i + 2] < bound && w[i + 3] < bound) cvt_src[w[i + 2]] = w[i + 3];
-        if (!vs && op == SPV_OP_EXT_INST && len == 6 && w[i + 4] == GLSL_FLOOR && w[i + 2] < bound && w[i + 5] < bound)
-            flr_src[w[i + 2]] = w[i + 5];
-        if (!vs && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
-            val[w[i + 6]] == FOG_MAXSTEPS) {
-            nsmin++;
-            uint32_t x = w[i + 5] < bound ? cvt_src[w[i + 5]] : 0;   // the Floor behind the clamp's int
-            if (x && x < bound && flr_src[x] && !flr_site[x]) flr_site[x] = 1, nfloor++;
-        }
-        i += len;
-    }
-    if (!nsites || (!vs && !(nsmin && nfloor))) goto out;   // a layout other than the one this was written for
-    o = malloc((n + 32 + 24 * (uint64_t)(nsites + nsmin + nfloor)) * 4);
-    if (!o) goto out;
-    uint32_t cmem = bound, cslot[4] = {bound + 1, bound + 2, bound + 3, bound + 4}, cf15 = bound + 5, next = bound + 6;
-    uint64_t m = 5;
-    int declared = 0;
-    memcpy(o, w, 5 * 4);
-    for (uint64_t i = 5; i < n;) {
-        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
-        if (op == SPV_OP_FUNCTION && !declared) {   // the int constants close the declarations
-            o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = sint, o[m++] = cmem, o[m++] = SB_RENDER_SCALE;
-            for (int k = 0; k < 4; k++)
-                o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = sint, o[m++] = cslot[k], o[m++] = VK_FOG_SLOT + k;
-            o[m++] = 4u << 16 | SPV_OP_CONSTANT, o[m++] = flt, o[m++] = cf15, o[m++] = 0x41700000;   // 15.0f
-            declared = 1;
-        }
-        int is_load = op == SPV_OP_LOAD && len >= 4 && w[i + 3] < bound && site[w[i + 3]];
-        int is_smin = !vs && op == SPV_OP_EXT_INST && len == 7 && w[i + 4] == GLSL_SMIN && w[i + 1] == sint && w[i + 6] < bound &&
-                      val[w[i + 6]] == FOG_MAXSTEPS;
-        uint32_t pid = next, mid = next + 1;
-        int is_floor = !vs && op == SPV_OP_EXT_INST && len == 6 && w[i + 4] == GLSL_FLOOR && w[i + 2] < bound && flr_site[w[i + 2]];
-        if (is_floor) {   // the ray length is scaled by steps / 15 before the floor, so the count follows the setting
-            next += 4;
-            o[m++] = 6u << 16 | SPV_OP_ACCESS_CHAIN, o[m++] = pf, o[m++] = pid, o[m++] = sup, o[m++] = cmem, o[m++] = cslot[3];
-            o[m++] = 4u << 16 | SPV_OP_LOAD, o[m++] = flt, o[m++] = mid, o[m++] = pid;
-            o[m++] = 5u << 16 | SPV_OP_FDIV, o[m++] = flt, o[m++] = pid + 2, o[m++] = mid, o[m++] = cf15;
-            o[m++] = 5u << 16 | SPV_OP_FMUL, o[m++] = flt, o[m++] = pid + 3, o[m++] = w[i + 5], o[m++] = pid + 2;
-        }
-        if (is_smin) {   // the step limit: the float slot, as an int, in place of the constant 15
-            next += 3;
-            o[m++] = 6u << 16 | SPV_OP_ACCESS_CHAIN, o[m++] = pf, o[m++] = pid, o[m++] = sup, o[m++] = cmem, o[m++] = cslot[3];
-            o[m++] = 4u << 16 | SPV_OP_LOAD, o[m++] = flt, o[m++] = mid, o[m++] = pid;
-            o[m++] = 4u << 16 | SPV_OP_CONVERT_F_TO_S, o[m++] = sint, o[m++] = next - 1, o[m++] = mid;
-        }
-        memcpy(o + m, w + i, len * 4);
-        if (is_smin) o[m + 6] = next - 1;
-        if (is_floor) o[m + 5] = pid + 3;
-        if (is_load) {
-            uint32_t tmp = next + 2, k = sites[site[w[i + 3]] - 1].slot;
-            next += 3;
-            o[m + 2] = tmp;   // the load defines tmp; the original id becomes the scaled value
-            m += len;
-            o[m++] = 6u << 16 | SPV_OP_ACCESS_CHAIN, o[m++] = pf, o[m++] = pid, o[m++] = sup, o[m++] = cmem, o[m++] = cslot[k];
-            o[m++] = 4u << 16 | SPV_OP_LOAD, o[m++] = flt, o[m++] = mid, o[m++] = pid;
-            o[m++] = 5u << 16 | SPV_OP_FMUL, o[m++] = w[i + 1], o[m++] = w[i + 2], o[m++] = tmp, o[m++] = mid;
-        } else {
-            m += len;
-        }
-        i += len;
-    }
-    o[3] = next;
-    *out_n = m;
-out:
-    free(val), free(site), free(cvt_src), free(flr_src), free(flr_site);
-    return o;
-}
-
 // Adds an Output variable for each Location of `missing` (type and width from io) to a module, declared in the entry
 // point interface and initialised as Maxwell reads an unwritten output: (0, 0, 0, 1), the w as the bits of 1.0f whatever
 // the type (attribute memory is untyped); fewer than 4 components are all zero. Existing scalar, vector and pointer types
@@ -1471,10 +1344,7 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
     VkShaderModule vm = VK_NULL_HANDLE, fm = VK_NULL_HANDLE;
     uint64_t vw, fw;
     const uint32_t *vcode = gfx_shader_spirv(s->vs, &vw);
-    uint32_t *vpatched = NULL, *fpatched = NULL, *fogp = NULL;
-    uint64_t vn2 = 0;
-    uint32_t *vfog = fog_patch(vcode, vw, &vn2);
-    if (vfog) vcode = vfog, vw = vn2;
+    uint32_t *vpatched = NULL, *fpatched = NULL;
     if (l->set1) {   // independent layouts: outputs from the vertex shader's union, not from this fragment shader
         GfxShaderIo fin[32];
         uint32_t missing = vs_union_missing(s, fin);
@@ -1501,8 +1371,6 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
             else vcode = vpatched, vw = n2;
         }
         const uint32_t *fcode = gfx_shader_spirv(s->fs, &fw);
-        uint64_t fn2 = 0;
-        if ((fogp = fog_patch(fcode, fw, &fn2))) fcode = fogp, fw = fn2;
         if (k->dsb) {
             uint64_t n2 = 0;
             uint32_t *d = spirv_dual_source(fcode, fw, &n2);
@@ -1518,7 +1386,7 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
         if (fcode) fm = make_module(fcode, fw);
     }
     vm = make_module(vcode, vw);
-    free(vpatched), free(fpatched), free(fogp), free(vfog);
+    free(vpatched), free(fpatched);
     VkPipeline pipe = VK_NULL_HANDLE;
     if (!vm || (s->fs && !fm)) goto out;
 
@@ -1700,13 +1568,9 @@ static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPi
         uint64_t vw, sw, n2 = 0;
         const uint32_t *vcode = gfx_shader_spirv(s->vs, &vw), *scode = vcode;
         sw = vw;
-        uint32_t *vfog = fog_patch(vcode, vw, &n2);
-        if (vfog) vcode = vfog, vw = n2;
         if (pk->missing && (patched = spirv_add_outputs(vcode, vw, pk->missing, pk->fin, &n2))) vcode = patched, vw = n2;
         else if (pk->missing) LOG_ONCE("vk_pipeline: cannot add missing vertex outputs (mask %#x)", pk->missing);
-        m = make_module(vcode, vw);
-        free(vfog);
-        if (!m) goto out;
+        if (!(m = make_module(vcode, vw))) goto out;
         st.stage = VK_SHADER_STAGE_VERTEX_BIT, st.module = m;
         pin_subgroup32(&st, &rq, scode, sw);
         pi.stageCount = 1, pi.pStages = &st, pi.pViewportState = &vp, pi.pRasterizationState = &rs;
@@ -1716,14 +1580,13 @@ static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPi
             uint64_t fw, sw, n2 = 0;
             const uint32_t *fcode = gfx_shader_spirv(s->fs, &fw), *scode = fcode;
             sw = fw;
-            uint32_t *d = NULL, *fogp = fog_patch(fcode, fw, &n2);
-            if (fogp) fcode = fogp, fw = n2;
+            uint32_t *d = NULL;
             if (k->dsb && fcode) {
                 if ((d = spirv_dual_source(fcode, fw, &n2))) fcode = d, fw = n2;
                 else LOG_ONCE("vk_pipeline: SRC1 blend factors but the fragment shader writes no colour output 1");
             }
             patched = fcode ? spirv_set(fcode, fw, 1) : NULL;
-            free(d), free(fogp);
+            free(d);
             if (!patched || !(m = make_module(patched, fw))) goto out;
             st.stage = VK_SHADER_STAGE_FRAGMENT_BIT, st.module = m;
             pin_subgroup32(&st, &rq, scode, sw);

@@ -35,7 +35,6 @@
 #define MAX_DESC 1024
 #define CHUNK_BYTES (4u << 20)
 #define ZERO_BYTES 65536u
-#define SUP_IN 7   // support_in: viewport width and height, point size, the four ground mist multipliers
 #define SUPPORT_BYTES 1456u   // Ryujinx SupportBuffer (std140): alpha_test, is_bgra[8], viewport_inverse, viewport_size, ...;
                               // 1408 pcss and 1424 shadow_spread (translator patches 0010, 0011), 1440 HDR (support_fill)
 #define NVN_STAGE_VS 0
@@ -110,7 +109,7 @@ typedef struct {
     uint64_t vgen;
     int vb_valid;
     uint8_t support[SUPPORT_BYTES];      // last support buffer and where it lives
-    float sup_in[SUP_IN];                // the support_fill arguments it was filled from
+    float sup_in[3];                     // the support_fill arguments it was filled from
     VkBuffer sup_buf;
     VkDeviceSize sup_off;
     int sup_valid;
@@ -1809,26 +1808,11 @@ static VkDescriptorSet alloc_set(VkExec *ex, VkDescriptorSetLayout layout) {
     return VK_NULL_HANDLE;
 }
 
-// Ground mist settings (TOTK_FOG_THICK, _EXT and _ALPHA in percent, _STEPS the most marching steps; live): the draw that
-// runs the mist shader (VK_FOG_FS, found in prepare_draw) gets them in its support buffer, where fog_patch's shaders read
-// them. Zero for every other draw.
-static _Thread_local int fog_cur;
-
-static void fog_live(float out[4]) {
-    out[0] = (float)cfg_int("TOTK_FOG_THICK") / 100.0f;
-    out[1] = (float)cfg_int("TOTK_FOG_EXT") / 100.0f;
-    out[2] = (float)cfg_int("TOTK_FOG_ALPHA") / 100.0f;
-    out[3] = (float)cfg_int("TOTK_FOG_STEPS");
-}
-
-// What support_fill reads: viewport size, point size, then the mist multipliers (SUP_IN floats in all).
-static void support_in(const VkExec *ex, float in[SUP_IN]) {
+static void support_in(const VkExec *ex, float in[3]) {   // what support_fill reads: viewport size, point size
     float k = ex->pass_scale > 1 ? (float)ex->pass_scale : 1.0f;
     in[0] = ex->in_pass && ex->has_vp ? ex->vp[0][2] * k : (float)ex->pass_w;
     in[1] = ex->in_pass && ex->has_vp ? ex->vp[0][3] * k : (float)ex->pass_h;
     in[2] = ex->point_size > 0 ? ex->point_size : 1.0f;
-    if (fog_cur) fog_live(in + 3);
-    else memset(in + 3, 0, 4 * sizeof(float));
 }
 
 // TOTK_PCSS (percent, 0 = off): the pcss field of the support buffer, which translator patch 0010 reads in every
@@ -1866,7 +1850,7 @@ static const float *shadow_spread_params(void) {
     return p;
 }
 
-static void support_fill(uint8_t *b, float w, float h, float point_size, const float fog[4]) {
+static void support_fill(uint8_t *b, float w, float h, float point_size) {
     memset(b, 0, SUPPORT_BYTES);
     float inv[4] = {w > 0 ? 2.0f / w : 0, h > 0 ? 2.0f / h : 0, 0, 0}, size[4] = {w, h, 0, 0};
     memcpy(b + 144, inv, 16);
@@ -1876,8 +1860,6 @@ static void support_fill(uint8_t *b, float w, float h, float point_size, const f
     memcpy(b + 1408, pcss_params(), 16);   // pcss (translator patch 0010): soft sun shadows in the cascade compares
     memcpy(b + 1424, shadow_spread_params(), 16);    // shadow_spread (translator patch 0011): sun shadow filter width
     for (int i = 0; i < 73; i++) memcpy(b + 192 + 16 * i, &one, 4);   // render scale 1: the host renders at guest size
-    if (fog[0] > 0)   // the ground mist draw: its multipliers, in slots its shaders read (vk_pipeline.c fog_patch)
-        for (int i = 0; i < 4; i++) memcpy(b + 192 + 16 * (VK_FOG_SLOT + i), &fog[i], 4);
     if (vk_hdr_wanted()) {   // read by the HDR tonemap only (shaders/hdr_tonemap.frag), which declares it past the translator's
         float hdr[4];
         vk_hdr_support(hdr);
@@ -2065,15 +2047,13 @@ static int bind_sig(const VkExec *ex, const VkPipeInfo *info) {
     PUT(vk_mem_gen() + vk_usnap_gen() + ex->drop_n);   // all only grow in a submission; drop_n: copies a chunk passed
     for (int i = 0; i < ex->nfbl && i < 9; i++) PUT((uintptr_t)ex->fbl_img[i]);
     if (l->sup) {
-        float in[SUP_IN];
+        float in[3];
         support_in(ex, in);
-        uint64_t a, f1, f2;
+        uint64_t a;
         uint32_t ps;
-        memcpy(&a, in, 8), memcpy(&ps, &in[2], 4), memcpy(&f1, &in[3], 8), memcpy(&f2, &in[5], 8);
+        memcpy(&a, in, 8), memcpy(&ps, &in[2], 4);
         PUT(a);
         PUT(ps);
-        PUT(f1);
-        PUT(f2);
     }
     if (l->c0) PUT(D->c0_binst);
     for (int i = 0; i < l->np; i++) PUT(ubo_ptr(ex, l->p[i].st, l->p[i].res));
@@ -2179,11 +2159,11 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
         VkDescSlot *o = &d[nd];
         int st = nvn_stage_of(b->stage), kind = 0;   // kind: 0 buffer, 1 image, 2 texel buffer view
         if (b->kind == VK_PIPE_SUPPORT) {
-            float in[SUP_IN];
+            float in[3];
             support_in(ex, in);
             if (!D->B.sup_valid || memcmp(in, D->B.sup_in, sizeof in)) {   // support_fill reads only these
                 uint8_t tmp[SUPPORT_BYTES];
-                support_fill(tmp, in[0], in[1], in[2], in + 3);
+                support_fill(tmp, in[0], in[1], in[2]);
                 memcpy(D->B.sup_in, in, sizeof in);
                 if (!D->B.sup_valid || memcmp(tmp, D->B.support, SUPPORT_BYTES)) {   // a new buffer only when the contents changed
                     VkBuffer sb;
@@ -2515,10 +2495,9 @@ static struct { uint64_t h; int n; } rep[REP_MAX];
 static int rep_n;
 static _Thread_local int rep_cur;
 
-// Every draw asks twice (fs_hidden and the mist shader check). The hash is kept on the shader: a table of 1024 entries
-// searched in a line, as this was, ran out in a long session, and from then on every draw of a shader that did not fit
-// hashed its whole SPIR-V again (about 70% of the draw replay's time in the profile of a session that had slowed to 30
-// fps, gone after a restart).
+// Every draw asks (fs_hidden). The hash is kept on the shader: a table of 1024 entries searched in a line, as this was,
+// ran out in a long session, and from then on every draw of a shader that did not fit hashed its whole SPIR-V again
+// (about 70% of the draw replay's time in the profile of a session that had slowed to 30 fps, gone after a restart).
 static uint64_t fs_spv_hash(const GfxShader *fs) { return gfx_shader_spirv_hash(fs); }
 
 // TOTK_DRAW_HIDE=<from>-<to>:<hash>[,<hash>...][;<from>-<to>:...]: draws whose fragment shader's SPIR-V hash (FNV-1a 64 of
@@ -2718,7 +2697,6 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     vk_dlaa_draw(ex);
     rep_cur = 0;
     hide_cur = fs_hidden(s.fs);
-    fog_cur = s.fs && fs_spv_hash(s.fs) == VK_FOG_FS;   // before bind_resources reads the support inputs
     int mo = ex->chunked && vk_dlaa_available();
     if (mo) plat_mutex_lock(&mo_lock);
     vk_mvsurvey_draw(ex);
@@ -2730,6 +2708,8 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     if (fbl & ex->fb_dirty) feedback_barrier(ex);
     feedback_written(ex, &s);
     bind_vertex_buffers(ex);
+    rep_cur = 0;
+    hide_cur = fs_hidden(s.fs);
     if (vk_dump_armed) vk_dump_draw(ex, &s, p, info);
     if (vk_hdr_track) vk_hdr_draw(ex, info);
     vk_exec_oq_draw(ex);
@@ -2797,7 +2777,7 @@ static struct {
     uint32_t ndesc, cdesc;
     NVNbufferRange vin[17];      // the vertex ranges MQ.vb[nvb - 1] was resolved from, under vk_mem_gen vgen
     uint64_t vgen;
-    float sup_in[SUP_IN];        // the support buffer last filled for the list and its inputs
+    float sup_in[3];             // the support buffer last filled for the list and its inputs
     VkDescriptorBufferInfo sup;
     float par_in[4];             // the fragment shader's parameters last written and their inputs
     VkDescriptorBufferInfo par;
@@ -2897,12 +2877,12 @@ static int mo_desc(VkExec *ex, const VkPipeInfo *info, MoDraw *q) {
         VkDescSlot *o = &d[nd];
         int st = nvn_stage_of(b->stage);
         if (b->kind == VK_PIPE_SUPPORT) {
-            float in[SUP_IN];
+            float in[3];
             support_in(ex, in);
             if (!MQ.sup.buffer || memcmp(in, MQ.sup_in, sizeof in)) {
                 VkBuffer sb;
                 VkDeviceSize so;
-                support_fill(scratch(ex, SUPPORT_BYTES, &sb, &so), in[0], in[1], in[2], in + 3);
+                support_fill(scratch(ex, SUPPORT_BYTES, &sb, &so), in[0], in[1], in[2]);
                 MQ.sup = (VkDescriptorBufferInfo){sb, so, SUPPORT_BYTES};
                 memcpy(MQ.sup_in, in, sizeof in);
             }

@@ -568,12 +568,6 @@ int vk_replay_async(void);                 // TOTK_REPLAY_ASYNC (default 0): sub
 void vk_program_release(const prog_t *p);  // GfxBackend.program_release: vk_pipeline.c; weak no-op in vk_backend.c
 void vk_backend_shutdown(void);            // presents, vk_sync_shutdown, vk_mem_shutdown, vk_shutdown in that order
 
-// Ground mist (vk_pipeline.c fog_patch, vk_exec_draw.c support_fill): the fragment shader with this SPIR-V hash draws the
-// Depths' and caves' mist. Its four live multipliers (thickness, opacity gain per step, final alpha, most marching
-// steps) are read from the render scale slots VK_FOG_SLOT.. of the support buffer, which no shader of its draw uses.
-#define VK_FOG_FS 0xf4cd1e37caa0ba45ull
-#define VK_FOG_SLOT 69
-
 // ---- pipelines (vk_pipeline.c)
 // Binding model (comment block at the top of vk_pipeline.c): one descriptor set, set 0, per pipeline. Binding 0 is
 // Ryujinx's support buffer (a uniform buffer every stage shares); the vertex stage keeps its own bindings, the fragment

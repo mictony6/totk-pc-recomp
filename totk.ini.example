@@ -274,19 +274,6 @@
 # in percent (0 to 300; 100 is the default, 0 turns it off). The same from every view, so it does not flicker.
 # ao_micro = 100
 
-# Ground mist (caves and the Depths): the low mist that parts around Link. Each setting is a percent of the game's own
-# value and applies after a restart. At the game's values (100, 100, 100, 15) the mist shader stays as the game's,
-# which is faster in the Depths.
-# fog_thick: how tall and wide the mist grows (50 to 300). Higher spreads it over open floors and lifts it higher.
-# fog_thick = 100
-# fog_ext: how quickly it closes up along your line of sight (50 to 400).
-# fog_ext = 100
-# fog_alpha: how opaque it is where it is (50 to 400).
-# fog_alpha = 100
-# fog_steps: the most steps it is sampled in along each line of sight (5 to 64; 15 is the game's). More smooths the
-# banding and rough edges of thick mist at a small GPU cost.
-# fog_steps = 15
-
 # Point light shimmer (1.4.3): game or average. The game lights its point lights (lightroots, Brightbloom seeds,
 # lamps) at half resolution from a copy of the surface normals that keeps one pixel in four, so lit ground and walls
 # shimmer when the camera moves; average gives those lights the average of the four instead. Changes apply at once.

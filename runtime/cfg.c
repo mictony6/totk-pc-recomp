@@ -41,7 +41,7 @@ static const char *const known[] = {
     "DLAA_OBJMV", "DLAA_PROJJIT", "DLAA_SURVEY", "DLAA_TIMES", "DLSS", "DLSS_CHAR_MASK", "DLSS_PRESET", "DLSS_REACTIVE", "DRAW_LOG", "DUMP", "DUMP_BUF", "DUMP_DIR",
     "DUMP_FROM", "DUMP_LOG", "DUMP_ON", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_TEX_LAYER", "DYNAMIC_RES", "DYN_DELTA", "EFFECTS_UPSAMPLE", "EXEFS",
     "FEEDBACK", "FIXED_RES_PATCH", "FIX_C0", "FIX_ZERO", "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES", "FLIGHT_SPIKE_MS", "FLIGHT_THUMBS",
-    "FLUSH_SPAN", "FOG_ALPHA", "FOG_EXT", "FOG_STEPS", "FOG_THICK", "FOV", "FOV_PATCH", "FPS60", "FPS_LIMIT", "FRAME_QUEUE", "FREEZE_IDLE",
+    "FLUSH_SPAN", "FOV", "FOV_PATCH", "FPS60", "FPS_LIMIT", "FRAME_QUEUE", "FREEZE_IDLE",
     "FREE_CORES", "FULLSCREEN", "FXAA", "GPL", "GPL_DRAW_BUILD", "GPU", "GPU_INDEX", "GPU_NAME", "GRASS_DIST", "GRASS_DIST_PATCH", "HDR",
     "HDR_GAME_NITS", "HDR_HUE", "HDR_PEAK_NITS", "HDR_UI_NITS", "HIGHFPS_FIX", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "KSPIN_US", "LANG",
     "LIB_PREBUILD", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LIGHT_NORMALS", "LOCALE", "LOD_GUARD", "LSTICK_DEADZONE", "MEMORY",
@@ -93,7 +93,6 @@ static const struct { const char *key, *section; } sections[] = {
     {"EFFECTS_UPSAMPLE", "display"},
     {"SHADOW_BLUR", "display"},
     {"UNDERWATER_UPSAMPLE", "display"},
-    {"FOG_THICK", "display"}, {"FOG_EXT", "display"}, {"FOG_ALPHA", "display"}, {"FOG_STEPS", "display"},
     {"MODS_DIR", "mods"}, {"MODS_ORDER", "mods"}, {"MODS_DISABLED", "mods"}, {"MODS_REBUILD", "mods"},
     {"TEX_HEAP_EXTRA_MB", "mods"},
     {"MENU_LANG", "language"}, {"LANG", "language"}, {"OPERATION_MODE", "language"},
@@ -139,10 +138,6 @@ static const CfgMeta metas[] = {
     {"AO_FOLIAGE", "minimal", "minimal|full", LIVE}, {"AO_CHAR", "25", "0..100", LIVE},
     {"AO_CREASE", "0", "0..100", LIVE}, {"AO_TILT", "18", "0..90", LIVE}, {"AO_MICRO", "100", "0..300", LIVE}, {"AO_GRASS", "100", "0..100", LIVE}, {"AO_LIGHT", "100", "0..100", LIVE},
     {"LIGHT_NORMALS", "game", "game|average", LIVE},
-    // the ground mist of caves and the Depths (vk_pipeline.c fog_patch, vk_exec_draw.c support_fill); after a restart: at the
-    // game's values the mist shaders stay unpatched, which saves GPU time in the Depths
-    {"FOG_THICK", "100", "50..300", RESTART}, {"FOG_EXT", "100", "50..400", RESTART}, {"FOG_ALPHA", "100", "50..400", RESTART},
-    {"FOG_STEPS", "15", "5..64", RESTART},
     // the blur of the shadow mask (vk_shadowblur.c); applies at once
     {"SHADOW_BLUR", "game", "game|depth", LIVE},
     // half-resolution effects composite (vk_upsample.c): on at start (the shader is swapped as shaders load)

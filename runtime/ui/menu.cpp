@@ -580,13 +580,6 @@ static void row_ao(void) {
     opt_slider("TOTK_AO_MICRO", UI_MENU_AO_MICRO, 0, 300, UI_MENU_AO_MICRO_DESC, 10, "%.0f %%");
 }
 
-static void row_ground_mist(void) {
-    opt_slider("TOTK_FOG_THICK", UI_MENU_FOG_THICK, 50, 300, UI_MENU_FOG_THICK_DESC, 10, "%.0f %%");
-    opt_slider("TOTK_FOG_EXT", UI_MENU_FOG_EXT, 50, 400, UI_MENU_FOG_EXT_DESC, 10, "%.0f %%");
-    opt_slider("TOTK_FOG_ALPHA", UI_MENU_FOG_ALPHA, 50, 400, UI_MENU_FOG_ALPHA_DESC, 10, "%.0f %%");
-    opt_slider("TOTK_FOG_STEPS", UI_MENU_FOG_STEPS, 5, 64, UI_MENU_FOG_STEPS_DESC, 1, "%.0f");
-}
-
 static void row_light_normals(void) {
     static const char *const vals[] = {"game", "average"};
     const char *names[] = {menu_text(UI_MENU_LIGHT_NORMALS_GAME), menu_text(UI_MENU_LIGHT_NORMALS_AVERAGE)};
@@ -744,7 +737,6 @@ static void tab_screen(float scale) {
     row_light_normals();
     row_underwater();
     row_shadow_blur();
-    row_ground_mist();
     opt_toggle("TOTK_DLAA", UI_MENU_DLAA, UI_MENU_DLAA_DESC);
     static const UiTextId dlss[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
                                     UI_MENU_DLSS_PERFORMANCE, UI_MENU_DLSS_ULTRA};
