@@ -18,9 +18,8 @@
 # highfps_fix = 1
 # Frame overlap (1.4.3): the GPU finishes one frame while the next is prepared, instead of the game waiting for it
 # every frame. More frames per second (about 10 more at 4K output on a laptop RTX 4060, most with DLSS) for one frame
-# more of input delay. Off by default: the game reads some GPU results a frame late at random, and indirect light
-# flickers in places (shrines). Changes apply at once.
-# frame_overlap = 0
+# more of input delay. Changes apply at once.
+# frame_overlap = 1
 
 [performance]
 # The keys of this section and of [diagnostics] are for testing and troubleshooting, and take effect at the next start.

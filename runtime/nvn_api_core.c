@@ -478,52 +478,30 @@ NVN_API(nvnQueueFenceSync) {
 // 9 ms a frame at 4K with DLSS), and the GPU then idled through the next replay. With the setting that wait is for the
 // fence the previous frame's wait was for: the GPU finishes one frame while the next is replayed, one more frame in
 // flight as on PC. Laptop RTX 4060, 4K output, DLSS performance: 42.5 -> 53.8 fps; DLSS off 59.8 -> 70.9.
-// The bytes the frame copies back for the CPU (the ambient light terms, vk_exec.c vk_exec_readback) are still waited
-// for: nvnSyncWait also waits for the readback points of the submissions after the previous fence. Off by default all
-// the same: the CPU also reads what shaders write into mirrored buffers (the 23 KiB block at 0x1b7c8e000 in shrines),
-// which reaches guest memory only with the end-of-submission write-back, so the game reads it a frame late at random and
-// indirect light dips in creases. Waiting for it, or for the previous frame before each replay, left no gain at 1440p.
-int nvn_frame_overlap(void) { return RT_V143 && cfg_bool("TOTK_FRAME_OVERLAP"); }
 static uint64_t frame_overlap_fence(const Cpu *c, uint64_t fence) {
     static uint64_t prev;   // the fence the last frame-pacing wait was for (that wait's thread only)
     if (!RT_V143 || c->x[30] != 0x70002db99cull) return fence;
     uint64_t p = prev;
     prev = fence;
-    return p && p < fence && nvn_frame_overlap() ? p : fence;
-}
-
-// 2: fence was already done, 1: reached within timeout, 0: not reached
-static int sync_wait(const GfxBackend *b, uint64_t fence, uint64_t timeout) {
-    if (b->fence_done() >= fence) { b->cpu_synced(fence); return 2; }
-    int ok;
-    {
-        NVN_BLOCKING();
-        ok = b->fence_wait(fence, timeout);
-    }
-    if (ok) b->cpu_synced(fence);
-    return ok;
+    return p && p < fence && cfg_bool("TOTK_FRAME_OVERLAP") ? p : fence;
 }
 
 // NVNsyncWaitResult nvnSyncWait(const NVNsync *s, uint64_t timeout_ns): a sync never fenced reports a timeout at once;
-// a fenced one is released only after the back end completed that fence value (or an earlier one and the readback
-// points up to it, frame_overlap_fence)
+// a fenced one is released only after the back end completed that fence value (or an earlier one, frame_overlap_fence)
 NVN_API(nvnSyncWait) {
     const sync_t *s = arg_p(c, 0);
     uint64_t timeout = arg_x(c, 1);
     if (!s->fenced) { ret_x(c, NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED); return; }
     const GfxBackend *b = gfx_backend();
     uint64_t fence = frame_overlap_fence(c, s->fence);
-    int r = sync_wait(b, fence, timeout);
-    if (r && fence < s->fence) {
-        int rb;
-        {
-            NVN_BLOCKING();
-            rb = b->readback_wait(fence, s->fence);
-        }
-        if (!rb) r = sync_wait(b, s->fence, timeout);   // the submissions there are not replayed yet: the whole wait
+    if (b->fence_done() >= fence) { b->cpu_synced(fence); ret_x(c, NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED); return; }
+    int ok;
+    {
+        NVN_BLOCKING();
+        ok = b->fence_wait(fence, timeout);
     }
-    ret_x(c, r == 2 ? NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED
-             : r  ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED);
+    if (ok) b->cpu_synced(fence);
+    ret_x(c, ok ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED);
 }
 // void nvnEventBuilderSetDefaults(NVNeventBuilder *b)
 NVN_API(nvnEventBuilderSetDefaults) { memset(arg_p(c, 0), 0, sizeof(ev_builder_t)); }

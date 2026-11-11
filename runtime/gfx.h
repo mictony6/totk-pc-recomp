@@ -140,9 +140,6 @@ typedef struct {
     // The CPU waited for fence: small render targets written by work up to it go to their storage (vk_texture.c
     // vk_texture_write_back_small).
     void (*cpu_synced)(uint64_t fence);
-    // Frame overlap: waits until the GPU copies the CPU reads back (vk_exec.c vk_exec_readback) of the submissions with
-    // values in (lo, hi] are in guest memory. 0 when a submission there is not replayed yet: the caller waits for hi.
-    int (*readback_wait)(uint64_t lo, uint64_t hi);
 } GfxBackend;
 extern const GfxBackend gfx_null_backend, gfx_vulkan_backend;
 const GfxBackend *gfx_backend(void);                       // TOTK_GPU=null|vulkan (default vulkan)

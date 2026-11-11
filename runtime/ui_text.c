@@ -224,7 +224,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_FRAME_OVERLAP] = "Frame overlap",
     [UI_MENU_FRAME_OVERLAP_DESC] = "Lets the GPU finish one frame while the next is prepared, instead of waiting for it every "
                                    "frame: more frames per second (about 10 more at 4K), most with DLSS, for one frame more of "
-                                   "input delay. Can make indirect light flicker in places (shrines). Game version 1.4.3.",
+                                   "input delay. Game version 1.4.3.",
     [UI_MENU_GAME_LANG] = "Game language", [UI_MENU_GAME_LANG_DESC] = "Language of the game's text and voices.",
     [UI_MENU_GAME_LANG_AUTO] = "Automatic",
     [UI_MENU_OPERATION_MODE] = "Console mode",
@@ -675,7 +675,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_FRAME_OVERLAP] = "Перекрытие кадров",
     [UI_MENU_FRAME_OVERLAP_DESC] = "GPU дорисовывает один кадр, пока готовится следующий, вместо ожидания каждого кадра: "
                                    "больше кадров в секунду (около 10 в 4K), особенно с DLSS, ценой задержки ввода на один "
-                                   "кадр. Может вызывать мерцание непрямого освещения (святилища). Версия игры 1.4.3.",
+                                   "кадр. Версия игры 1.4.3.",
     [UI_MENU_GAME_LANG] = "Язык игры", [UI_MENU_GAME_LANG_DESC] = "Язык текста и озвучки игры.",
     [UI_MENU_GAME_LANG_AUTO] = "Автоматически",
     [UI_MENU_OPERATION_MODE] = "Режим консоли",
@@ -1006,8 +1006,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_FRAME_OVERLAP] = "Sobreposição de quadros",
     [UI_MENU_FRAME_OVERLAP_DESC] = "A GPU termina um quadro enquanto o próximo é preparado, em vez de esperar por ele a cada "
                                    "quadro: mais quadros por segundo (cerca de 10 a mais em 4K), sobretudo com DLSS, com um "
-                                   "quadro a mais de atraso de entrada. Pode fazer a luz indireta piscar em alguns lugares "
-                                   "(santuários). Versão 1.4.3 do jogo.",
+                                   "quadro a mais de atraso de entrada. Versão 1.4.3 do jogo.",
     [UI_MENU_GAME_LANG] = "Idioma do jogo", [UI_MENU_GAME_LANG_DESC] = "Idioma dos textos e das vozes do jogo.",
     [UI_MENU_GAME_LANG_AUTO] = "Automático",
     [UI_MENU_OPERATION_MODE] = "Modo do console",
@@ -1535,7 +1534,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                                  "以及帧率高于 60 时一直半透明或不可见的物体。",
     [UI_MENU_FRAME_OVERLAP] = "帧重叠",
     [UI_MENU_FRAME_OVERLAP_DESC] = "让 GPU 在准备下一帧的同时完成当前帧，而不是每帧都等待它：帧率更高（4K 下约多 10 帧），"
-                                   "开启 DLSS 时最明显，代价是多一帧输入延迟。可能导致部分场景（神庙）的间接光照闪烁。仅限游戏版本 1.4.3。",
+                                   "开启 DLSS 时最明显，代价是多一帧输入延迟。仅限游戏版本 1.4.3。",
     [UI_MENU_GAME_LANG] = "游戏语言",
     [UI_MENU_GAME_LANG_DESC] = "游戏文本和语音的语言。",
     [UI_MENU_GAME_LANG_AUTO] = "自动",

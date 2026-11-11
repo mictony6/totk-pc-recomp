@@ -1709,25 +1709,6 @@ void vk_mem_gpu_wrote_shader(const VkMemSpan *sp, uint64_t size, unsigned mask) 
     gpu_wrote(sp, size, mask, 1, __builtin_return_address(0));
 }
 
-// A readback point (vk_exec.c vk_exec_readback): the CPU reads these bytes before the submission ends, so they go back
-// now as well as with the end-of-submission write-back, which copies the same bytes again.
-int vk_mem_write_back_now(VkCommandBuffer cb, const VkMemSpan *sp, uint64_t size) {
-    PoolRec *r = sp->pool;
-    if (!r || shadow_on) return -1;   // device memory, or shadow storage the CPU does not read
-    int rec = 1;
-    if (r->mstate == MS_ON && sp->buffer == r->mbuf) {
-        mbarrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
-                 VK_ACCESS_2_TRANSFER_READ_BIT);
-        VkBufferCopy bc = {sp->offset, sp->offset, size};
-        vkCmdCopyBuffer(cb, r->mbuf, r->buf, 1, &bc);
-        rec += 2;
-    }
-    mbarrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
-             VK_PIPELINE_STAGE_2_HOST_BIT | VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-             VK_ACCESS_2_HOST_READ_BIT | VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
-    return rec;
-}
-
 void nvn_pool_flushed(const pool_t *p, uint64_t off, uint64_t size) {
     if (!vk_mirror_on || !size || !p->mem) return;
     plat_inc64(&m_flush_calls);
