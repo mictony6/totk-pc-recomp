@@ -880,37 +880,6 @@ static void tex_point(VkExec *ex) {
     n_parts++;
 }
 
-// Storage buffers a compute shader wrote that the CPU reads before the next frame's wait (vk_exec_draw.c
-// VK_READBACK_CS): with frame overlap, after the dispatch they go to guest memory at once and the part ends with a
-// readback point. The copy is plain, not the write-back merge: the shader writes these buffers whole. The
-// end-of-submission write-back copies them again.
-#define BUF_MAX (64u << 10)
-static struct { uint64_t addr, size; } buf_list[4];
-static int buf_n;
-void vk_exec_readback_buf(uint64_t addr, uint64_t size) {
-    if (buf_n < 4 && size <= BUF_MAX && nvn_frame_overlap()) buf_list[buf_n].addr = addr, buf_list[buf_n++].size = size;
-}
-static void buf_point(VkExec *ex) {
-    int n = buf_n, rec = 0;
-    buf_n = 0;
-    for (int i = 0; i < n; i++) {
-        VkMemSpan d;
-        if (!vk_mem_resolve(buf_list[i].addr, buf_list[i].size, &d)) continue;
-        VK_MEM_PICK(d);   // the mirror the shader wrote
-        int k = vk_mem_write_back_now(ex->cb, &d, buf_list[i].size);
-        if (k > 0) rec += k;
-    }
-    if (!rec) return;
-    ex->recorded += rec;
-    ex->cb = vk_sync_split_readback();
-    part_start = ex->recorded;
-    part_t0 = kern_now_ns();
-    split_draws = 0;
-    ex->dirty = VK_EXEC_DIRTY_ALL;
-    vk_exec_draw_new_cb();
-    n_parts++;
-}
-
 static void walk(VkExec *ex, const op_hdr *h, int depth) {
     for (;;) {
         if (h->size < sizeof *h || (h->size & 7) || h->op >= OP_COUNT_)
@@ -990,7 +959,6 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
         default: rt_fatal("vk: op %s has no replay handler", nvn_op_name(h->op));
         }
         if (tex_n && !ex->in_pass) tex_point(ex);
-        if (buf_n && !ex->in_pass) buf_point(ex);
         if (split_draws >= split_n) maybe_split(ex);
         h = nvn_op_next(h);
     }
