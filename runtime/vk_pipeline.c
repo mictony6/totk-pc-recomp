@@ -695,9 +695,11 @@ static uint32_t *spirv_dual_source(const uint32_t *w, uint64_t n, uint64_t *out_
 // marching step by fp_c13[0].z, gains the final alpha by fp_c13[4].z and marches 5 to 15 steps along a ray (SMin with 15).
 // fog_patch makes each of those four read a multiplier from the support buffer instead (render scale slots
 // VK_FOG_SLOT+0..3, written by vk_exec_draw.c support_fill from TOTK_FOG_THICK, _EXT, _ALPHA and _STEPS), so the menu
-// changes them at once. Each multiplier goes right after the shader loads its constant, so the uniform data the game
+// can change them. Each multiplier goes right after the shader loads its constant, so the uniform data the game
 // writes stays as it is. The vertex shader gets the thickness too: with the fragment shader's alone, the slab grows
-// past the mesh and is cut off flat at its top.
+// past the mesh and is cut off flat at its top. With all four at the game's values the shaders stay unpatched: the
+// patched fragment shader cost about 0.8 ms a frame while walking in the Depths (RTX 4060 laptop, 1440p DLAA), so the
+// settings apply after a restart (cfg.c) and cost nothing until one is changed.
 #define FOG_VS 0xec0b0d6b71d3cdc4ull
 enum { SPV_OP_NAME = 5, SPV_OP_LOAD = 61, SPV_OP_ACCESS_CHAIN = 65, SPV_OP_FMUL = 133, SPV_OP_EXT_INST = 12,
        SPV_OP_CONVERT_F_TO_S = 110, SPV_OP_FDIV = 136, SPV_SC_UNIFORM = 2, GLSL_FLOOR = 8, GLSL_SMIN = 39, FOG_MAXSTEPS = 15, SB_RENDER_SCALE = 5 };
@@ -709,6 +711,9 @@ static const struct { int vec, comp, slot; } fog_fs_site[3] = {{9, 0, 0}, {0, 2,
 // otherwise, or when its layout is not the expected one.
 static uint32_t *fog_patch(const uint32_t *w, uint64_t n, uint64_t *out_n) {
     if (!w || n < 6) return NULL;
+    if (cfg_int("TOTK_FOG_THICK") == 100 && cfg_int("TOTK_FOG_EXT") == 100 && cfg_int("TOTK_FOG_ALPHA") == 100 &&
+        cfg_int("TOTK_FOG_STEPS") == FOG_MAXSTEPS)
+        return NULL;
     uint64_t h = 0xcbf29ce484222325ull;
     for (const uint8_t *b = (const uint8_t *)w, *e = b + n * 4; b < e; b++) h = (h ^ *b) * 0x100000001b3ull;
     int vs = h == FOG_VS;

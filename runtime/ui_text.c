@@ -162,14 +162,14 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_BLUR_DEPTH] = "Depth-aware",
     [UI_MENU_FOG_THICK] = "Ground mist height",
     [UI_MENU_FOG_THICK_DESC] = "How tall and how wide the mist in caves and the Depths grows. 100 % is the game's; more "
-                               "spreads it over open floors and lifts it higher. Applies at once.",
+                               "spreads it over open floors and lifts it higher. Applies after a restart.",
     [UI_MENU_FOG_EXT] = "Ground mist density",
-    [UI_MENU_FOG_EXT_DESC] = "How quickly the mist closes up along your line of sight. 100 % is the game's. Applies at once.",
+    [UI_MENU_FOG_EXT_DESC] = "How quickly the mist closes up along your line of sight. 100 % is the game's. Applies after a restart.",
     [UI_MENU_FOG_ALPHA] = "Ground mist opacity",
-    [UI_MENU_FOG_ALPHA_DESC] = "How opaque the mist is where it is. 100 % is the game's. Applies at once.",
+    [UI_MENU_FOG_ALPHA_DESC] = "How opaque the mist is where it is. 100 % is the game's. Applies after a restart.",
     [UI_MENU_FOG_STEPS] = "Ground mist smoothness",
     [UI_MENU_FOG_STEPS_DESC] = "The most steps the mist is sampled in along each line of sight. 15 is the game's; more "
-                               "smooths the banding and rough edges of thick mist at a small GPU cost. Applies at once.",
+                               "smooths the banding and rough edges of thick mist at a small GPU cost. Applies after a restart.",
     [UI_MENU_UNDERWATER] = "Shallow water",
     [UI_MENU_UNDERWATER_DESC] = "What shallow water and floating things show through the surface is drawn at half "
                                 "resolution. Smooth scales it up to full resolution with one extra pass; Game keeps "
@@ -613,14 +613,14 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_BLUR_DEPTH] = "С учётом глубины",
     [UI_MENU_FOG_THICK] = "Высота наземного тумана",
     [UI_MENU_FOG_THICK_DESC] = "Насколько высоким и широким становится туман в пещерах и Глубинах. 100 % — как в игре; "
-                               "больше — туман разливается по открытому полу и поднимается выше. Действует сразу.",
+                               "больше — туман разливается по открытому полу и поднимается выше. Действует после перезапуска.",
     [UI_MENU_FOG_EXT] = "Плотность наземного тумана",
-    [UI_MENU_FOG_EXT_DESC] = "Как быстро туман смыкается вдоль луча зрения. 100 % — как в игре. Действует сразу.",
+    [UI_MENU_FOG_EXT_DESC] = "Как быстро туман смыкается вдоль луча зрения. 100 % — как в игре. Действует после перезапуска.",
     [UI_MENU_FOG_ALPHA] = "Непрозрачность наземного тумана",
-    [UI_MENU_FOG_ALPHA_DESC] = "Насколько непрозрачен туман там, где он есть. 100 % — как в игре. Действует сразу.",
+    [UI_MENU_FOG_ALPHA_DESC] = "Насколько непрозрачен туман там, где он есть. 100 % — как в игре. Действует после перезапуска.",
     [UI_MENU_FOG_STEPS] = "Гладкость наземного тумана",
     [UI_MENU_FOG_STEPS_DESC] = "Наибольшее число шагов выборки тумана вдоль луча зрения. 15 — как в игре; больше "
-                               "сглаживает полосы и неровные края густого тумана за небольшую цену по GPU. Действует сразу.",
+                               "сглаживает полосы и неровные края густого тумана за небольшую цену по GPU. Действует после перезапуска.",
     [UI_MENU_UNDERWATER] = "Мелкая вода",
     [UI_MENU_UNDERWATER_DESC] = "То, что видно сквозь мелкую воду, игра рисует в половинном разрешении. Сглаженно: "
                                 "увеличение до полного разрешения одним дополнительным проходом; как в игре: без "
@@ -1368,15 +1368,15 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_BLUR_DEPTH] = "Com profundidade",
     [UI_MENU_FOG_THICK] = "Altura da névoa do chão",
     [UI_MENU_FOG_THICK_DESC] = "Quão alta e larga fica a névoa nas cavernas e nas Profundezas. 100 % é o do jogo; mais "
-                               "espalha a névoa pelo chão aberto e a eleva. Vale na hora.",
+                               "espalha a névoa pelo chão aberto e a eleva. Vale após reiniciar.",
     [UI_MENU_FOG_EXT] = "Densidade da névoa do chão",
-    [UI_MENU_FOG_EXT_DESC] = "Com que rapidez a névoa se fecha ao longo da linha de visão. 100 % é o do jogo. Vale na hora.",
+    [UI_MENU_FOG_EXT_DESC] = "Com que rapidez a névoa se fecha ao longo da linha de visão. 100 % é o do jogo. Vale após reiniciar.",
     [UI_MENU_FOG_ALPHA] = "Opacidade da névoa do chão",
-    [UI_MENU_FOG_ALPHA_DESC] = "Quão opaca é a névoa onde ela existe. 100 % é o do jogo. Vale na hora.",
+    [UI_MENU_FOG_ALPHA_DESC] = "Quão opaca é a névoa onde ela existe. 100 % é o do jogo. Vale após reiniciar.",
     [UI_MENU_FOG_STEPS] = "Suavidade da névoa do chão",
     [UI_MENU_FOG_STEPS_DESC] = "O máximo de passos em que a névoa é amostrada ao longo da linha de visão. 15 é o do jogo; "
                                "mais suaviza as faixas e as bordas ásperas da névoa espessa, com um pequeno custo de GPU. "
-                               "Vale na hora.",
+                               "Vale após reiniciar.",
     [UI_MENU_UNDERWATER] = "Água rasa",
     [UI_MENU_UNDERWATER_DESC] = "O que se vê através da água rasa é desenhado na metade da resolução. Suave amplia "
                                 "para a resolução completa com uma passagem extra; Do jogo mantém o visual do jogo.",
@@ -1958,13 +1958,13 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_BLUR_DESC] = "游戏模糊阴影时不考虑深度，使前方物体旁的阴影背景上留下一条亮带。深度感知会让模糊止于这些边缘。“游戏”保留原始效果。立即生效。",
     [UI_MENU_SHADOW_BLUR_DEPTH] = "深度感知",
     [UI_MENU_FOG_THICK] = "地面雾气高度",
-    [UI_MENU_FOG_THICK_DESC] = "洞穴和地底的雾气能长到多高、铺得多宽。100 % 为游戏原样；调高会让雾气铺满开阔的地面并升得更高。立即生效。",
+    [UI_MENU_FOG_THICK_DESC] = "洞穴和地底的雾气能长到多高、铺得多宽。100 % 为游戏原样；调高会让雾气铺满开阔的地面并升得更高。重启后生效。",
     [UI_MENU_FOG_EXT] = "地面雾气浓度",
-    [UI_MENU_FOG_EXT_DESC] = "雾气沿视线合拢的速度。100 % 为游戏原样。立即生效。",
+    [UI_MENU_FOG_EXT_DESC] = "雾气沿视线合拢的速度。100 % 为游戏原样。重启后生效。",
     [UI_MENU_FOG_ALPHA] = "地面雾气不透明度",
-    [UI_MENU_FOG_ALPHA_DESC] = "有雾气的地方有多不透明。100 % 为游戏原样。立即生效。",
+    [UI_MENU_FOG_ALPHA_DESC] = "有雾气的地方有多不透明。100 % 为游戏原样。重启后生效。",
     [UI_MENU_FOG_STEPS] = "地面雾气平滑度",
-    [UI_MENU_FOG_STEPS_DESC] = "沿每条视线对雾气采样的最大步数。15 为游戏原样；调高可减轻浓雾的分层和粗糙边缘，GPU 开销很小。立即生效。",
+    [UI_MENU_FOG_STEPS_DESC] = "沿每条视线对雾气采样的最大步数。15 为游戏原样；调高可减轻浓雾的分层和粗糙边缘，GPU 开销很小。重启后生效。",
     [UI_MENU_UNDERWATER] = "浅水",
     [UI_MENU_UNDERWATER_DESC] = "透过浅水看到的景物以一半分辨率绘制。平滑以一次额外的渲染放大到全分辨率；游戏保持游戏原样。",
     [UI_MENU_CONTACT_SHADOWS] = "接触阴影",
