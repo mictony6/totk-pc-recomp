@@ -225,8 +225,7 @@
 # ao_micro = 100
 
 # Ground mist (caves and the Depths): the low mist that parts around Link. Each setting is a percent of the game's own
-# value and applies after a restart. At the game's values (100, 100, 100, 15) the mist shader stays as the game's,
-# which is faster in the Depths.
+# value and applies at once, in the menu or here.
 # fog_thick: how tall and wide the mist grows (50 to 300). Higher spreads it over open floors and lifts it higher.
 # fog_thick = 100
 # fog_ext: how quickly it closes up along your line of sight (50 to 400).

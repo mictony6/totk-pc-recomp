@@ -30,7 +30,6 @@ int romfs_owns(const char *path);                          // path is on the mou
 int romfs_handle(uint64_t h);                              // h is a RomFS file handle
 uint32_t romfs_mount(const char *name);                    // nn::fs::MountRom; a second name is fatal
 uint32_t romfs_open(uint64_t *out, const char *path, int mode);
-int romfs_in_dungeon(void);   // the stage loaded last is a shrine or another dungeon (TotK world parameters it read)
 uint32_t romfs_read(uint64_t *out, uint64_t h, int64_t offset, void *buffer, uint64_t size);
 uint32_t romfs_size(int64_t *out, uint64_t h);
 void romfs_close(uint64_t h);

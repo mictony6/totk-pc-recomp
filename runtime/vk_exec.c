@@ -913,92 +913,6 @@ static void buf_point(VkExec *ex) {
     n_parts++;
 }
 
-// Storage buffers a compute shader wrote that the CPU reads next frame and can do without for a frame (vk_exec_draw.c
-// VK_READBACK_CS, the buffer TotK sizes its next frame from): waiting for them as for buf_point held the CPU until the
-// GPU was about 60% into the previous frame, and while walking in the Depths, where an older copy costs the GPU little,
-// that wait took 55 fps where the wait-free build of 11-04 made 61. After the dispatch the part copies them into a host
-// staging slot and ends with an optional readback point (vk_sync.c vk_sync_readback_optional): the overlapped wait does
-// not wait for it, and if the GPU is past it by then, the staged bytes go into guest memory (vk_exec_readback_apply),
-// so the CPU gets them as with buf_point whenever the GPU keeps up; otherwise it keeps the copy it has.
-#define RBS_N 16
-static struct {
-    VkBuffer buf;
-    VmaAllocation alloc;
-    uint8_t *map;
-    uint64_t cap;
-    int n;
-    uint64_t addr[4], size[4];
-} rbs[RBS_N];
-static unsigned rbs_next;
-static struct { uint64_t addr, size; } stage_list[4];
-static int stage_n;
-void vk_exec_readback_buf_staged(uint64_t addr, uint64_t size) {
-    for (int i = 0; i < stage_n; i++)
-        if (stage_list[i].addr == addr && stage_list[i].size == size) return;
-    if (stage_n < 4 && size <= BUF_MAX && nvn_frame_overlap()) stage_list[stage_n].addr = addr, stage_list[stage_n++].size = size;
-}
-static void stage_point(VkExec *ex) {
-    int n = stage_n;
-    stage_n = 0;
-    unsigned s = rbs_next % RBS_N;
-    uint64_t need = 0;
-    for (int i = 0; i < n; i++) need += stage_list[i].size;
-    if (rbs[s].cap < need) {
-        VkCtx *c = vk_ctx();
-        if (rbs[s].buf) vmaDestroyBuffer(c->vma, rbs[s].buf, rbs[s].alloc), rbs[s].buf = VK_NULL_HANDLE;
-        rbs[s].cap = 0;
-        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = n * (uint64_t)BUF_MAX,
-                                 .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
-        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
-                                      .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
-        VmaAllocationInfo info;
-        if (vmaCreateBuffer(c->vma, &bi, &ai, &rbs[s].buf, &rbs[s].alloc, &info) != VK_SUCCESS) return;
-        rbs[s].map = info.pMappedData, rbs[s].cap = bi.size;
-    }
-    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                           .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-                           .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT, .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT};
-    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
-    vkCmdPipelineBarrier2(ex->cb, &di);
-    int k = 0;
-    uint64_t off = 0;
-    for (int i = 0; i < n; i++) {
-        VkMemSpan d;
-        if (!vk_mem_resolve(stage_list[i].addr, stage_list[i].size, &d)) continue;
-        VK_MEM_PICK(d);   // the mirror the shader wrote
-        VkBufferCopy bc = {d.offset, off, stage_list[i].size};
-        vkCmdCopyBuffer(ex->cb, d.buffer, rbs[s].buf, 1, &bc);
-        rbs[s].addr[k] = stage_list[i].addr, rbs[s].size[k] = stage_list[i].size;
-        off += stage_list[i].size, k++;
-    }
-    mb.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT, mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-    mb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT, mb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
-    vkCmdPipelineBarrier2(ex->cb, &di);
-    rbs[s].n = k;
-    ex->recorded += 2 + k;
-    if (!k) return;
-    rbs_next++;
-    ex->cb = vk_sync_split_readback();
-    vk_sync_readback_optional(s + 1);
-    part_start = ex->recorded;
-    part_t0 = kern_now_ns();
-    split_draws = 0;
-    ex->dirty = VK_EXEC_DIRTY_ALL;
-    vk_exec_draw_new_cb();
-    n_parts++;
-}
-// Game thread, once the optional point of slot (1-based) is reached: its staged buffers into guest memory.
-void vk_exec_readback_apply(uint64_t slot) {
-    if (slot < 1 || slot > RBS_N) return;
-    unsigned s = (unsigned)slot - 1;
-    vmaInvalidateAllocation(vk_ctx()->vma, rbs[s].alloc, 0, VK_WHOLE_SIZE);
-    uint64_t off = 0;
-    for (int i = 0; i < rbs[s].n; i++) {
-        memcpy((void *)(uintptr_t)rbs[s].addr[i], rbs[s].map + off, rbs[s].size[i]);
-        off += rbs[s].size[i];
-    }
-}
-
 static void walk(VkExec *ex, const op_hdr *h, int depth) {
     for (;;) {
         if (h->size < sizeof *h || (h->size & 7) || h->op >= OP_COUNT_)
@@ -1079,7 +993,6 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
         }
         if (tex_n && !ex->in_pass) tex_point(ex);
         if (buf_n && !ex->in_pass) buf_point(ex);
-        if (stage_n && !ex->in_pass) stage_point(ex);
         if (split_draws >= split_n) maybe_split(ex);
         h = nvn_op_next(h);
     }

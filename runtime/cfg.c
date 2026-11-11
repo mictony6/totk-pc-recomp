@@ -127,10 +127,9 @@ static const CfgMeta metas[] = {
     {"AO_FOLIAGE", "minimal", "minimal|full", LIVE}, {"AO_CHAR", "25", "0..100", LIVE},
     {"AO_CREASE", "0", "0..100", LIVE}, {"AO_TILT", "18", "0..90", LIVE}, {"AO_MICRO", "100", "0..300", LIVE}, {"AO_GRASS", "100", "0..100", LIVE}, {"AO_LIGHT", "100", "0..100", LIVE},
     {"LIGHT_NORMALS", "game", "game|average", LIVE},
-    // the ground mist of caves and the Depths (vk_pipeline.c fog_patch, vk_exec_draw.c support_fill); after a restart: at the
-    // game's values the mist shaders stay unpatched, which saves GPU time in the Depths
-    {"FOG_THICK", "100", "50..300", RESTART}, {"FOG_EXT", "100", "50..400", RESTART}, {"FOG_ALPHA", "100", "50..400", RESTART},
-    {"FOG_STEPS", "15", "5..64", RESTART},
+    // the ground mist of caves and the Depths (vk_pipeline.c fog_patch, vk_exec_draw.c support_fill); applies at once
+    {"FOG_THICK", "100", "50..300", LIVE}, {"FOG_EXT", "100", "50..400", LIVE}, {"FOG_ALPHA", "100", "50..400", LIVE},
+    {"FOG_STEPS", "15", "5..64", LIVE},
     // the blur of the shadow mask (vk_shadowblur.c); applies at once
     {"SHADOW_BLUR", "game", "game|depth", LIVE},
     // half-resolution effects composite (vk_upsample.c): on at start (the shader is swapped as shaders load)

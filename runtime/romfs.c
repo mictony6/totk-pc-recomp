@@ -678,37 +678,11 @@ uint32_t romfs_mount(const char *name) {
     return 0;
 }
 
-// TotK reads the layout of each stage it loads from Banc/<stage kind>/: Banc/SmallDungeon/Dungeon142_Static.bcett.byml.zs
-// on entering a shrine, Banc/MainField/... and Banc/MinusField/... as the surface and the Depths stream in. The world
-// parameters (VolumeStats/WorldParam/CDungeon or MainField) tell the same, but the game keeps them after the first load,
-// so walking into a shrine a second time read nothing. The render back end asks whether the last stage layout read was
-// a dungeon's (vk_exec_draw.c VK_READBACK_CS_AMBIENT): only there does it wait for the ambient block. Before the first
-// stage, at boot, the game reads the global Banc/<kind>/<kind>.*.byml tables of every kind: those carry no stage and
-// are left out.
-static volatile int in_dungeon;
-int romfs_in_dungeon(void) { return __atomic_load_n(&in_dungeon, __ATOMIC_RELAXED); }
-static void note_world(const char *p) {
-    if (strncmp(p, "Banc/", 5) || !strstr(p, ".bcett.")) return;
-    const char *kind = p + 5, *slash = strchr(kind, '/');
-    if (!slash) return;
-    char k[64];
-    size_t kn = (size_t)(slash - kind);
-    if (kn >= sizeof k) return;
-    memcpy(k, kind, kn), k[kn] = 0;
-    int d;
-    if (!strcmp(k, "MainField") || !strcmp(k, "MinusField")) d = 0;
-    else if (strstr(k, "Dungeon")) d = 1;
-    else return;   // other stage kinds (the title scene, the sky's own folders, if any) leave it as it is
-    if (d != in_dungeon) rt_log("romfs: stage %s: %s", p, d ? "dungeon" : "not a dungeon");
-    __atomic_store_n(&in_dungeon, d, __ATOMIC_RELAXED);
-}
-
 uint32_t romfs_open(uint64_t *out, const char *path, int mode) {
     fs_trace("rom", path);
     if (!out || mode != FS_OPEN_READ) return FS_R_UNSUPPORTED_OPEN;
     const char *p = romfs_path_relative(mount_name, path);
     if (!p) return FS_R_PATH_NOT_FOUND;
-    note_world(p);
     uint64_t i = file_index(p);
     if (i == UINT64_MAX) return FS_R_PATH_NOT_FOUND;
     uint32_t ov = overlay_slot(i);
