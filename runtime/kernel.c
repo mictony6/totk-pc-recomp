@@ -1599,11 +1599,15 @@ void kern_run_on_guest_main(void (*fn)(Cpu *c)) {
 // The OS timer ends a wait late by up to PLAT_WAIT_LATE_NS (Windows' high-resolution waitable timer: 0.3-0.5 ms; the
 // SDK's 20 us polling sleeps, main thread and job workers, about 1.5 per frame each, took 460-515 us). Sleeps up to
 // twice that spin on the clock instead (1 ms on Windows, 120 us on Linux); the virtual core is already given up.
+// A sleep longer than PLAT_WAIT_LATE_NS first sleeps on the OS timer for the time minus that lateness, which cannot
+// pass the deadline, and spins only the rest: a thread that sleeps 1 ms in a loop (the SDK's priority 55 thread, 345
+// times a second) then burns about half of that time on the clock instead of all of it.
 #define SLEEP_SPIN_NS (2 * PLAT_WAIT_LATE_NS)
 static void sleep_ns(RtThread *t, int64_t ns) {
     (void)t;
     if (ns <= SLEEP_SPIN_NS) {
         uint64_t end = kern_now_ns() + (uint64_t)ns;
+        if ((uint64_t)ns > PLAT_WAIT_LATE_NS) plat_wait_ns((uint64_t)ns - PLAT_WAIT_LATE_NS);
         while (kern_now_ns() < end) plat_pause();
         return;
     }
