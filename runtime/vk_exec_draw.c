@@ -1076,6 +1076,13 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
                 if (readback_cs == 2 && romfs_in_dungeon()) vk_exec_readback_buf(b->addr - lead, bi.range);
                 else vk_exec_readback_buf_staged(b->addr - lead, bi.range);
             }
+            // In a shrine every writer of the ambient block, not only ec2dbdc4 above, ends its part with a readback point:
+            // while Ultrahand, Fuse, Ascend or Recall was in use the shrine flickered with overlap on (not with it off),
+            // and the log showed more writers of the block (973692b3, 6e58665f, 3d17cd7d, e6230563) starting then, after
+            // ec2dbdc4's point; waiting after each of them removed it. Waiting after all twelve writers cost no frame
+            // rate in an earlier test (87.6 fps, against 84.9 with the middle five).
+            if (written && bi.range == 23232 && bi.buffer != VK_NULL_HANDLE && romfs_in_dungeon())
+                vk_exec_readback_buf(b->addr - lead, bi.range);
             if (written && st != NVN_STAGE_CS && bi.range <= VK_READBACK_DRAW_MAX && bi.buffer != VK_NULL_HANDLE)
                 vk_exec_readback_buf(b->addr - lead, bi.range);
             return bi;
