@@ -3,6 +3,7 @@ with a newer release, totk.ini and the event stream. No game files, no tools; st
 
 Run: python tests/installer_test.py
 """
+import http.client
 import io
 import json
 import re
@@ -11,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -197,6 +199,191 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(e.exception.id, 'state.newer_format')
 
 
+class ReleaseFilesTest(unittest.TestCase):
+    def test_release_ships_every_tool_the_steps_run(self):
+        sys.path.insert(0, str(ROOT / 'tools'))
+        import make_release
+        text = (ROOT / 'installer' / 'steps.py').read_text(encoding='utf-8')
+        used = set(re.findall(r"layout\.tools / '(\w+\.py)'", text))
+        for names in re.findall(r"layout\.tools / n for n in \((.*?)\)", text, re.S):
+            used |= set(re.findall(r"'(\w+\.py)'", names))
+        self.assertIn('cheats.py', used)
+        self.assertEqual(used - set(make_release.TOOLS_FILES), set())
+
+
+class RenamedVersionTest(unittest.TestCase):
+    """An install the setup before 0.3.1 recorded as 1.1.1 is the 1.1.0 update (#332)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(__file__).resolve().parents[1]
+        layout = Layout(root=root, dev=True, release='9.9', python=Path('python'), tools=root / 'tools',
+                        recomp=root / 'recomp', llvm=Path('llvm'), deps=Path('deps'), runtime=Path('rt'),
+                        runtime_lib=Path('lib'), ninja=Path('ninja'), hactool=Path('hactool'), xlate=Path('xlate'))
+        state = {'format': 1, 'release': '0.2.8', 'version': '1.1.1', 'inputs': {},
+                 'steps': {'extract': {'key': 'recorded by 0.2.8', 'release': '0.2.8'}}}
+        out = io.StringIO()
+        self.ctx = runner.Context(layout, Path(tmp.name), Path(tmp.name), Reporter(out=out), SimpleNamespace(),
+                                  state=state)
+
+    def test_old_name_is_read_as_1_1_0(self):
+        steps.migrate_state(self.ctx)
+        self.assertEqual(steps.game_version(self.ctx), '1.1.0')
+        self.assertEqual(steps.version_tag(steps.game_version(self.ctx)), 'v110')
+        self.assertEqual(steps.expected_update(self.ctx)['display_version'], '1.1.0')
+        self.assertTrue(self.ctx.layout.patches(steps.game_version(self.ctx)).is_file())
+
+    def test_extraction_is_kept_under_the_new_name(self):
+        steps.migrate_state(self.ctx)
+        self.assertEqual(self.ctx.state['steps']['extract']['key'], steps.Extract().key(self.ctx))
+        self.assertEqual(self.ctx.state['steps']['extract']['release'], '0.2.8')   # full check of kept output runs
+
+    def test_other_versions_are_untouched(self):
+        self.ctx.state['version'] = '1.4.3'
+        steps.migrate_state(self.ctx)
+        self.assertEqual(self.ctx.state['version'], '1.4.3')
+        self.assertEqual(self.ctx.state['steps']['extract']['key'], 'recorded by 0.2.8')
+
+
+class LiftKeyTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dest = Path(tmp.name)
+        layout = SimpleNamespace(recomp=self.dest / 'no-recomp', tools=self.dest / 'no-tools',
+                                 patches=lambda version: self.dest / 'no-patches')
+        self.ctx = SimpleNamespace(dest=self.dest, layout=layout, keys={'extract': 'x'}, state={'version': '1.4.3'})
+
+    def key(self):
+        return steps.Lift().key(self.ctx)
+
+    def add_cheats(self, name, text, mod='Cheats', where='cheats'):
+        folder = self.dest / 'mods' / mod / where
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text(text)
+
+    def test_extracting_main_keeps_the_key(self):
+        before = self.key()
+        (self.dest / 'exefs').mkdir()
+        (self.dest / 'exefs' / 'main').write_bytes(bytes(0x48))
+        self.assertEqual(self.key(), before)
+
+    def test_cheat_files_change_the_key(self):
+        before = self.key()
+        self.add_cheats('277178B7DBA1B6D4.txt', '[a]')
+        added = self.key()
+        self.assertNotEqual(added, before)
+        self.add_cheats('277178B7DBA1B6D4.txt', '[b]')
+        edited = self.key()
+        self.assertNotEqual(edited, added)
+        self.add_cheats('277178B7DBA1B6D4.txt', '[c]', mod='Other', where='atmosphere/contents/0100F2C0115B6000/cheats')
+        self.assertNotEqual(self.key(), edited)
+
+    def test_exefs_patch_files_change_the_key(self):
+        before = self.key()
+        self.add_cheats('dynamic-fps.pchtxt', '@nsobid-277178B7DBA1B6D4', mod='Fps', where='exefs')
+        added = self.key()
+        self.assertNotEqual(added, before)
+        self.add_cheats('277178B7DBA1B6D4.ips', 'PATCHEOF', mod='Ips', where='atmosphere/exefs_patches/x')
+        both = self.key()
+        self.assertNotEqual(both, added)
+        self.add_cheats('main.npdm', 'not a patch', mod='Fps', where='exefs')
+        self.assertEqual(self.key(), both)
+
+    def test_renaming_a_mod_folder_changes_the_key(self):
+        # tools/cheats.py and tools/exefs_patches.py name a patch set after "<mod folder>/<cheat or file>": a renamed
+        # folder needs a lift even though its files are the same
+        self.add_cheats('277178B7DBA1B6D4.txt', '[a]', mod='MyNXCheats')
+        self.add_cheats('dynamic-fps.pchtxt', '@nsobid-277178B7DBA1B6D4', mod='Fps', where='exefs')
+        before = self.key()
+        mods = self.dest / 'mods'
+        (mods / 'MyNXCheats').rename(mods / 'MyNXCheats 1.4.3')
+        cheats_renamed = self.key()
+        self.assertNotEqual(cheats_renamed, before)
+        (mods / 'Fps').rename(mods / 'Fps 2')
+        self.assertNotEqual(self.key(), cheats_renamed)
+
+    def test_status_and_other_files_keep_the_key(self):
+        self.add_cheats('277178B7DBA1B6D4.txt', '[a]')
+        before = self.key()
+        (self.dest / 'build-cache').mkdir()
+        (self.dest / 'build-cache' / 'cheats.status').write_text('written by lift')
+        self.add_cheats('readme.md', 'not a cheat file')
+        (self.dest / 'mods' / 'Cheats' / 'romfs').mkdir()
+        (self.dest / 'mods' / 'Cheats' / 'romfs' / 'a.txt').write_text('a RomFS file')
+        self.assertEqual(self.key(), before)
+
+
+class LiftRunTest(unittest.TestCase):
+    """Lift.run with fake tools: the ExeFS patch stage writes the status and data files, the lift lists the bytes it
+    read, and the data writes are checked against that list after it; a failed lift or check drops both files."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        self.dest, temp = base / 'install', base / 'temp'
+        self.dest.mkdir()
+        temp.mkdir()
+        layout = SimpleNamespace(recomp=ROOT / 'recomp', tools=ROOT / 'tools',
+                                 patches=lambda version: base / 'patches-v143.txt')
+        self.ctx = SimpleNamespace(dest=self.dest, temp=temp, layout=layout, keys={'lift': 'k'},
+                                   state={'version': '1.4.3'}, reporter=Reporter(out=io.StringIO()))
+        self.addCleanup(self.ctx.reporter.close)
+        mod = self.dest / 'mods' / 'SQ' / 'exefs'
+        mod.mkdir(parents=True)
+        (mod / '277178B7DBA1B6D4.ips').write_bytes(b'IPS32EEOF')
+        self.calls, self.fail = [], set()
+        saved = steps.run_tool
+        self.addCleanup(lambda: setattr(steps, 'run_tool', saved))
+        steps.run_tool = self.run_tool
+
+    def run_tool(self, ctx, step, script, args, parse=None, cwd=None):
+        args = [str(a) for a in args]
+        name = Path(script).name + (' --folded' if '--folded' in args else '')
+        self.calls.append((name, args))
+        log = ctx.temp / 'tool.log'
+        log.write_text('')
+        if name in self.fail:
+            return 1, log
+        if name == 'exefs_patches.py':
+            for flag in ('--status', '--data', '--out'):
+                p = Path(args[args.index(flag) + 1])
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(flag)
+        elif name == 'gen.py':
+            out = Path(args[args.index('--out') + 1]) / 'main'
+            out.mkdir(parents=True, exist_ok=True)
+            (out / 'folded.txt').write_text('# test\n')
+        return 0, log
+
+    def outputs(self):
+        return [p.is_file() for p in (steps.exefs_status(self.ctx), steps.exefs_data(self.ctx))]
+
+    def test_data_file_and_the_check_after_the_lift(self):
+        steps.Lift().run(self.ctx)
+        self.assertEqual([c[0] for c in self.calls], ['exefs_patches.py', 'gen.py', 'exefs_patches.py --folded'])
+        build = self.calls[0][1]
+        self.assertEqual(build[build.index('--data') + 1], str(steps.exefs_data(self.ctx)))
+        check = self.calls[2][1]
+        self.assertEqual(check[check.index('--folded') + 1], str(self.ctx.temp / 'gen' / 'main' / 'folded.txt'))
+        self.assertEqual(check[check.index('--status') + 1], str(steps.exefs_status(self.ctx)))
+        self.assertEqual(self.outputs(), [True, True])
+
+    def test_failed_lift_drops_the_data_file(self):
+        self.fail = {'gen.py'}
+        with self.assertRaises(steps.InstallError):
+            steps.Lift().run(self.ctx)
+        self.assertEqual(self.outputs(), [False, False])
+
+    def test_failed_check_drops_both_files(self):
+        self.fail = {'exefs_patches.py --folded'}
+        steps.Lift().run(self.ctx)
+        self.assertEqual(self.outputs(), [False, False])
+        self.assertIn('warn.exefs_skipped', self.ctx.reporter.out.getvalue())
+
+
 class IniTest(unittest.TestCase):
     EXAMPLE = '[display]\n# vk_present = mailbox\n\n[language]\n# locale = en-US\n# lang = en-US\n# x = 1\n'
 
@@ -258,7 +445,8 @@ class CleanupTest(unittest.TestCase):
         self.expected = {'romfs': {'size': len(image), 'sha256': digest}}
         self.ctx = SimpleNamespace(reporter=Reporter(out=io.StringIO(), log_path=base / 'x.log'), dest=self.dest,
                                    temp=temp, lang='en-US', state={},
-                                   layout=SimpleNamespace(ini_example=ROOT / 'totk.ini.example'))
+                                   layout=SimpleNamespace(ini_example=ROOT / 'totk.ini.example', dev=False,
+                                                          python=base / 'python' / 'python.exe', root=base / 'release'))
         self.saved = steps.expected_update
         steps.expected_update = lambda ctx: self.expected
 
@@ -277,6 +465,16 @@ class CleanupTest(unittest.TestCase):
     def test_intact_romfs_passes(self):
         self.assertEqual(self.run_cleanup(), 'ok')
 
+    def test_keeps_build_and_writes_rebuild_command(self):
+        for name in ('gen', 'build', 'check'):
+            (self.ctx.temp / name).mkdir()
+        self.assertEqual(self.run_cleanup(), 'ok')
+        self.assertTrue((self.ctx.temp / 'gen').is_dir() and (self.ctx.temp / 'build').is_dir())
+        self.assertFalse((self.ctx.temp / 'check').exists())
+        lines = (self.dest / 'build-cache' / 'rebuild.txt').read_text(encoding='utf-8').splitlines()
+        self.assertEqual(lines[1:], ['-c', steps.REBUILD_BOOT, str(self.ctx.layout.root), '--root',
+                                     str(self.ctx.layout.root), '--rebuild', str(self.dest)])
+
     def test_emptied_romfs_fails(self):
         for p in (self.dest / 'romfs').iterdir():
             p.unlink()
@@ -289,6 +487,29 @@ class CleanupTest(unittest.TestCase):
     def test_romfs_of_another_size_fails(self):
         (self.dest / 'romfs' / 'romfs.bin').write_bytes(b'short')
         self.assertEqual(self.run_cleanup(), 'cleanup.romfs_unreadable')
+
+
+class FreeSpaceTest(unittest.TestCase):
+    def test_missing_folders_use_the_nearest_existing_parent(self):
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d)
+            path = parent / 'missing' / 'install'
+            with mock.patch.object(steps.shutil, 'disk_usage', return_value=SimpleNamespace(free=1234)) as usage:
+                self.assertEqual(steps.free_bytes(path), (1234, parent.stat().st_dev))
+            usage.assert_called_once_with(parent)
+            self.assertFalse(path.parent.exists())
+
+    def test_missing_root_reports_the_filesystem_error(self):
+        path = Path(ROOT.anchor) / 'missing' / 'install'
+        root = Path(path.anchor)
+        error = FileNotFoundError(2, 'No such file or directory', str(root))
+        # Bound the failed existence checks so the old parent walk cannot hang the test suite.
+        with mock.patch.object(Path, 'exists', side_effect=[False] * (len(path.parents) + 1)):
+            with mock.patch.object(steps.shutil, 'disk_usage', side_effect=error) as usage:
+                with self.assertRaises(FileNotFoundError) as raised:
+                    steps.free_bytes(path)
+        self.assertIs(raised.exception, error)
+        usage.assert_called_once_with(root)
 
 
 class BaseGameCheckTest(unittest.TestCase):
@@ -354,7 +575,7 @@ class FontsTest(unittest.TestCase):
 
     def test_all_steps_order(self):
         self.assertEqual([s.id for s in steps.all_steps()],
-                         ['check', 'fonts', 'extract', 'lift', 'compile', 'prepare', 'cleanup'])
+                         ['check', 'fonts', 'extract', 'lift', 'compile', 'prepare', 'dlss', 'cleanup'])
 
     def test_extracts_into_the_install_folder(self):
         self.fake_tool()
@@ -441,10 +662,85 @@ class EventsTest(unittest.TestCase):
         catalog = json.loads((ROOT / 'installer' / 'text' / 'en.json').read_text(encoding='utf-8'))
         used = set()
         for path in (ROOT / 'installer').glob('*.py'):
-            used |= set(re.findall(r"InstallError\('([a-z_.]+)'", path.read_text()))
-            used |= set(re.findall(r"warning\('([a-z_.]+)'", path.read_text()))
-            used |= {f'phase.{s}.{p}' for s, p in re.findall(r"progress\('(\w+)', '(\w+)'[,)]", path.read_text())}
+            text = path.read_text(encoding='utf-8')
+            used |= set(re.findall(r"InstallError\('([a-z_.]+)'", text))
+            used |= set(re.findall(r"warning\('([a-z_.]+)'", text))
+            used |= {f'phase.{s}.{p}' for s, p in re.findall(r"progress\('(\w+)', '(\w+)'[,)]", text)}
         self.assertEqual(sorted(i for i in used if i not in catalog), [])
+
+
+@unittest.skipUnless(steps.os.name == 'nt', 'DLSS is Windows-only')
+class DlssTest(unittest.TestCase):
+    """The DLSS step: off without --dlss, needs an RTX GPU, keeps a player's library, verifies the download."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.dest, temp = base / 'dest', base / 'temp'
+        self.dest.mkdir()
+        temp.mkdir()
+        self.src = base / 'nvngx_dlss.dll'
+        self.src.write_bytes(b'dlss' * 1000)
+        self.saved = steps.DLSS_URL, steps.DLSS_SIZE, steps.DLSS_SHA256
+        steps.DLSS_URL = self.src.as_uri()   # urllib reads file: URLs as it reads https: ones
+        steps.DLSS_SIZE, steps.DLSS_SHA256 = 4000, steps.file_sha256(self.src)
+        rtx = {'devices': [{'name': 'NVIDIA GeForce RTX 4080 SUPER', 'api': [1, 4, 0], 'type': 2}]}
+        self.ctx = SimpleNamespace(dest=self.dest, temp=temp, host=rtx, reporter=Reporter(out=io.StringIO()),
+                                   options=SimpleNamespace(dlss=True))
+
+    def tearDown(self):
+        steps.DLSS_URL, steps.DLSS_SIZE, steps.DLSS_SHA256 = self.saved
+        self.ctx.reporter.close()
+        self.tmp.cleanup()
+
+    def warnings(self):
+        return [json.loads(line)['id'] for line in self.ctx.reporter.out.getvalue().splitlines()
+                if json.loads(line)['type'] == 'warning']
+
+    def test_off_without_the_option(self):
+        self.ctx.options.dlss = False
+        self.assertEqual(steps.Dlss().run(self.ctx), {})
+        self.assertFalse((self.dest / 'nvngx_dlss.dll').exists())
+        self.assertNotEqual(steps.Dlss().key(self.ctx), steps.Dlss().key(SimpleNamespace(options=SimpleNamespace(dlss=True))))
+
+    def test_downloads_and_checks_the_library(self):
+        rec = steps.Dlss().run(self.ctx)
+        self.assertEqual(rec, {'installed': steps.DLSS_VERSION})
+        self.assertEqual((self.dest / 'nvngx_dlss.dll').read_bytes(), self.src.read_bytes())
+        self.assertFalse(list(self.ctx.temp.iterdir()))
+        self.assertTrue(steps.Dlss().current(self.ctx, rec))
+        (self.dest / 'nvngx_dlss.dll').unlink()
+        self.assertFalse(steps.Dlss().current(self.ctx, rec))
+
+    def test_a_wrong_file_is_not_installed_and_tried_again(self):
+        steps.DLSS_SHA256 = '0' * 64
+        rec = steps.Dlss().run(self.ctx)
+        self.assertEqual(rec, {'failed': True})
+        self.assertFalse((self.dest / 'nvngx_dlss.dll').exists())
+        self.assertEqual(self.warnings(), ['warn.dlss_download_failed'])
+        self.assertFalse(steps.Dlss().current(self.ctx, rec))
+
+    def test_a_cut_connection_warns(self):
+        class Cut(io.BytesIO):   # a response whose connection drops mid-file
+            def read(self, n=-1):
+                raise http.client.IncompleteRead(b'dl', 3998)
+
+        with mock.patch.object(steps.urllib.request, 'urlopen', return_value=Cut()):
+            self.assertEqual(steps.Dlss().run(self.ctx), {'failed': True})
+        self.assertFalse((self.dest / 'nvngx_dlss.dll').exists())
+        self.assertFalse(list(self.ctx.temp.iterdir()))
+        self.assertEqual(self.warnings(), ['warn.dlss_download_failed'])
+
+    def test_keeps_the_players_library(self):
+        (self.dest / 'nvngx_dlss.dll').write_bytes(b'newer')
+        self.assertEqual(steps.Dlss().run(self.ctx), {'kept': True})
+        self.assertEqual((self.dest / 'nvngx_dlss.dll').read_bytes(), b'newer')
+        self.assertEqual(self.warnings(), ['warn.dlss_kept'])
+
+    def test_skipped_without_an_rtx_gpu(self):
+        self.ctx.host = {'devices': [{'name': 'AMD Radeon RX 7800 XT', 'api': [1, 3, 0], 'type': 2}]}
+        self.assertEqual(steps.Dlss().run(self.ctx), {'skipped': 'no_rtx'})
+        self.assertEqual(self.warnings(), [])
 
 
 if __name__ == '__main__':

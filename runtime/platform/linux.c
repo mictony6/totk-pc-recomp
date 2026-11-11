@@ -22,9 +22,11 @@
 #include <sys/prctl.h>
 #include <sys/random.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
+#include <sys/un.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -268,7 +270,8 @@ int plat_intr_resume(PlatIntr *t, uint64_t to) {
 // ---- fibers: a stack switch of our own. glibc's swapcontext saves and restores the signal mask with a system call
 // on every switch, and the game switches fibers often. fiber_swap saves the callee-saved registers, the MXCSR and the
 // x87 control word on the current stack, stores the stack pointer in *save and loads the other one. A new fiber's
-// stack is laid out as fiber_swap leaves one, returning into fiber_entry, which calls fn(arg) (r12 and r13).
+// stack is laid out as fiber_swap leaves one, returning into fiber_entry, which realigns the stack and calls fn(arg)
+// (r12 and r13).
 struct PlatFiber {
     void *sp;
     void *stack;   // mapped stack (NULL for a thread's own context)
@@ -310,6 +313,11 @@ __asm__(".text\n"
         ".type plat_fiber_entry, @function\n"
         ".p2align 4\n"
         "plat_fiber_entry:\n"
+        // fiber_swap's ret lands here with rsp = top - 8, as at the entry of a called function. The call below must
+        // be made with rsp 16-byte aligned so that fn starts with rsp = 8 mod 16, as the System V ABI demands; without
+        // the realignment every 16-byte local of fn is off by 8, which the VEX instructions of a v3 build tolerate
+        // but the SSE ones of a v2 or k10 build (movdqa, pcmpeqb with a memory operand) fault on.
+        "    andq $-16, %rsp\n"
         "    movq %r13, %rdi\n"
         "    callq *%r12\n"
         "    ud2\n"
@@ -472,6 +480,14 @@ uint64_t plat_counter_hz(void) { return 1000000000u; }
 // The timer slack (50 us by default) is how late the kernel may wake a sleeping thread to batch wakeups. New threads
 // inherit it from the thread that creates them.
 void plat_timer_1ms(void) { prctl(PR_SET_TIMERSLACK, 1000ul, 0, 0, 0); }
+
+int plat_power_full(void) { return -1; }
+
+int plat_perf_core_setup(char *why, size_t n) {
+    snprintf(why, n, "not done on Linux");
+    return 0;
+}
+int plat_thread_perf_core(void) { return -1; }
 
 // clock_nanosleep wakes within the timer slack (50 us by default) of its deadline; the last PLAT_SPIN_NS are spent
 // yielding so the deadline is met closely, as on Windows.
@@ -916,8 +932,9 @@ uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t m
 }
 
 // One handler for the synchronous faults. A SIGSEGV whose page-fault error code has the write bit set goes to the
-// write-fault hook first (memory.c thaws a frozen region); a fault in this executable's code then goes to the crash
-// hook (main.c); anything else gets the default action. Runs on the thread's signal stack.
+// write-fault hook first (memory.c thaws a frozen region); any other fault, in this executable or in a library (Mesa,
+// SDL), then goes to the crash hook (main.c), which reports it and ends the process. Without a crash hook the fault
+// gets the default action. Runs on the thread's signal stack.
 static int (*fault_hook)(uint64_t addr);
 static void (*crash_fn)(const PlatCrash *c);
 
@@ -927,12 +944,23 @@ static void fault_handler(int sig, siginfo_t *si, void *uc) {
     if (sig == SIGSEGV && fault_hook && (err & 2) && fault_hook((uint64_t)(uintptr_t)si->si_addr)) return;
     uintptr_t rip = (uintptr_t)u->uc_mcontext.gregs[REG_RIP];
     Dl_info at, self;
-    if (crash_fn && dladdr((void *)rip, &at) && dladdr((void *)plat_crash_hook, &self) && at.dli_fbase == self.dli_fbase) {
+    if (crash_fn) {
+        int found = dladdr((void *)rip, &at) && at.dli_fname;
         PlatCrash c = {sig == SIGSEGV ? "access violation" : sig == SIGBUS ? "bus error"
                        : sig == SIGILL ? "illegal instruction" : "arithmetic exception",
-                       (uint32_t)sig, rip, rip - (uintptr_t)self.dli_fbase, -1, 0};
+                       (uint32_t)sig, rip, found ? rip - (uintptr_t)at.dli_fbase : rip, -1, 0};
+        if (!found) {
+            c.module = "";
+        } else if (!dladdr((void *)plat_crash_hook, &self) || at.dli_fbase != self.dli_fbase) {
+            const char *n = strrchr(at.dli_fname, '/');
+            c.module = n ? n + 1 : at.dli_fname;
+        }
         if (sig == SIGSEGV || sig == SIGBUS)
             c.access = (err & 16) ? 8 : (err & 2) ? 1 : 0, c.addr = (uint64_t)(uintptr_t)si->si_addr;
+        static const int gr[16] = {REG_RAX, REG_RCX, REG_RDX, REG_RBX, REG_RSP, REG_RBP, REG_RSI, REG_RDI,
+                                   REG_R8,  REG_R9,  REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15};
+        for (int i = 0; i < 16; i++) c.gpr[i] = (uint64_t)u->uc_mcontext.gregs[gr[i]];
+        c.has_regs = 1;
         crash_fn(&c);
     }
     signal(sig, SIG_DFL);   // returns into the faulting instruction, which faults again with the default action
@@ -989,6 +1017,12 @@ int plat_mem_read(uint64_t addr, void *out, size_t n) {
     return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == (ssize_t)n;
 }
 
+// Not known before the SDL window exists; the Steam Deck has its own profile (cfg.c)
+int plat_screen_size(int *w, int *h) {
+    (void)w, (void)h;
+    return 0;
+}
+
 int plat_mem_readable(uint64_t addr, uint64_t n) {
     uint8_t b;
     uint64_t end = addr + (n ? n : 1);
@@ -1043,6 +1077,8 @@ const void *plat_file_map(PlatFile *f) {
     void *v = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd_of(f), 0);
     return v == MAP_FAILED ? NULL : v;
 }
+
+int plat_fs_os_error(void) { return errno; }
 
 static int fs_err(int e) {
     switch (e) {
@@ -1187,8 +1223,10 @@ size_t plat_getenv(const char *name, char *out, size_t cap) {
 
 // Cached per thread: plat_rmutex_lock asks on every acquire, hundreds of thousands of times a second in play, and
 // gettid is a full syscall on Linux (Windows reads GetCurrentThreadId from the TEB). A thread's id never changes, and
-// the runtime starts child processes with posix_spawn only, so no forked copy inherits a stale id.
-uint32_t plat_thread_id(void) {
+// the runtime starts child processes with posix_spawn only, so no forked copy inherits a stale id. noinline: a fiber
+// may resume on another thread (platform.h), and a caller that inlined this could keep the address of tid it computed
+// before a plat_fiber_switch; as a call it reads the slot of the thread it runs on.
+__attribute__((noinline)) uint32_t plat_thread_id(void) {
     static __thread uint32_t tid;
     if (!tid) tid = (uint32_t)syscall(SYS_gettid);
     return tid;
@@ -1267,7 +1305,16 @@ int plat_stderr_path(char *out, size_t cap) {
 
 // ---- process
 
+#ifdef TOTK_PGO_GEN
+// compiler-rt's profile runtime (an instrumented build, tools/build_game.py --pgo gen). It writes its counters from an
+// atexit handler, which _exit skips; __llvm_profile_dump writes them once and makes later writes no-ops.
+int __llvm_profile_dump(void);
+#endif
+
 void plat_exit(int code) {
+#ifdef TOTK_PGO_GEN
+    __llvm_profile_dump();
+#endif
     fflush(stdout);
     fflush(stderr);
     _exit(code);
@@ -1426,6 +1473,41 @@ int plat_open_folder(const char *path) {
 
 void *plat_lib_open(const char *name) { return dlopen(name, RTLD_NOW | RTLD_LOCAL); }
 void *plat_lib_sym(void *lib, const char *name) { return lib ? dlsym(lib, name) : NULL; }
+
+void plat_lib_error(char *out, size_t cap) {
+    const char *e = dlerror();
+    snprintf(out, cap, "%s", e ? e : "unknown error");
+}
+
+int plat_ngx_core_path(char *out, size_t cap) { return snprintf(out, cap, "libnvidia-ngx.so.1") < (int)cap; }
+
+// UTF-8 to UTF-32 wchar_t, without the C library's locale (the runtime never sets one, so mbstowcs would stop at the
+// first non-ASCII byte). Returns 0 on malformed input or when out has no room.
+static int utf8_to_wide(const char *in, wchar_t *out, size_t cap) {
+    const unsigned char *u = (const unsigned char *)in;
+    size_t n = 0;
+    while (*u) {
+        unsigned c = *u++, more = c < 0x80 ? 0 : c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 4;
+        if (more == 4) return 0;
+        if (more) c &= 0x3F >> more;
+        for (unsigned k = 0; k < more; k++, u++) {
+            if ((*u & 0xC0) != 0x80) return 0;
+            c = c << 6 | (*u & 0x3F);
+        }
+        if (n + 1 >= cap) return 0;
+        out[n++] = (wchar_t)c;
+    }
+    out[n] = 0;
+    return 1;
+}
+
+int plat_exe_dir_wide(wchar_t *out, size_t cap) {
+    char dir[PLAT_PATH_MAX];
+    char *cut = plat_exe_path(dir, sizeof dir) ? plat_last_sep(dir) : NULL;
+    if (!cut) return 0;
+    cut[1] = 0;
+    return utf8_to_wide(dir, out, cap);
+}
 
 // ---- machine load: /proc/stat and /proc/self/stat for the CPU, hwmon for the temperature, the amdgpu sysfs files of
 // the render device for the GPU.
@@ -1601,6 +1683,17 @@ void plat_commit_info(double *proc_mb, double *used_mb, double *limit_mb) {
     if (private_bytes) *proc_mb = (double)(private_bytes >> 20);
 }
 
+void plat_mem_room(uint64_t *commit_room, uint64_t *phys_room) {
+    *commit_room = *phys_room = UINT64_MAX;
+    char line[128];
+    unsigned long long k;
+    FILE *f = fopen("/proc/meminfo", "r");
+    if (!f) return;
+    while (fgets(line, sizeof line, f))
+        if (sscanf(line, "MemAvailable: %llu kB", &k) == 1) *phys_room = (uint64_t)k << 10;
+    fclose(f);
+}
+
 // ---- child processes
 
 struct PlatChild {
@@ -1662,6 +1755,62 @@ long plat_child_read(PlatChild *c, void *buf, size_t cap) {
     return (long)k;
 }
 
+// ---- local IPC (platform.h): Discord's Rich Presence Unix domain socket
+struct PlatIpc { int fd; };
+
+PlatIpc *plat_ipc_connect(const char *name) {
+    const char *dirs[] = {getenv("DISCORD_IPC_PATH"), getenv("XDG_RUNTIME_DIR"), getenv("TMPDIR"), "/tmp"};
+    for (size_t d = 0; d < sizeof dirs / sizeof *dirs; d++) {
+        if (!dirs[d] || !*dirs[d]) continue;
+        char path[sizeof ((struct sockaddr_un *)0)->sun_path];
+        if ((size_t)snprintf(path, sizeof path, "%s/%s", dirs[d], name) >= sizeof path) continue;
+        int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (fd < 0) return NULL;
+        struct sockaddr_un sa = {0};
+        sa.sun_family = AF_UNIX;
+        strcpy(sa.sun_path, path);
+        if (connect(fd, (struct sockaddr *)&sa, sizeof sa) == 0) {
+            PlatIpc *p = malloc(sizeof *p);
+            if (!p) {
+                close(fd);
+                return NULL;
+            }
+            p->fd = fd;
+            return p;
+        }
+        close(fd);   // nothing listens at this path: the next directory may have it
+    }
+    return NULL;
+}
+
+int plat_ipc_read(PlatIpc *p, void *buf, size_t n, uint32_t ms) {
+    struct pollfd pf = {.fd = p->fd, .events = POLLIN};
+    int r = poll(&pf, 1, (int)ms);
+    if (r <= 0) return r < 0 && errno != EINTR ? -1 : 0;
+    ssize_t got = recv(p->fd, buf, n, 0);
+    return got > 0 ? (int)got : -1;   // 0 bytes: the peer closed the socket
+}
+
+int plat_ipc_write(PlatIpc *p, const void *buf, size_t n) {
+    const uint8_t *at = buf;
+    while (n) {
+        ssize_t put = send(p->fd, at, n, MSG_NOSIGNAL);   // a closed peer is an error, not a SIG_PIPE
+        if (put <= 0) {
+            if (put < 0 && errno == EINTR) continue;
+            return 0;
+        }
+        at += put, n -= put;
+    }
+    return 1;
+}
+
+void plat_ipc_close(PlatIpc *p) {
+    if (!p) return;
+    close(p->fd);
+    free(p);
+}
+
+
 // ---- restart
 // TOTK_RESTART_WAIT names the process that called plat_restart, as its id and start time (field 22 of /proc/<pid>/stat,
 // clock ticks after boot): a process that has only reused the id is not waited for. Waiting keeps the new process off
@@ -1687,6 +1836,14 @@ static unsigned long long process_start(int pid) {
     return start;
 }
 
+// glibc 2.34 added posix_spawn_file_actions_addclosefrom_np, and the release links against the Steam Runtime's 2.31: a
+// weak reference, used when the running glibc has it. Without it the child inherits the open descriptors.
+extern int posix_spawn_file_actions_addclosefrom_np(posix_spawn_file_actions_t *fa, int from) __attribute__((weak));
+
+static void spawn_close_from(posix_spawn_file_actions_t *fa, int from) {
+    if (posix_spawn_file_actions_addclosefrom_np) posix_spawn_file_actions_addclosefrom_np(fa, from);
+}
+
 int plat_restart(void) {
     // the arguments, NUL-separated, from /proc/self/cmdline
     static char args[16384];
@@ -1703,7 +1860,7 @@ int plat_restart(void) {
     snprintf(wait, sizeof wait, "%d.%llu", (int)getpid(), process_start((int)getpid()));
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_addclosefrom_np(&fa, 3);
+    spawn_close_from(&fa, 3);
     posix_spawnattr_t at;
     posix_spawnattr_init(&at);
     sigset_t none, all;
@@ -1723,6 +1880,25 @@ int plat_restart(void) {
 
 int plat_console_hide(void) { return 0; }
 void plat_error_box(const char *text) { (void)text; }
+int plat_spawn(const char *const *argv, const char *cwd) {
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    spawn_close_from(&fa, 3);
+    posix_spawn_file_actions_addchdir_np(&fa, cwd);
+    posix_spawnattr_t at;
+    posix_spawnattr_init(&at);
+    sigset_t none, all;
+    sigemptyset(&none);
+    sigfillset(&all);
+    posix_spawnattr_setsigmask(&at, &none);
+    posix_spawnattr_setsigdefault(&at, &all);
+    posix_spawnattr_setflags(&at, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSID);
+    pid_t pid;
+    int e = posix_spawn(&pid, argv[0], &fa, &at, (char *const *)argv, environ);
+    posix_spawnattr_destroy(&at);
+    posix_spawn_file_actions_destroy(&fa);
+    return e == 0;
+}
 
 int plat_restart_wait(uint32_t timeout_ms) {
     const char *v = getenv(RESTART_WAIT);

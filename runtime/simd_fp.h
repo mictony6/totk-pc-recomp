@@ -59,16 +59,60 @@ SN T FN(nan3)(Cpu *c, T a, T b, T d) {
     return FN(fv)(DNAN);
 }
 
+// ---- FMA flavours. FMA_S / FMA_V: fast paths, host MXCSR is round-to-nearest there (simd_directed() is checked first).
+// FMA_X: scalar FMA for the slow paths, any host rounding mode.
+// Without hardware FMA (Ivy Bridge, no -mfma) clang turns __builtin_elementwise_fma into a call to the C runtime's
+// fmaf/fma for every lane, which is very slow and keeps the thread outside generated code. For float the product of
+// two floats is exact in a double (24 x 24 = 48 bits), so the fused op is done in double. A plain
+// (float)(x * y + z) rounds twice and can differ by one ulp; rounding the double sum to odd first (Boldo-Melquiond)
+// makes the final float rounding exact: TwoSum gives the error e of s = fl(p + z), and when e != 0 and s has an even
+// last bit, s is moved one ulp toward the exact value (the odd neighbour). Inf/NaN lanes are left alone (e is NaN
+// there, so the ordered compares below are false). Double has no wider type: it keeps the C runtime's fma.
+#if defined(__FMA__) || defined(__aarch64__) || NB == 64
+#define FMA_S(x, y, z) __builtin_elementwise_fma(x, y, z)
+#define FMA_V(x, y, z) __builtin_elementwise_fma(x, y, z)
+#define FMA_X(x, y, z) __builtin_elementwise_fma(x, y, z)
+#else
+typedef double simd_vf64x4 __attribute__((vector_size(32)));
+typedef uint64_t simd_vu64x4 __attribute__((vector_size(32)));
+SI float fma_rn_s(float x, float y, float z) {
+    double p = (double)x * (double)y, zd = (double)z, s = p + zd;
+    double bb = s - p, e = (p - (s - bb)) + (zd - bb); // TwoSum: s + e == p + zd exactly
+    uint64_t u;
+    memcpy(&u, &s, sizeof u);
+    if (((e < 0.0) | (e > 0.0)) && !(u & 1)) u += (e > 0.0) == (s > 0.0) ? 1 : (uint64_t)-1;
+    memcpy(&s, &u, sizeof s);
+    return (float)s;
+}
+SI vf32 fma_rn_v(vf32 x, vf32 y, vf32 z) {
+    simd_vf64x4 p = CVT(x, simd_vf64x4) * CVT(y, simd_vf64x4), zd = CVT(z, simd_vf64x4), s = p + zd;
+    simd_vf64x4 bb = s - p, e = (p - (s - bb)) + (zd - bb);
+    simd_vu64x4 u = (simd_vu64x4)s;
+    simd_vu64x4 fix = (simd_vu64x4)((e < 0.0) | (e > 0.0)) & (simd_vu64x4)((u & 1) == 0);
+    simd_vu64x4 up = (simd_vu64x4)((e > 0.0) == (s > 0.0));
+    u += fix & ((up & 1) | ~up); // +1 toward the exact value, i.e. +1 if e and s share a sign, else -1
+    return CVT((simd_vf64x4)u, vf32);
+}
+// Any rounding mode: directed modes are exact with a plain double (same-direction double rounding is harmless).
+SI float fma_any_s(float x, float y, float z) {
+    if (__builtin_expect(_mm_getcsr() & 0x6000u, 0)) return (float)((double)x * (double)y + (double)z);
+    return fma_rn_s(x, y, z);
+}
+#define FMA_S(x, y, z) fma_rn_s(x, y, z)
+#define FMA_V(x, y, z) fma_rn_v(x, y, z)
+#define FMA_X(x, y, z) fma_any_s(x, y, z)
+#endif
+
 // The arithmetic itself, for scalars (KK = K) and vectors (KK = VK). MADD: a + b*d (a = addend).
 // RECPS/RSQRTS get their first operand already negated (FPNeg happens before NaN processing).
-#define FCALC(op, a, b, d, KK)                                                                       \
+#define FCALC(op, a, b, d, KK, FMA)                                                                     \
     ((op) == FOP_ADD ? (a) + (b) : (op) == FOP_SUB ? (a) - (b)                                     \
    : (op) == FOP_MUL || (op) == FOP_MULX ? (a) * (b) : (op) == FOP_NMUL ? -((a) * (b))              \
    : (op) == FOP_DIV ? (a) / (b) : (op) == FOP_ABD ? __builtin_elementwise_abs((a) - (b))          \
    : (op) == FOP_SQRT ? __builtin_elementwise_sqrt(a)                                              \
-   : (op) == FOP_MADD ? __builtin_elementwise_fma(b, d, a)                                         \
-   : (op) == FOP_RECPS ? __builtin_elementwise_fma(a, b, KK(2))                                    \
-   : (op) == FOP_RSQRTS ? __builtin_elementwise_fma(a, b, KK(3)) * KK(0.5) : (a))
+   : (op) == FOP_MADD ? FMA(b, d, a)                                                            \
+   : (op) == FOP_RECPS ? FMA(a, b, KK(2))                                                     \
+   : (op) == FOP_RSQRTS ? FMA(a, b, KK(3)) * KK(0.5) : (a))
 
 // Lanes whose fast result needs fixing: NaN results (NaN operand or invalid op), RSQRTS overflow.
 #define FBAD(op, r) ((op) == FOP_RSQRTS ? ((r) != (r)) | (__builtin_elementwise_abs(r) == K(INFINITY)) : (r) != (r))
@@ -76,9 +120,9 @@ SN T FN(nan3)(Cpu *c, T a, T b, T d) {
 // (3 + a*b) / 2 with one rounding (a already negated): halve a normal operand first, so a product beyond
 // the format's range (which the fast path rounds to inf, or to the largest normal when rounding down) is exact.
 SN T FN(rsqrts)(T a, T b) {
-    if (__builtin_elementwise_abs(a) >= FN(fv)(2 * MINN)) return __builtin_elementwise_fma(a * K(0.5), b, K(1.5));
-    if (__builtin_elementwise_abs(b) >= FN(fv)(2 * MINN)) return __builtin_elementwise_fma(a, b * K(0.5), K(1.5));
-    return __builtin_elementwise_fma(a, b, K(3)) * K(0.5);
+    if (__builtin_elementwise_abs(a) >= FN(fv)(2 * MINN)) return FMA_X(a * K(0.5), b, K(1.5));
+    if (__builtin_elementwise_abs(b) >= FN(fv)(2 * MINN)) return FMA_X(a, b * K(0.5), K(1.5));
+    return FMA_X(a, b, K(3)) * K(0.5);
 }
 
 // ARM result for a lane flagged by FBAD (operands already flushed).
@@ -136,13 +180,13 @@ SN T FN(slow)(Cpu *c, int op, T a, T b, T d) {
     if (FMINMAX(op)) return FN(minmax)(c, op, a, b);
     unsigned old = simd_rm_enter(fpcr);
     volatile T va = a, vb = b, vd = d;
-    volatile T vr = op == FOP_RSQRTS ? FN(rsqrts)(va, vb) : FCALC(op, va, vb, vd, K);
+    volatile T vr = op == FOP_RSQRTS ? FN(rsqrts)(va, vb) : FCALC(op, va, vb, vd, K, FMA_X);
     T r = vr;
     if (FBAD(op, r)) vr = FN(fix)(c, op, a, b, d), r = vr;
     if ((fpcr & FPCR_FZ) && (FN(fb)(r) & ~SGN) <= MINN && !FN(iszero)(FN(fb)(r))) {
         if ((FN(fb)(r) & ~SGN) == MINN) {
             simd_rm_rz();
-            volatile T vz = FCALC(op, va, vb, vd, K);
+            volatile T vz = FCALC(op, va, vb, vd, K, FMA_X);
             if ((FN(fb)(vz) & ~SGN) < MINN) r = FN(fv)(FN(fb)(r) & SGN);
         } else {
             r = FN(fv)(FN(fb)(r) & SGN);
@@ -161,19 +205,21 @@ SN T FN(slow)(Cpu *c, int op, T a, T b, T d) {
 // it to fcmp one, a single ucomiss + jne for scalars and one vcmpps for vectors).
 #define FOK(r) ((__builtin_elementwise_abs(r) < FN(fv)(MINN)) | (__builtin_elementwise_abs(r) > FN(fv)(MINN)))
 SN T FN(redo)(Cpu *c, int op, T a, T b, T d, T r) {
-    if (c->fpcr & FPCR_FZ) return FN(slow)(c, op, a, b, d);
+    if (c->fpcr & (FPCR_FZ | FPCR_RM)) return FN(slow)(c, op, a, b, d);
     return FBAD(op, r) ? FN(fix)(c, op, a, b, d) : r;
 }
 
-// Scalar FP op (constant op folds the selection). RMode = nearest runs on the host, with or without FZ.
+// Scalar FP op (constant op folds the selection). RMode = nearest runs on the host, with or without FZ. A directed
+// RMode is rare, so it shares the result check's branch: the host result, computed in round-to-nearest, is then
+// thrown away and redo recomputes in the FPCR mode. Min and max do not round, so RMode does not matter to them.
 SI T FN(op)(Cpu *c, int op, T a, T b, T d) {
-    if (simd_directed(c)) return FN(slow)(c, op, a, b, d);
     if (FMINMAX(op)) {
         if (c->fpcr & FPCR_FZ) a = FN(flush)(a), b = FN(flush)(b);
         return FN(minmax)(c, op, a, b);
     }
-    T r = FCALC(op, a, b, d, K);
-    if (__builtin_expect(op == FOP_RSQRTS ? FREDO(op, r) : !FOK(r), 0)) r = FN(redo)(c, op, a, b, d, r);
+    T r = FCALC(op, a, b, d, K, FMA_S);
+    if (__builtin_expect((op == FOP_RSQRTS ? FREDO(op, r) : !FOK(r)) | simd_directed(c), 0))
+        r = FN(redo)(c, op, a, b, d, r);
     return r;
 }
 
@@ -193,9 +239,9 @@ SI VT FN(vflush)(VT a) {
     return (VT)FN(vsel)(den, u & SGN, u);
 }
 
-// Vector FP op: native lanes; any lane FREDO flags (or FPCR.RMode) reruns all lanes through the scalar path.
+// Vector FP op: native lanes; any lane FREDO flags (or a directed FPCR.RMode, checked in the same branch) reruns all
+// lanes through the scalar path. Min and max ignore RMode, as in FN(op).
 SI VT FN(vop)(Cpu *c, int op, VT a, VT b, VT d) {
-    if (simd_directed(c)) return FN(vslow)(c, op, a, b, d);
     VT r;
     if (FMINMAX(op)) {
         if (c->fpcr & FPCR_FZ) a = FN(vflush)(a), b = FN(vflush)(b);
@@ -207,8 +253,9 @@ SI VT FN(vop)(Cpu *c, int op, VT a, VT b, VT d) {
             r = (VT)FN(vsel)(a < b, x, FN(vsel)(a == b, x | y, y));
         return r;
     }
-    r = FCALC(op, a, b, d, VK);
-    if (__builtin_expect(op == FOP_RSQRTS ? __builtin_reduce_or(FREDO(op, r)) != 0 : __builtin_reduce_and(FOK(r)) == 0, 0))
+    r = FCALC(op, a, b, d, VK, FMA_V);
+    if (__builtin_expect((op == FOP_RSQRTS ? __builtin_reduce_or(FREDO(op, r)) != 0 : __builtin_reduce_and(FOK(r)) == 0)
+                         | simd_directed(c), 0))
         return FN(vslow)(c, op, a, b, d);
     return r;
 }
@@ -216,13 +263,15 @@ SI VT FN(vop)(Cpu *c, int op, VT a, VT b, VT d) {
 SI VT FN(vfz)(Cpu *c, VT a) { return c->fpcr & FPCR_FZ ? FN(vflush)(a) : a; }
 
 // ---- compares
+// FPCR.FZ needs no flush here: rt_fpcr_sync (runtime/cpu.h) keeps MXCSR.DAZ equal to FPCR.FZ, and x86 compares
+// under DAZ read a denormal operand as a zero of its sign, as ARM compares do under FZ.
 SI uint64_t FN(cmp)(Cpu *c, T a, T b) { // FCMP NZCV
-    a = FN(fz)(c, a), b = FN(fz)(c, b);
+    (void)c;
     return a == b ? 0x60000000ull : a < b ? 0x80000000ull : a > b ? 0x20000000ull : 0x30000000ull;
 }
 // FCMEQ/FCMGE/FCMGT/FACGE/FACGT (op 0..4)
 SI VTU FN(vcmp)(Cpu *c, int op, VT a, VT b) {
-    a = FN(vfz)(c, a), b = FN(vfz)(c, b);
+    (void)c;
     if (op >= 3) a = __builtin_elementwise_abs(a), b = __builtin_elementwise_abs(b);
     switch (op) {
     case 0: return (VTU)(a == b);
@@ -363,3 +412,6 @@ SI T FN(recpx)(Cpu *c, T a) {
 #undef MINN
 #undef VK
 #undef K
+#undef FMA_S
+#undef FMA_V
+#undef FMA_X

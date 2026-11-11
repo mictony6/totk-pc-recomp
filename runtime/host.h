@@ -36,6 +36,10 @@ void perf_end(int kind, uint64_t t0);           // counts render-thread time onl
 void perf_replay(uint64_t t0);                  // replay (NVN -> Vulkan recording) time on any thread, waits inside it included
 void perf_replay_thread(void);                  // the calling thread replays for the render thread: perf_end counts its waits
 void perf_main_thread(void);                    // the calling thread is the guest main thread (TOTK_PROFILE_MAIN)
+// The calling thread is one every frame goes through: on a hybrid CPU it prefers the P-cores (main.c, TOTK_PCORE);
+// the first thread of each role logs it.
+enum { PCORE_MAIN, PCORE_RENDER, PCORE_REPLAY, PCORE_RECORDER, PCORE_PRESENT, PCORE_N };
+void perf_core_thread(int role);
 // Events per 60-frame window: graphics pipelines finished by the background workers, draws skipped while pending,
 // first texture uploads and re-uploads after CPU writes, draws skipped while a shader translates in the background,
 // draws that waited for their pending pipeline and got it, draws into a target the previous frame did not render that
@@ -167,6 +171,26 @@ void mem_thaw(uint64_t a, uint64_t n);                     // makes the frozen r
 void mem_freeze_stats(uint64_t *frozen, uint64_t *freezes, uint64_t *fault_thaws, uint64_t *other_thaws);
                                                            // regions frozen now; freezes and thaws since the last call
 void mem_kernel_free(void *p, uint64_t size);              // TLR/TLS reuse after thread exit
+int mem_guest_readable(uint64_t a, uint64_t n);            // [a, a+n) can be read without a fault: inside a loaded
+                                                           // module or the committed heap answered from the layout,
+                                                           // anything else by plat_mem_readable (an OS query)
+
+// ---- short out-of-memory spells (oom.c)
+enum { RT_OOM_COMMIT, RT_OOM_STAGING, RT_OOM_IMAGE, RT_OOM_CHUNK, RT_OOM_SITES };
+extern volatile int32_t rt_oom_req;                        // set by rt_oom_request; vk_texture_new_submit takes it
+void rt_oom_request(void);                                 // asks the Vulkan back end to give memory back at its next
+                                                           // submit (released textures, headroom blocks); any thread,
+                                                           // any lock held
+int rt_oom_wait(const char *what, uint64_t bytes, int (*retry)(void *arg), void *arg);
+                                                           // after a failed allocation: requests a release, then calls
+                                                           // retry every 10 ms for up to 30 s; 1 once retry returned 1,
+                                                           // 0 after the wait (the caller ends the game). Logs the
+                                                           // first 8 with the commit numbers
+void *rt_realloc_wait(void *old, size_t n, const char *what);   // realloc, NULL only after rt_oom_wait gave up
+int rt_oom_forced(int site);                               // 1: fail this attempt at site (TOTK_TEST_OOM=<site>:<n>,
+                                                           // sites commit, staging, image, chunk; or rt_oom_force)
+void rt_oom_force(int site, int n);                        // probes: fail the next n attempts at site
+int rt_oom_forced_left(int site);                          // forced failures still to come at site
 
 // ---- modules (loader.c)
 typedef struct {
@@ -190,9 +214,9 @@ typedef struct { const char *file, *sha256; } RtFileHash;
 extern const RtFileHash rt_exefs_sha256[];                 // tools/data/expected-<version>.json "exefs_sha256"
 extern const int rt_exefs_sha256_count;
 extern const char rt_default_exefs[], rt_default_romfs[], rt_default_profile[];
-extern const int rt_game_version;                          // the game build: 111 (1.1.1), 121 (1.2.1) or 143 (1.4.3)
+extern const int rt_game_version;                          // the game build: 110 (1.1.0), 121 (1.2.1) or 143 (1.4.3)
 extern const char rt_port_version[];                       // VERSION at the build's root: 0.1.0, 0.1.0+973c626 in a release
-#define RT_V111 (rt_game_version == 111)                    // 1.1.1: its own boot constants and data slots
+#define RT_V110 (rt_game_version == 110)                    // 1.1.0: its own boot constants and data slots
 #define RT_V143 (rt_game_version >= 143)
 
 // ---- kernel (kernel.c)
@@ -260,20 +284,31 @@ void cam_pack_served(void);                                // romfs.c serves the
 // ---- game resolution (resolution.c): TOTK_OUTPUT_RES, TOTK_RENDER_SCALE
 uint64_t res_heap_extra_bytes(void);                       // added to the application pool (mem_init), 2 MiB steps
 uint64_t res_heap_extra_kib(void);                         // added to the HeapDef texture heap and its parent; 0 = none
+uint64_t res_tex_heap_extra_bytes(void);                   // TOTK_TEX_HEAP_EXTRA_MB: added to the application pool and
+                                                           // the heap cap (mem_init), 2 MiB steps; 0 = none
+int res_heapdef_tex_grown(const void *in, size_t n);       // the HeapDef table (.byml.zs) grows TextureHeap over the
+                                                           // shipped size (an HD texture pack's)
+int res_heapdef_plain(const void *in, size_t n);           // a readable HeapDef table whose TextureHeap is not
+                                                           // grown (a content mod's)
 int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n);   // the HeapDef table (.byml.zs) with
                                                            // the grown heaps, malloc'd; 0 = cannot (logged)
 void res_heapdef_served(void);                             // romfs.c serves the grown table
 void res_init(void);                                       // after rt_patches_init: the patch page and the sets
 float res_dlss_lod_bias(void);                             // TOTK_DLSS upscaling: texture LOD bias (<= 0)
-int res_dlss_dll(void);                                    // nvngx_dlss.dll is next to totk.exe (Windows): DLSS can run
+int res_dlss_mode(const char *mode);                       // TOTK_DLSS changed while running: new scene size
 void res_sizes(unsigned out[2], unsigned scene[2]);      // the output and scene sizes in effect (the game's own
                                                            // until res_init switched the sets on)
 int res_is_16x9(unsigned w, unsigned h);                   // within 1% of 16:9 (the test res_init and romfs.c share)
 int res_wants_wide_overlay(const unsigned out[2]);         // not 16:9 on a game version with the camera aspect patch
+int romfs_shaped_ready(unsigned w, unsigned h);            // romfs-patches-<w>x<h> has a manifest (romfs.c; works
+                                                           // before fs_init)
+int romfs_shaped_prompts_ready(const char *folder, unsigned w, unsigned h);   // the same for <folder>-<w>x<h>, a
+                                                           // prompts' folder (romfs-patches-xbox, -xbox-label, -pc)
 void res_wanted(unsigned out[2]);                          // the output size TOTK_OUTPUT_RES asks for
 void res_fov_live(void);                                   // TOTK_FOV to the camera (set fov); on a settings change
 void res_grass_live(void);                                 // TOTK_GRASS_DIST to the grass (set grassdist); likewise
 void res_scene_live(void);                                 // render_scale / DLSS: the scene resized in play (1.4.3)
+void res_dynres_live(void);                                // TOTK_DYNAMIC_RES to the game (set fixres); on a settings change
 // ---- code patches (patches.c) and the frame step (frame_rate.c)
 void rt_patches_init(void);                                // after ldr_load: switches from the environment, the patch
                                                            // page committed; logs the sets
@@ -314,6 +349,13 @@ void rt_boot(void);                                        // boot.c
 // process exit code.
 int probe_cfg(void);                                       // cfg_probe.c
 int probe_dpi(void);                                       // dpi_probe_win.c (Windows only)
+int probe_mods(void);                                      // mods_probe.c
+void discord_init(void);                                   // discord_rpc.c: the Rich Presence thread, game runs only
+void playtime_init(void);                                  // playtime.c: the play time thread, game runs only
+void playtime_save(void);                                  // playtime.c: writes <profile>/playtime.txt; at exit
+int playtime_get(uint64_t *total_s, uint64_t *session_s); // playtime.c: all runs and this one; 0 without a profile
+int probe_playtime(void);                                  // playtime.c: the file, the ticks and the save
+int probe_discord(void);                                   // discord_rpc.c
 int probe_loader(void), probe_kernel(void), probe_ipc(void), probe_services(void), probe_fs(void);
 int probe_gfx_abi(void);                                   // gfx_abi_probe.c
 int probe_vkdevice(void);                                 // vk_device.c

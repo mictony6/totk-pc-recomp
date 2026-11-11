@@ -88,6 +88,12 @@ site scene main 585e60 bd0cca60 bd0cca61    # str s0, [x19, #0xcc8] -> str s1, [
 # Page +112 is a one-shot request: the update ORs it in as bit 0x80 and clears it, so a new size on page +16 takes
 # effect at the game's next frame. x10 and x11 are free: both paths after the test write them before reading them.
 site scene main 580920 794012e8 794012e8 @page:x10 3941c14b 3901c15f 2a0b1d08   # ldrh w8, [x23, #8]; ldrb w11, [x10, #112]; strb wzr, [x10, #112]; orr w8, w8, w11, lsl #7
+# Fixed scene size (MacNativeGames game_patches_v143.c patch_fixed_res; runtime/resolution.c res_dynres_live switches
+# the set on unless TOTK_DYNAMIC_RES=1). The dynamic resolution controller (main+0x584300, 1.2.1 0xcc26f4) steps the
+# scene through tiers of 100, 90 and 80 % by a cost model that grows with the scene width squared; at its one epilogue the tier's scale moves into
+# the result, and 1.0 there makes every tier 100 %. The original word is MacNativeGames' check against 1.4.3.
+set fixres   TOTK_FIXED_RES_PATCH 0
+site fixres main 5848a8 2a1703e9 52a7f009   # mov w9, w23 -> mov w9, #0x3f800000 (1.0f)
 
 # Camera aspect ratio for a game resolution that is not 16:9 (upstream game_patches_v143.c and aspect_patch.h
 # aspect_install / aspect_stub; runtime/resolution.c res_init writes the output's width / height to page +56 and
@@ -109,6 +115,94 @@ site aspect main 253fbb0 1e211800 f81f0fea @page:x10 bd403940 f84107ea  # fdiv s
 set fov      TOTK_FOV_PATCH      0
 site fov    main 628c3c bd413e60 f81f0fea @page:x10 bd413e60 bd403d48 1e280800 f84107ea   # ldr s0, [x19, #0x13c] (camera update)
 site fov    main b4342c bd4066c0 f81f0fea @page:x10 bd4066c0 bd403d48 1e280800 f84107ea   # ldr s0, [x22, #0x64] (camera setup)
+
+# The camera input update, after its stick dead zone, unit-radius clamp and StickExponent. The host callback
+# performs the displaced store and adds raw mouse counts to s9/s10 (runtime/mouse_direct.c camera_input).
+# Its address is page +0xfd0; the page is main+0x3adf000 on this verified build.
+set mouse_direct TOTK_MOUSE_DIRECT_PATCH 1
+site mouse_direct main 874cb4 bd042289 94c9acc7
+site mouse_direct main 874d7c 6d40a3e9 94c9ac91
+site mouse_direct main 18e444 f9400408 94e546db
+site mouse_direct main 18f108 bd4047ec 94e543a6
+# Keep native camera-distance easing when direct mouse orbit bypasses the stick integrators.
+site mouse_direct main 18ea34 b9418a88 94e5454f   # orbit state: ldr w8, [x20, #0x188]
+site mouse_direct main 1d59460 b9004be8 94761acc
+# The aiming, scope, ability, horse and Purah Pad camera cameras: per axis, the float load the stick turn is computed
+# from (the gamepad's part only) and the load of the angle it is added to (plus the mouse's degrees), each a bl to page
+# +0xf80, told apart by the return address (runtime/mouse_direct.c camera_load, load_sites). Every enclosing function
+# saves x30 in its prologue, so the bl's link register write is harmless.
+site mouse_direct main 23beb94 bd4426c1 945c84fb   # Aiming: ldr s1, [x22, #0x424] (stick y)
+site mouse_direct main 23bebc8 bd415e61 945c84ee   # Aiming: ldr s1, [x19, #0x15c] (pitch)
+site mouse_direct main 23bee2c bd4422c1 945c8455   # Aiming: ldr s1, [x22, #0x420] (stick x)
+site mouse_direct main 23beeec bc5b83a1 945c8425   # Aiming: ldur s1, [x29, #-0x48] (yaw)
+site mouse_direct main 23c0a10 bd4422e0 945c7d5c   # AimingTelescope: ldr s0, [x23, #0x420] (stick x)
+site mouse_direct main 23c0a1c bd4426eb 945c7d59   # AimingTelescope: ldr s11, [x23, #0x424] (stick y)
+site mouse_direct main 23c0b00 bd416260 945c7d20   # AimingTelescope: ldr s0, [x19, #0x160] (pitch)
+site mouse_direct main 23c0e80 bd405be1 945c7c40   # AimingTelescope: ldr s1, [sp, #0x58] (yaw)
+site mouse_direct main 23d2eec bd4422e8 945c3425   # SpecialPower: ldr s8, [x23, #0x420] (stick x)
+site mouse_direct main 23d2ef4 bd4426ee 945c3423   # SpecialPower: ldr s14, [x23, #0x424] (stick y)
+site mouse_direct main 23d3158 bd416260 945c338a   # SpecialPower: ldr s0, [x19, #0x160] (pitch)
+site mouse_direct main 23d34cc bc5b03a1 945c32ad   # SpecialPower: ldur s1, [x29, #-0x50] (yaw)
+site mouse_direct main 23cb274 bd442288 945c5343   # Horse: ldr s8, [x20, #0x420] (stick x)
+site mouse_direct main 23cb2a0 bd406a61 945c5338   # Horse: ldr s1, [x19, #0x68] (yaw)
+site mouse_direct main 23cb3f8 bd4426a8 945c52e2   # Horse: ldr s8, [x21, #0x424] (stick y)
+site mouse_direct main 23cb424 bd406661 945c52d7   # Horse: ldr s1, [x19, #0x64] (pitch)
+site mouse_direct main 23d2f30 bd4422e8 945c3414   # SpecialPower offset mode: ldr s8, [x23, #0x420] (stick x)
+site mouse_direct main 23d2f5c bd41da62 945c3409   # SpecialPower offset mode: ldr s2, [x19, #0x1d8] (offset x)
+site mouse_direct main 23d2f6c bd4426e8 945c3405   # SpecialPower offset mode: ldr s8, [x23, #0x424] (stick y)
+site mouse_direct main 23d2f98 bd41de62 945c33fa   # SpecialPower offset mode: ldr s2, [x19, #0x1dc] (offset y)
+site mouse_direct main 23d3210 bd400400 945c335c   # SpecialPower: ldr s0, [x0, #0x4] (offset scale, read only)
+site mouse_direct main 23c2890 bd4426ad 945c75bc   # CameraFinder: ldr s13, [x21, #0x424] (stick y)
+site mouse_direct main 23c28b4 bd405261 945c75b3   # CameraFinder: ldr s1, [x19, #0x50] (pitch)
+site mouse_direct main 23c2934 bd4422ad 945c7593   # CameraFinder: ldr s13, [x21, #0x420] (stick x)
+site mouse_direct main 23c2964 bd404be1 945c7587   # CameraFinder: ldr s1, [sp, #0x48] (yaw)
+# The other player cameras (runtime/mouse_direct.c load_sites; a ROLE_WATCH load stays the game's and only names its
+# mode in the log when the mouse was in it):
+site mouse_direct main 23c3dd0 bd442301 945c706c   # ClimbObj: ldr s1, [x24, #0x420]
+site mouse_direct main 23c3dd8 bd409261 945c706a   # ClimbObj: ldr s1, [x19, #0x90] (yaw)
+site mouse_direct main 23c3d64 bd442701 945c7087   # ClimbObj: ldr s1, [x24, #0x424]
+# ClimbObj's pitch is a pre-indexed load, ldr s1, [x22, #0x88]!, whose write-back the code after it needs (ldp and
+# str through x22). A host call cannot write x22: the lifter keeps X19-X29 in locals across a call. So the mov before
+# it adds the 0x88 instead (x22 = x19 + 0x88) and the hook loads [x22] with no write-back.
+site mouse_direct main 23c3d5c aa1303f6 91022276   # ClimbObj: mov x22, x19 -> add x22, x19, #0x88
+site mouse_direct main 23c3d70 bc488ec1 945c7084   # ClimbObj: ldr s1, [x22, #0x88]! (pitch), as ldr s1, [x22]
+site mouse_direct main 23da694 bd4422c1 945c163b   # Wakeboard: ldr s1, [x22, #0x420]
+site mouse_direct main 23da698 bd4426c0 945c163a   # Wakeboard: ldr s0, [x22, #0x424] (stick y, kept)
+site mouse_direct main 23da840 bd40da60 945c15d0   # Wakeboard: ldr s0, [x19, #0xd8] (pitch)
+site mouse_direct main 23da894 bd4017e0 945c15bb   # Wakeboard: ldr s0, [sp, #0x14] (pitch turn, cut to the pad)
+site mouse_direct main 23daed8 bd403fe9 945c142a   # Wakeboard: ldr s9, [sp, #0x3c] (yaw)
+site mouse_direct main 23dced8 bd4422cd 945c0c2a   # WaterfallClimb: ldr s13, [x22, #0x420]
+site mouse_direct main 23dd070 b85cc3a8 945c0bc4   # WaterfallClimb: ldur w8, [x29, #-0x34] (yaw)
+site mouse_direct main 23dd008 bd4426c9 945c0bde   # WaterfallClimb: ldr s9, [x22, #0x424]
+site mouse_direct main 23d4b14 bd44228c 945c2d1b   # Tail: ldr s12, [x20, #0x420]
+site mouse_direct main 23d4b1c bd44268d 945c2d19   # Tail (climbing): ldr s13, [x20, #0x424] (stick y)
+site mouse_direct main 23d4f34 bd40c260 945c2c13   # Tail (climbing): ldr s0, [x19, #0xc0] (yaw)
+site mouse_direct main 23d5028 bd40b661 945c2bd6   # Tail (climbing): ldr s1, [x19, #0xb4] (pitch)
+site mouse_direct main 23d756c bd442300 945c2285   # LockOn / Target: ldr s0, [x24, #0x420]
+site mouse_direct main 23d7594 bd442301 945c227b   # LockOn / Target: ldr s1, [x24, #0x420] (stick x)
+site mouse_direct main 23d75b4 bd4023e0 945c2273   # LockOn / Target: ldr s0, [sp, #0x20] (yaw turn)
+site mouse_direct main 23d75c4 bd4023e9 945c226f   # LockOn / Target: ldr s9, [sp, #0x20] (yaw turn)
+site mouse_direct main 23d7998 bd442701 945c217a   # LockOn / Target: ldr s1, [x24, #0x424] (stick y)
+site mouse_direct main 23d79b8 bd4023e0 945c2172   # LockOn / Target: ldr s0, [sp, #0x20] (pitch turn)
+site mouse_direct main 23d79c8 bd4023ea 945c216e   # LockOn / Target: ldr s10, [sp, #0x20] (pitch turn)
+site mouse_direct main 23cecb4 bd4426a9 945c44b3   # LockOnAimingAt: ldr s9, [x21, #0x424] (stick y)
+site mouse_direct main 23cecf8 bd419a61 945c44a2   # LockOnAimingAt: ldr s1, [x19, #0x198] (pitch offset)
+site mouse_direct main 23ced0c bd4422a9 945c449d   # LockOnAimingAt: ldr s9, [x21, #0x420] (stick x)
+site mouse_direct main 23ced4c bd419e61 945c448d   # LockOnAimingAt: ldr s1, [x19, #0x19c] (yaw offset)
+site mouse_direct main 23cc4b4 bd44232b 945c4eb3   # HorseLockOnEmpty: ldr s11, [x25, #0x420]
+site mouse_direct main 23c54d4 bd4422eb 945c6aab   # EventMultiTalk: ldr s11, [x23, #0x420]
+site mouse_direct main 23c542c bd4426eb 945c6ad5   # EventMultiTalk: ldr s11, [x23, #0x424] (stick y)
+site mouse_direct main 23c546c bd405e61 945c6ac5   # EventMultiTalk: ldr s1, [x19, #0x5c] (pitch)
+site mouse_direct main 23c5554 bd406661 945c6a8b   # EventMultiTalk: ldr s1, [x19, #0x64] (yaw)
+site mouse_direct main 23c90ac bd442709 945c5bb5   # EventTalkManual: ldr s9, [x24, #0x424] (stick y)
+site mouse_direct main 23c90d8 bd407661 945c5baa   # EventTalkManual: ldr s1, [x19, #0x74] (pitch)
+site mouse_direct main 23c9140 bd442309 945c5b90   # EventTalkManual: ldr s9, [x24, #0x420] (stick x)
+site mouse_direct main 23c9170 bd407e61 945c5b84   # EventTalkManual: ldr s1, [x19, #0x7c] (yaw)
+site mouse_direct main 23d0100 bd4422c1 945c3fa0   # ShieldSurfing: ldr s1, [x22, #0x420] (stick x)
+site mouse_direct main 23d0104 bd4426c0 945c3f9f   # ShieldSurfing: ldr s0, [x22, #0x424] (stick y, kept)
+site mouse_direct main 23d02ac bd40de60 945c3f35   # ShieldSurfing: ldr s0, [x19, #0xdc] (pitch)
+site mouse_direct main 23d0a34 bd4013e0 945c3d53   # ShieldSurfing: ldr s0, [sp, #0x10] (pitch turn, cut to the pad)
+site mouse_direct main 23d087c bd403fe9 945c3dc1   # ShieldSurfing: ldr s9, [sp, #0x3c] (yaw)
 
 # The game's zstd decoder (BSD zstd, statically linked into main) through the host's libzstd (runtime/ov_zstd.c):
 # every call of ZSTD_decompressMultiFrame (main+0x3a1f0: dctx, dst, capacity, src, size, dict, dict size, ddict) and of
@@ -1028,3 +1122,18 @@ site grassdist main e77a30 bd41a128 bd41a128 @page:x16 b9406210 4e0c1e08 5fa8910
 site grassdist main e77b94 bd41a141 bd41a141 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x10, #0x1a0] times [page+96]
 site grassdist main e79d3c bd41a1a1 bd41a1a1 @page:x16 b9406210 4e0c1e01 5fa19021   # ldr s1, [x13, #0x1a0] times [page+96]
 site grassdist main e7a30c bd41a001 bd41a001 @page:x0 b9406000 4e0c1c01 5fa19021   # ldr s1, [x0, #0x1a0] times [page+96]
+# Climbing (issues #35, #276, #1001): the climb controller's velocity step (main+0x1f49754, shared by wall and ladder
+# climbing, climb jumps and climb-overs) multiplies the requested velocity by a factor that makes up for a movement loss
+# growing with the frame rate. Below ratio 1 the factor is 1.272 + 1.189 (1 - r) clamped to [1, 2] (r = VFR +0, the
+# 30 Hz ratio times the time scale): Nintendo's fit for 30 and 60 fps, flat at 2 from about 77 fps, so Link climbs at
+# 63% of the speed at 120 fps and 34% at 240. Below r = 0.5 take g(r) = 0.66265 / r + 0.4982 + 0.0848 r instead,
+# fitted to the replayed ladder climb at 120 and 240 fps and equal to the shipping 1.8665 at r = 0.5; at most 8. The
+# site computes g with 16 * max(r - 0.5, 0) subtracted, so g stays under the shipping factor for r >= 0.5, and folds it
+# into the existing clamp without flags: s0 = max(s0, g) (the value clamped), s1 = max(2, g) (the bound). r >= 0.5
+# keeps the shipping factor bit for bit. x8 is dead after the constant load at 0x1f497e8, s2-s4 are loaded again at
+# 0x1f49844 before any read.
+# g takes u = max(page +0, r): the patch page's 30 Hz frame ratio without the time scale (runtime/frame_rate.c), so
+# slow motion at 30 or 60 fps keeps the shipping factor and only a real frame rate above 60 raises it; the runtime
+# switches the set off without the real-time step, where the page is not written.
+set climb    TOTK_CLIMB_FIX      1
+site climb main 1f497f4 1e201001 @page:x8 bd400104 1e286884 52946dc8 72a7e528 1e270102 1e241842 52828248 72a7dfe8 1e270103 1e232842 529573e8 72a7b5a8 1e270103 1f040862 1e2a3883 2f00e404 1e246863 1e261004 1f048862 1e241004 1e247842 1e226800 1e201001 1e226821   # fmov s1, #2.0 -> s2 = g(u); s0 = max(s0, s2); s1 = max(2.0, s2)

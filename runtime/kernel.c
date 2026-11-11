@@ -246,6 +246,44 @@ static void wake_sync_waiters(void) {
     }
 }
 
+// ---- a short poll before a sleep
+// Most guest waits and waits for a virtual core end within microseconds. The thread polls for TOTK_KSPIN_US (default
+// 20) with G released before it sleeps on its condition variable: a wake in that time costs no OS wake-up (4-12 us
+// on a desktop Ryzen, more from a deep C-state) and the waker's signal finds nobody asleep. Off with fewer than 6 logical
+// processors, where the poll would take a CPU that a running thread needs; TOTK_KSPIN_US=0 turns it off. Savage Wind
+// Recomp polls the same way before it parks (runtime/ksync.c cond_wait). TOTK_KSPIN_US=ab polls 20 us in the
+// B blocks of TOTK_AB only.
+static int64_t g_kspin_ns = -1;
+static int g_kspin_ab;
+
+static uint64_t kspin_ns(void) {
+    int64_t v = __atomic_load_n(&g_kspin_ns, __ATOMIC_RELAXED);
+    if (v < 0) {
+        const char *e = cfg_get("TOTK_KSPIN_US");
+        g_kspin_ab = e && !strcmp(e, "ab");
+        long long us = e && *e && !g_kspin_ab ? atoll(e) : 20;
+        uint32_t cpus = plat_cpu_usable();
+        v = us <= 0 || cpus < 6 ? 0 : us * 1000;
+        __atomic_store_n(&g_kspin_ns, v, __ATOMIC_RELAXED);
+        rt_log("kernel: waits poll %lld us before they sleep%s (TOTK_KSPIN_US, %u logical processors)",
+               (long long)(v / 1000), g_kspin_ab ? " in the B blocks" : "", cpus);
+    }
+    return v && (!g_kspin_ab || rt_ab()) ? (uint64_t)v : 0;
+}
+
+// Holding G: releases it and polls *p until it reaches at_least or ns pass, then takes G again. 1 if it was reached.
+static int kspin(const int *p, int at_least, uint64_t ns) {
+    uint64_t end = kern_now_ns() + ns;
+    int ok = 0;
+    unlock();
+    for (unsigned i = 1; !(ok = __atomic_load_n(p, __ATOMIC_ACQUIRE) >= at_least); i++) {
+        plat_pause();
+        if (!(i & 31) && kern_now_ns() >= end) break;
+    }
+    lock();
+    return ok;
+}
+
 // SleepConditionVariableSRW counts milliseconds: round up (late is legal, early is not) and re-check the deadline
 // against the performance counter, because the wait may also end early.
 static uint32_t block_inner(RtThread *t, int kind, int64_t ns) {
@@ -262,6 +300,8 @@ static uint32_t block_inner(RtThread *t, int kind, int64_t ns) {
     uint64_t now = kern_now_ns();
     int forever = ns < 0 || (uint64_t)ns > UINT64_MAX - now;
     uint64_t deadline = forever ? 0 : now + (uint64_t)ns;
+    uint64_t poll = kspin_ns();
+    if (poll) kspin(&t->woke, 1, forever || poll < (uint64_t)ns ? poll : (uint64_t)ns);
     while (!t->woke) {
         if (forever) {
             plat_cond_wait(&t->cv, &G);
@@ -415,6 +455,18 @@ static int ap_disabled(const RtThread *t) { return g_ap > 0 && ap_tlr(t)[0]; }
 // in kern_ap_yield and jumps back to kern_ap_rip(), whose value it first stores in the return slot it reserved at
 // entry, so a stack walk sees the interrupted function as its caller. No ret: the jump keeps call/return pairs
 // balanced. The waiter never writes the owner's stack.
+// An x86-64-v2 build (no __AVX__) saves XMM0-15 with SSE moves into the same 32-byte slots instead: its game code
+// keeps nothing in the upper YMM halves, and the CPUs it is for have no VEX encoding, so a vmovdqa there faults with
+// an illegal instruction the first time a core is interrupted.
+#ifdef __AVX__
+#define AP_VMOV "vmovdqa"
+#define AP_V "%ymm"
+#define AP_VZEROUPPER "    vzeroupper\n"
+#else
+#define AP_VMOV "movdqa"
+#define AP_V "%xmm"
+#define AP_VZEROUPPER ""
+#endif
 #ifdef _WIN32
 __asm__(".text\n"
         ".globl kern_ap_stub\n"
@@ -446,48 +498,48 @@ __asm__(".text\n"
         ".seh_setframe %rbp, 0\n"
         ".seh_endprologue\n"
         "    andq $-32, %rsp\n"
-        "    subq $576, %rsp\n"   // 0: shadow space, 32: MXCSR saved, 36: MXCSR default, 64: YMM0-15
-        "    vmovdqa %ymm0, 64(%rsp)\n"
-        "    vmovdqa %ymm1, 96(%rsp)\n"
-        "    vmovdqa %ymm2, 128(%rsp)\n"
-        "    vmovdqa %ymm3, 160(%rsp)\n"
-        "    vmovdqa %ymm4, 192(%rsp)\n"
-        "    vmovdqa %ymm5, 224(%rsp)\n"
-        "    vmovdqa %ymm6, 256(%rsp)\n"
-        "    vmovdqa %ymm7, 288(%rsp)\n"
-        "    vmovdqa %ymm8, 320(%rsp)\n"
-        "    vmovdqa %ymm9, 352(%rsp)\n"
-        "    vmovdqa %ymm10, 384(%rsp)\n"
-        "    vmovdqa %ymm11, 416(%rsp)\n"
-        "    vmovdqa %ymm12, 448(%rsp)\n"
-        "    vmovdqa %ymm13, 480(%rsp)\n"
-        "    vmovdqa %ymm14, 512(%rsp)\n"
-        "    vmovdqa %ymm15, 544(%rsp)\n"
+        "    subq $576, %rsp\n"   // 0: shadow space, 32: MXCSR saved, 36: MXCSR default, 64: YMM0-15 (XMM0-15 without AVX)
+        "    " AP_VMOV " " AP_V "0, 64(%rsp)\n"
+        "    " AP_VMOV " " AP_V "1, 96(%rsp)\n"
+        "    " AP_VMOV " " AP_V "2, 128(%rsp)\n"
+        "    " AP_VMOV " " AP_V "3, 160(%rsp)\n"
+        "    " AP_VMOV " " AP_V "4, 192(%rsp)\n"
+        "    " AP_VMOV " " AP_V "5, 224(%rsp)\n"
+        "    " AP_VMOV " " AP_V "6, 256(%rsp)\n"
+        "    " AP_VMOV " " AP_V "7, 288(%rsp)\n"
+        "    " AP_VMOV " " AP_V "8, 320(%rsp)\n"
+        "    " AP_VMOV " " AP_V "9, 352(%rsp)\n"
+        "    " AP_VMOV " " AP_V "10, 384(%rsp)\n"
+        "    " AP_VMOV " " AP_V "11, 416(%rsp)\n"
+        "    " AP_VMOV " " AP_V "12, 448(%rsp)\n"
+        "    " AP_VMOV " " AP_V "13, 480(%rsp)\n"
+        "    " AP_VMOV " " AP_V "14, 512(%rsp)\n"
+        "    " AP_VMOV " " AP_V "15, 544(%rsp)\n"
         "    stmxcsr 32(%rsp)\n"
         "    movl $0x1f80, 36(%rsp)\n"
         "    ldmxcsr 36(%rsp)\n"
         "    cld\n"
-        "    vzeroupper\n"
+        AP_VZEROUPPER
         "    call kern_ap_rip\n"
         "    movq %rax, 72(%rbp)\n"   // the return slot: rbp + 8 pushes + pushfq
         "    call kern_ap_yield\n"
         "    ldmxcsr 32(%rsp)\n"
-        "    vmovdqa 64(%rsp), %ymm0\n"
-        "    vmovdqa 96(%rsp), %ymm1\n"
-        "    vmovdqa 128(%rsp), %ymm2\n"
-        "    vmovdqa 160(%rsp), %ymm3\n"
-        "    vmovdqa 192(%rsp), %ymm4\n"
-        "    vmovdqa 224(%rsp), %ymm5\n"
-        "    vmovdqa 256(%rsp), %ymm6\n"
-        "    vmovdqa 288(%rsp), %ymm7\n"
-        "    vmovdqa 320(%rsp), %ymm8\n"
-        "    vmovdqa 352(%rsp), %ymm9\n"
-        "    vmovdqa 384(%rsp), %ymm10\n"
-        "    vmovdqa 416(%rsp), %ymm11\n"
-        "    vmovdqa 448(%rsp), %ymm12\n"
-        "    vmovdqa 480(%rsp), %ymm13\n"
-        "    vmovdqa 512(%rsp), %ymm14\n"
-        "    vmovdqa 544(%rsp), %ymm15\n"
+        "    " AP_VMOV " 64(%rsp), " AP_V "0\n"
+        "    " AP_VMOV " 96(%rsp), " AP_V "1\n"
+        "    " AP_VMOV " 128(%rsp), " AP_V "2\n"
+        "    " AP_VMOV " 160(%rsp), " AP_V "3\n"
+        "    " AP_VMOV " 192(%rsp), " AP_V "4\n"
+        "    " AP_VMOV " 224(%rsp), " AP_V "5\n"
+        "    " AP_VMOV " 256(%rsp), " AP_V "6\n"
+        "    " AP_VMOV " 288(%rsp), " AP_V "7\n"
+        "    " AP_VMOV " 320(%rsp), " AP_V "8\n"
+        "    " AP_VMOV " 352(%rsp), " AP_V "9\n"
+        "    " AP_VMOV " 384(%rsp), " AP_V "10\n"
+        "    " AP_VMOV " 416(%rsp), " AP_V "11\n"
+        "    " AP_VMOV " 448(%rsp), " AP_V "12\n"
+        "    " AP_VMOV " 480(%rsp), " AP_V "13\n"
+        "    " AP_VMOV " 512(%rsp), " AP_V "14\n"
+        "    " AP_VMOV " 544(%rsp), " AP_V "15\n"
         "    movq %rbp, %rsp\n"
         "    popq %rbp\n"
         "    popq %r11\n"
@@ -525,48 +577,48 @@ __asm__(".text\n"
         "    pushq %rbp\n"
         "    movq %rsp, %rbp\n"
         "    andq $-32, %rsp\n"
-        "    subq $576, %rsp\n"   // 32: MXCSR saved, 36: MXCSR default, 64: YMM0-15
-        "    vmovdqa %ymm0, 64(%rsp)\n"
-        "    vmovdqa %ymm1, 96(%rsp)\n"
-        "    vmovdqa %ymm2, 128(%rsp)\n"
-        "    vmovdqa %ymm3, 160(%rsp)\n"
-        "    vmovdqa %ymm4, 192(%rsp)\n"
-        "    vmovdqa %ymm5, 224(%rsp)\n"
-        "    vmovdqa %ymm6, 256(%rsp)\n"
-        "    vmovdqa %ymm7, 288(%rsp)\n"
-        "    vmovdqa %ymm8, 320(%rsp)\n"
-        "    vmovdqa %ymm9, 352(%rsp)\n"
-        "    vmovdqa %ymm10, 384(%rsp)\n"
-        "    vmovdqa %ymm11, 416(%rsp)\n"
-        "    vmovdqa %ymm12, 448(%rsp)\n"
-        "    vmovdqa %ymm13, 480(%rsp)\n"
-        "    vmovdqa %ymm14, 512(%rsp)\n"
-        "    vmovdqa %ymm15, 544(%rsp)\n"
+        "    subq $576, %rsp\n"   // 32: MXCSR saved, 36: MXCSR default, 64: YMM0-15 (XMM0-15 without AVX)
+        "    " AP_VMOV " " AP_V "0, 64(%rsp)\n"
+        "    " AP_VMOV " " AP_V "1, 96(%rsp)\n"
+        "    " AP_VMOV " " AP_V "2, 128(%rsp)\n"
+        "    " AP_VMOV " " AP_V "3, 160(%rsp)\n"
+        "    " AP_VMOV " " AP_V "4, 192(%rsp)\n"
+        "    " AP_VMOV " " AP_V "5, 224(%rsp)\n"
+        "    " AP_VMOV " " AP_V "6, 256(%rsp)\n"
+        "    " AP_VMOV " " AP_V "7, 288(%rsp)\n"
+        "    " AP_VMOV " " AP_V "8, 320(%rsp)\n"
+        "    " AP_VMOV " " AP_V "9, 352(%rsp)\n"
+        "    " AP_VMOV " " AP_V "10, 384(%rsp)\n"
+        "    " AP_VMOV " " AP_V "11, 416(%rsp)\n"
+        "    " AP_VMOV " " AP_V "12, 448(%rsp)\n"
+        "    " AP_VMOV " " AP_V "13, 480(%rsp)\n"
+        "    " AP_VMOV " " AP_V "14, 512(%rsp)\n"
+        "    " AP_VMOV " " AP_V "15, 544(%rsp)\n"
         "    stmxcsr 32(%rsp)\n"
         "    movl $0x1f80, 36(%rsp)\n"
         "    ldmxcsr 36(%rsp)\n"
         "    cld\n"
-        "    vzeroupper\n"
+        AP_VZEROUPPER
         "    call kern_ap_rip\n"
         "    movq %rax, 88(%rbp)\n"   // the return slot: rbp + 10 pushes + pushfq
         "    call kern_ap_yield\n"
         "    ldmxcsr 32(%rsp)\n"
-        "    vmovdqa 64(%rsp), %ymm0\n"
-        "    vmovdqa 96(%rsp), %ymm1\n"
-        "    vmovdqa 128(%rsp), %ymm2\n"
-        "    vmovdqa 160(%rsp), %ymm3\n"
-        "    vmovdqa 192(%rsp), %ymm4\n"
-        "    vmovdqa 224(%rsp), %ymm5\n"
-        "    vmovdqa 256(%rsp), %ymm6\n"
-        "    vmovdqa 288(%rsp), %ymm7\n"
-        "    vmovdqa 320(%rsp), %ymm8\n"
-        "    vmovdqa 352(%rsp), %ymm9\n"
-        "    vmovdqa 384(%rsp), %ymm10\n"
-        "    vmovdqa 416(%rsp), %ymm11\n"
-        "    vmovdqa 448(%rsp), %ymm12\n"
-        "    vmovdqa 480(%rsp), %ymm13\n"
-        "    vmovdqa 512(%rsp), %ymm14\n"
-        "    vmovdqa 544(%rsp), %ymm15\n"
+        "    " AP_VMOV " 64(%rsp), " AP_V "0\n"
+        "    " AP_VMOV " 96(%rsp), " AP_V "1\n"
+        "    " AP_VMOV " 128(%rsp), " AP_V "2\n"
+        "    " AP_VMOV " 160(%rsp), " AP_V "3\n"
+        "    " AP_VMOV " 192(%rsp), " AP_V "4\n"
+        "    " AP_VMOV " 224(%rsp), " AP_V "5\n"
+        "    " AP_VMOV " 256(%rsp), " AP_V "6\n"
+        "    " AP_VMOV " 288(%rsp), " AP_V "7\n"
+        "    " AP_VMOV " 320(%rsp), " AP_V "8\n"
+        "    " AP_VMOV " 352(%rsp), " AP_V "9\n"
+        "    " AP_VMOV " 384(%rsp), " AP_V "10\n"
+        "    " AP_VMOV " 416(%rsp), " AP_V "11\n"
+        "    " AP_VMOV " 448(%rsp), " AP_V "12\n"
+        "    " AP_VMOV " 480(%rsp), " AP_V "13\n"
+        "    " AP_VMOV " 512(%rsp), " AP_V "14\n"
+        "    " AP_VMOV " 544(%rsp), " AP_V "15\n"
         "    movq %rbp, %rsp\n"
         "    popq %rbp\n"
         "    popq %r11\n"
@@ -979,6 +1031,9 @@ static void core_take(RtThread *t) {
         while (__atomic_load_n(&t->cur_core, __ATOMIC_RELAXED) < 0 && kern_now_ns() < end) plat_pause();
         lock();
         if (t->cur_core >= 0) g_ap_spin_ok++;
+    } else if (t->cur_core < 0) {   // a holder may block or yield any moment (kspin_ns)
+        uint64_t poll = kspin_ns();
+        if (poll) kspin(&t->cur_core, 0, poll);
     }
     int sampled = 0;
     while (t->cur_core < 0) {
@@ -1506,6 +1561,7 @@ uint32_t kern_main_thread(Cpu **cpu) {
     t->cpu->sp = t->stack_top;
     t->tid = plat_thread_id();
     perf_main_thread();
+    perf_core_thread(PCORE_MAIN);
     PlatIntr *self = ap_open_self();
     lock();
     t->hthr = self;
@@ -1888,7 +1944,9 @@ int kern_svc(Cpu *c, uint32_t imm) {
         if (type != 0) {
             int32_t nv = val + 1;
             if (type == 2) {
-                if (cnt <= 0) nv = nw > 0 ? val - 1 : val + 1;
+                // Waking all (count <= 0) with waiters subtracts 2, not 1 (mesosphere
+                // KAddressArbiter::SignalAndModifyByWaitingCountIfEqual; yuzu, LAS Recomp and nxnative agree).
+                if (cnt <= 0) nv = nw > 0 ? val - 2 : val + 1;
                 else nv = nw == 0 ? val + 1 : nw <= cnt ? val - 1 : val;
             }
             uint32_t e = (uint32_t)val;
@@ -1952,8 +2010,13 @@ int kern_svc(Cpu *c, uint32_t imm) {
         int idx = -1;
         lock();
         g_sync_calls++;
+        // Horizon's order (mesosphere KSynchronizationObject::Wait): a signalled object, then timeout 0, then a pending
+        // CancelSynchronization. The cancel is for the next wait that would block: a poll or a wait on a signalled
+        // object leaves it pending. A cancel that wakes this wait (CancelSynchronization wakes it with R_CANCELLED; a
+        // signal wakes it with -1 to look again) ends it cancelled, signalled objects or not.
+        uint32_t woke = 0;
         for (;;) {
-            if (t->cancel) {
+            if (woke == R_CANCELLED) {
                 t->cancel = 0;
                 r = R_CANCELLED;
                 break;
@@ -1969,6 +2032,15 @@ int kern_svc(Cpu *c, uint32_t imm) {
                 r = R_OK;
                 break;
             }
+            if (ns == 0) {
+                r = R_TIMEOUT;
+                break;
+            }
+            if (t->cancel) {
+                t->cancel = 0;
+                r = R_CANCELLED;
+                break;
+            }
             int64_t left = ns;
             if (ns > 0) {
                 uint64_t spent = kern_now_ns() - start;
@@ -1980,7 +2052,8 @@ int kern_svc(Cpu *c, uint32_t imm) {
             }
             t->wobj = n ? hs[0] | (uint64_t)n << 32 : 0;
             g_sync_blocks++;
-            if (block(t, W_SYNC, left) == R_TIMEOUT) {
+            woke = block(t, W_SYNC, left);
+            if (woke == R_TIMEOUT) {
                 r = R_TIMEOUT;
                 break;
             }
@@ -1995,7 +2068,7 @@ int kern_svc(Cpu *c, uint32_t imm) {
         RtThread *t = h_get((uint32_t)x[0], O_THREAD);
         if (t) {
             t->cancel = 1;
-            if (t->wkind == W_SYNC) wake(t, (uint32_t)-1);
+            if (t->wkind == W_SYNC) wake(t, R_CANCELLED);
         }
         unlock();
         x[0] = t ? R_OK : R_BAD_HANDLE;

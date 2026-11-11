@@ -15,6 +15,8 @@ cached in toolchain/release-dl/ and checked against the sha256 in PINS; a mismat
                libraries of SDL3, Opus, libvpx, Vulkan and VMA)
     bin/       totk_xlate.exe (+ .id), hactool.exe, SDL3.dll (upstream), libopus-0.dll, ninja.exe
     recomp/, tools/, data/, installer/, licenses/, THIRD_PARTY_NOTICES.md, totk.ini.example
+    data/pgo-<v>.profdata  build/pgo's execution profile of an update (tools/pgo.py) and its .json record: the
+               install compiles that update's code and the runtime libraries with it
     VERSION    the repository's VERSION plus the commit, 0.1.0+973c626; the installer's release string
     TotK-Setup.exe  installer/launcher/launcher.c built with llvm/ (-mwindows): starts python/pythonw.exe -m installer.gui
 
@@ -25,9 +27,13 @@ Both need one game version extracted and lifted first (tools/extract.py, recomp/
 it, generated/v143, and for --prove its build/extracted/<version> (they are read, nothing is written to them). The
 runtime library reads only what both versions' layout.h share (MOD_COUNT, MOD_MAIN_BASE), so either serves.
 
-The folder contains nothing derived from the game: check_content runs over it before the script finishes. Then the
-folder's own python runs a check-only installer pass (no game files: it must get through the release, toolchain and host
-checks and stop at the missing game files) and the window's --selftest.
+A release also needs build/xlate built from the current sources (tools/build_xlate.py); the script stops first if not.
+
+The folder contains no code, data, text or assets of the game: check_content runs over it before the script finishes.
+The execution profiles name the lifted functions by their address (f_<address>) and hold branch counts and
+control-flow hashes of the generated C, nothing of the game's own bytes. Then the folder's own python runs a check-only
+installer pass (no game files: it must get through the release, toolchain and host checks and stop at the missing game
+files) and the window's --selftest.
 """
 import argparse
 import hashlib
@@ -45,16 +51,20 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build_game  # noqa: E402
+import build_xlate  # noqa: E402
 import check_content  # noqa: E402
+import pgo  # noqa: E402
 import shader_list  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 MAIN_ROOT = (ROOT / 'build').resolve().parent   # build/, generated/, toolchain/ and refs/ are junctions in a worktree
 DL = MAIN_ROOT / 'toolchain' / 'release-dl'
 WORK = MAIN_ROOT / 'toolchain' / 'release-work'   # unpacked downloads
+PGO_DIR = MAIN_ROOT / 'build' / 'pgo'   # pgo-<version>.profdata + .json (tools/pgo.py merge)
 
 MSYS2 = 'https://repo.msys2.org/mingw/ucrt64/'
-SDL_VERSION = '3.4.18'
+SDL_VERSION = '3.4.20'
 LLVM_VERSION = '20261020'
 MNG_COMMIT = 'b75be8cfa704df3701e86130c8ced268e79d6b11'   # MacNativeGames, the shader list (refs/MacNativeGames)
 # name: (url, sha256)
@@ -67,9 +77,9 @@ PINS = {
                    f'llvm-mingw-{LLVM_VERSION}-ucrt-x86_64.zip',
                    'fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd'),
     'sdl3-dll': (f'https://github.com/libsdl-org/SDL/releases/download/release-{SDL_VERSION}/SDL3-{SDL_VERSION}-win32-x64.zip',
-                 '75c2c0fc74e7d1206aaedc22893a35887332f4f85f5c8b74fddc10d177985f2c'),
+                 '368bed8b24e44ad9ea372990814f2343fcfb9e468abb7f8f4a3bc146c7304752'),
     'sdl3-devel': (f'https://github.com/libsdl-org/SDL/releases/download/release-{SDL_VERSION}/SDL3-devel-{SDL_VERSION}-mingw.tar.gz',
-                   '049b9dd711e3fb3f8d84feb998dfec54a75e17cf539c4a80ff4d058d839771cf'),
+                   'd2d3bf3fb97a90b22e908a306d7362631ef1bab229d988fe6669595dc29cd9ed'),
     'ninja': ('https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip',
               '07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65'),
     'opus': (MSYS2 + 'mingw-w64-ucrt-x86_64-opus-1.6.1-2-any.pkg.tar.zst',
@@ -89,7 +99,7 @@ PINS = {
 }
 # The component MSI inside the python.org installer that carries Tcl/Tk and tkinter (Burn names its payloads a0..a27).
 TCLTK_PAYLOAD = ('a12', 'ac87609db3f715404dd41a989c2f1706ea1512f3d86217f938d11c63af8eb505')
-SDL3_DLL_SHA256 = '2b4b128d8d510cc2d442693cf848c050d700d43dc667afe9e5fd82b0570d667e'   # SDL3.dll inside the SDL zip
+SDL3_DLL_SHA256 = '66844f10251cc1c10619ed5d8e4e3224f564900ee6d69ba87d63de782addae40'   # SDL3.dll inside the SDL zip
 
 # llvm-mingw: what clang and lld need to compile and link totk.exe for x86_64-w64-mingw32 (dynamic LLVM, libc++, compiler-rt).
 LLVM_BIN = {'clang.exe', 'clang++.exe', 'clang-23.exe', 'ld.lld.exe', 'llvm-ar.exe', 'llvm-ranlib.exe', 'llvm-nm.exe',
@@ -102,9 +112,10 @@ LLVM_SKIP_DIRS = {'aarch64-w64-mingw32', 'armv7-w64-mingw32', 'i686-w64-mingw32'
 LLVM_SKIP_SUFFIXES = {'.idl', '.tlb'}
 
 # tools/ files the installer steps run (and what they import), copied from the repo.
-TOOLS_FILES = ['build_game.py', 'build_shaders.py', 'button_icons.py', 'check_content.py', 'extract.py', 'hostmem.py',
-               'make_romfs_patches.py', 'pack_shader_cache.py', 'prepare_shaders.py', 'romfs_index.py', 'shader_census.py',
-               'shader_list.py', 'ultrawide_layout.py']
+TOOLS_FILES = ['build_game.py', 'build_shaders.py', 'button_icons.py', 'check_content.py', 'check_isa.py', 'extract.py',
+               'hostmem.py', 'make_romfs_patches.py', 'ncz.py', 'pack_shader_cache.py', 'prepare_shaders.py',
+               'romfs_index.py', 'shader_census.py', 'shader_list.py', 'ultrawide_layout.py', 'cheats.py',
+               'exefs_patches.py']
 TOOLS_DIRS = ['vendor/macnativegames', 'data']   # data/: expected hashes
 RUNTIME_SUFFIXES = {'.h', '.inc', '.ico'}   # .ico: the installer window icon
 
@@ -293,6 +304,17 @@ def build_llvm(out):
 
 # ---- bin/ and deps ---------------------------------------------------------------------------------------------------
 
+def check_translator():
+    """Stop on a translator older than the sources. build/xlate is built by hand and only copied here (the Linux release
+    builds its own), so without a rebuild a translator change reaches no Windows release, and nothing fails: the runtime
+    sends job fields the old exe ignores, as happened to gather_bias."""
+    idf = MAIN_ROOT / 'build' / 'xlate' / 'totk_xlate.id'
+    have = idf.read_text(encoding='ascii').strip() if idf.is_file() else 'none'
+    want = build_xlate.identity()
+    if have != want:
+        sys.exit(f'build/xlate has translator {have[:16]}, the sources are {want[:16]}: run tools/build_xlate.py')
+
+
 def build_bin(out):
     b = out / 'bin'
     b.mkdir(parents=True, exist_ok=True)
@@ -363,28 +385,60 @@ def lifted_version():
              '(tools/extract.py, recomp/gen.py; docs/building.md)')
 
 
-def runtime_lib(out, llvm):
+def profiles():
+    """{version tag: .profdata} of build/pgo (tools/pgo.py merge). A profile trained on another recomp/, or with other
+    runtime headers inlined into the generated C, than the ones shipped still works but misses the functions whose
+    code changed since: warn, so the next release retrains."""
+    tree = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD:recomp'], capture_output=True, text=True).stdout.strip()
+    dirty = subprocess.run(['git', '-C', str(ROOT), 'status', '--porcelain', '--', 'recomp'], capture_output=True,
+                           text=True).stdout.strip()
+    retrain = 'build without a profile; retrain (docs/pgo.md)'
+    found = {}
+    for p in sorted(PGO_DIR.glob('pgo-*.profdata')):
+        rec = p.with_suffix('.json')
+        record = json.loads(rec.read_text(encoding='utf-8')) if rec.is_file() else {}
+        if record.get('recomp_tree') != tree or dirty:
+            print(f'make_release: warning: {p.name} was trained on recomp tree {record.get("recomp_tree", "unknown")[:12]}, '
+                  f'this is {tree[:12]}{" with local changes" if dirty else ""}: functions whose generated C changed '
+                  f'{retrain}', file=sys.stderr)
+        stale = pgo.stale_headers(record, ROOT)
+        if stale is None:
+            print(f'make_release: warning: {p.name} has no runtime header digests (merged before they were recorded): '
+                  'a change to a header the generated C includes would go unnoticed; re-merge or retrain',
+                  file=sys.stderr)
+        elif stale:
+            print(f'make_release: warning: {p.name} was trained with other {", ".join(stale)}: every lifted function '
+                  f'that inlines them may {retrain}', file=sys.stderr)
+        found[p.stem.removeprefix('pgo-')] = p
+    if not found:
+        print(f'make_release: no execution profile in {PGO_DIR}: installs build the game at -O1', file=sys.stderr)
+    return found
+
+
+def runtime_lib(out, llvm, pgo):
     """Build libtotkrt.a (x86-64-v3) and libtotkrt-v2.a (x86-64-v2) with the folder's llvm/, and copy them, the headers
-    and the install-side sources into runtime/."""
+    and the install-side sources into runtime/. pgo: profiles() of the release."""
     version = lifted_version()
     gen = MAIN_ROOT / 'generated' / version
     rt = out / 'runtime'
+    # the runtime is the same for every update: any update's profile covers it (the newest update's, as players run it)
+    newest = sorted(pgo.items())[-1:]
     for cpu, name in (('v3', 'libtotkrt.a'), ('v2', 'libtotkrt-v2.a')):
         build = MAIN_ROOT / 'build' / 'release-check' / f'rtlib-{cpu}'
         run([sys.executable, ROOT / 'tools' / 'build_game.py', '--make-runtime-lib', '--toolchain', llvm, '--cpu', cpu,
              '--version', version, '--deps', out / 'runtime' / 'deps', '--ninja', out / 'bin' / 'ninja.exe',
-             '--gen', gen, '--out', build],
+             '--gen', gen, '--out', build, *(['--pgo', newest[0][1]] if newest else [])],
             env=clean_env(llvm / 'bin', out / 'bin'))
         shutil.copy2(build / 'libtotkrt.a', rt / name)
     for p in sorted((ROOT / 'runtime').rglob('*')):
         if p.suffix in RUNTIME_SUFFIXES and p.is_file():
             (rt / p.relative_to(ROOT / 'runtime')).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(p, rt / p.relative_to(ROOT / 'runtime'))
-    for name in ('romfs.c', 'patches.c', 'ov_zstd.c'):   # build_game.py INSTALL_SIDE
+    for name in sorted(build_game.INSTALL_SIDE):   # compiled at install, so left out of libtotkrt.a
         shutil.copy2(ROOT / 'runtime' / name, rt / name)
 
 
-def build_sources(out):
+def build_sources(out, pgo):
     copy_tree(ROOT / 'recomp', out / 'recomp', lambda r: not r.endswith(('.py', '.txt')) or '__pycache__' in r)
     for f in TOOLS_FILES:
         (out / 'tools').mkdir(exist_ok=True)
@@ -394,6 +448,10 @@ def build_sources(out):
     (out / 'data').mkdir(exist_ok=True)
     text = shader_list.history(MAIN_ROOT / 'refs' / 'MacNativeGames', MNG_COMMIT)
     (out / 'data' / 'shader_list.tsv').write_text(text, encoding='utf-8', newline='\n')
+    for p in pgo.values():
+        for f in (p, p.with_suffix('.json')):
+            if f.is_file():
+                shutil.copy2(f, out / 'data' / f.name)
     copy_tree(ROOT / 'installer', out / 'installer', lambda r: '__pycache__' in r or r.startswith('launcher/'))
     shutil.copy2(ROOT / 'totk.ini.example', out / 'totk.ini.example')
     shutil.copy2(ROOT / 'THIRD_PARTY_NOTICES.md', out / 'THIRD_PARTY_NOTICES.md')
@@ -512,12 +570,14 @@ def prove(out, cpu='v3'):
     ext = MAIN_ROOT / 'build' / 'extracted' / version
     chk = MAIN_ROOT / 'build' / 'release-check'
     env = clean_env(out / 'python', out / 'llvm' / 'bin', out / 'bin')
+    pgo = out / 'data' / f'pgo-{version}.profdata'
     t0 = time.time()
     run([out / 'python' / 'python.exe', out / 'tools' / 'build_game.py', '--toolchain', out / 'llvm', '--cpu', cpu,
          '--deps', out / 'runtime' / 'deps', '--runtime', out / 'runtime',
          '--runtime-lib', out / 'runtime' / ('libtotkrt-v2.a' if cpu == 'v2' else 'libtotkrt.a'),
          '--ninja', out / 'bin' / 'ninja.exe', '--version', version, '--gen', gen, '--out', chk, '--exefs', ext / 'exefs',
-         '--romfs', ext / 'romfs', '--profile', chk / 'profile'], env=env)
+         '--romfs', ext / 'romfs', '--profile', chk / 'profile', *(['--pgo', pgo] if pgo.is_file() else [])],
+        env=env)
     print(f'prove: build {time.time() - t0:.0f} s')
     for dll in ('SDL3.dll', 'libopus-0.dll'):
         shutil.copy2(out / 'bin' / dll, chk / dll)
@@ -545,6 +605,7 @@ def main():
     if args.prove:
         prove(out, args.cpu)
         return
+    check_translator()
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
@@ -552,8 +613,9 @@ def main():
     llvm = build_llvm(out)
     build_bin(out)
     build_deps(out)
-    runtime_lib(out, llvm)
-    build_sources(out)
+    pgo = profiles()
+    runtime_lib(out, llvm, pgo)
+    build_sources(out, pgo)
     build_launcher(out, llvm)
     collect_licenses(out)
     check_folder(out)

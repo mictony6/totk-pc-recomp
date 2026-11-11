@@ -54,7 +54,7 @@ hactool reads `-k <prod.keys>`; MSYS2 shells set `HOME`, which hides its default
 ## Build
 
 From the repository root, in PowerShell. Every step that depends on the game version takes it as `<ver>`: `v143` for
-1.4.3, `v121` for 1.2.1 or `v111` for 1.1.1. The tools default to `v121` when `--version` is left out. Saves load on any
+1.4.3, `v121` for 1.2.1 or `v110` for 1.1.0. The tools default to `v121` when `--version` is left out. Saves load on any
 of them.
 
 1. Python environments (once). `.venv` runs the lifter and the build; `.venv-py314` runs the extraction scripts, which
@@ -78,7 +78,8 @@ of them.
    .venv-py314\Scripts\python tools\extract.py
    ```
 
-4. Shader translator (once; no game files). This publishes `build\xlate\totk_xlate.exe`:
+4. Shader translator (no game files; again after a change to its sources, and `tools\make_release.py` stops on an older
+   one). This publishes `build\xlate\totk_xlate.exe`:
 
    ```powershell
    .venv\Scripts\python tools\build_xlate.py
@@ -94,7 +95,12 @@ of them.
    ```
 
    `--cpu v2` targets x86-64-v2 (SSE4.2, no AVX2/FMA) for older CPUs; the default `v3` needs AVX2. The v2 build links
-   `runtime/fma.c`, a correctly rounded software fma the FP lowering needs, and runs slower.
+   `runtime/fma.c`, a correctly rounded software fma the FP lowering needs, and runs slower. Inline assembly,
+   target attributes and intrinsics are not bound by `-march`, so a v2 build runs `tools/check_isa.py` over the runtime
+   objects before it links: any AVX, BMI or other instruction above x86-64-v2 outside a function listed there as
+   dispatched by a runtime CPU check stops the build.
+
+   `gen.py` sizes its emit pool from the CPU count and the free memory; `--jobs N` sets it, and so does the environment variable `TOTK_LIFT_JOBS=N`, which the installer's lift step honours too (it has no `--jobs`). When a worker runs out of memory, the pool restarts with half the workers (`emit: out of memory with N workers, retrying with M`), down to one; only an out-of-memory error with one worker fails the step.
 
    Lifting takes about 15 s, a clean compile about 200 s on 24 threads; later builds recompile only what changed.
    A compiler cache in front of clang shortens it further: with `SCCACHE` set to an sccache executable, `build_game.py`
@@ -109,7 +115,15 @@ of them.
    `SDL3.dll`, `libiconv-2.dll` and `libopus-0.dll` next to the exe.
    For Xbox button prompts, run `make_romfs_patches.py` twice more, with `--prompts xbox` and `--prompts xbox-label`:
    they write `build\<ver>\romfs-patches-xbox` and `romfs-patches-xbox-label` ([controls.md](controls.md), "Xbox
-   button prompts"), which `build_game.py` copies next to `totk.exe` like `romfs-patches`.
+   button prompts"), which `build_game.py` copies next to `totk.exe` like `romfs-patches`. `--prompts pc` writes
+   `romfs-patches-pc`, the keyboard and mouse prompts ([controls.md](controls.md), "PC button prompts").
+
+   A build from source has no layouts for other shapes than 16:9. At an `output_res` such as 5120x1440 the game then
+   draws the largest 16:9 size inside it (2560x1440) and the present adds bars, instead of a wide camera over a
+   stretched HUD (`runtime/resolution.c`, `shape_fallback`). For the full shape make `romfs-patches-<w>x<h>` once per
+   size: `make_romfs_patches.py --version <ver> --aspect <w>x<h> --out build\<ver>\romfs-patches-<w>x<h>` (the sizes
+   the installer makes are `ASPECT_SIZES` in `installer/steps.py`); `build_game.py` copies every `romfs-patches*`
+   folder next to `totk.exe`.
 
 6. Prepare the shaders (once per build folder and translator). It needs `refs\MacNativeGames` (`tools\fetch_refs.sh`)
    for the shared shader list:
@@ -143,6 +157,12 @@ Settings live in `totk.ini` next to `totk.exe` ([totk.ini.example](../totk.ini.e
 your machines without MSYS2, Python or .NET. `romfs.bin` stays out unless you pass `--with-romfs`; otherwise put it in
 `romfs\` next to the exe or point `TOTK_ROMFS` at its folder. Run `totk.exe --prepare-shaders` once in the copied
 folder. The folder holds code and data derived from your game: for your own machines only.
+
+### Profile-guided build
+
+`build_game.py --pgo <file>.profdata` compiles the generated code and the runtime at -O2 with an execution
+profile, 6-12% shorter frames. Which build uses which profile, when to retrain, where and how to train and how to
+measure a new profile: [pgo.md](pgo.md).
 
 ## Linux (in progress)
 
@@ -196,7 +216,13 @@ Before a commit:
 
 A change to the button prompts (`tools/make_romfs_patches.py --prompts`, `tools/button_icons.py`) passes
 `.venv-py314\Scripts\python tests\romfs_prompts_test.py`, which runs the tool on a RomFS it makes itself (no game
-files); a change to the settings passes `totk.exe --probe-cfg`.
+files); a change to the settings passes `totk.exe --probe-cfg` and `python tests\settings_doc_check.py`, which fails
+when a setting is described neither in `totk.ini.example` nor in [settings.md](settings.md). A change to the mods' ExeFS patches
+(`tools/exefs_patches.py`, `runtime/mods.c`, the `folded.txt` of `recomp/gen.py`) passes
+`.venv\Scripts\python tests\exefs_patches_test.py`, which makes its own modules and runs `gen.py` on one with a jump
+table (no game files), and `totk.exe --probe-mods`. A change to the cheat VM or the cheat opcode tables
+(`runtime/cheats.c`, `tools/cheats.py`) passes `.venv\Scripts\python tests\cheats_vm_check.py`, which runs both on
+cheats of its own with clang from PATH (`--cc` names another).
 
 The lifter (`recomp/`) and the CPU headers (`runtime/cpu.h`, `runtime/simd.h`) are checked against Unicorn. Every lifter
 change passes these, all run with `.venv`:

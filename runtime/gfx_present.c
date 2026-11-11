@@ -33,9 +33,20 @@
 #define VSYNC_HZ 60
 
 // ---- queue lock
+// The recorder queues the parts it records and submits them later (vk_rec.c rec_submit): the first lock of a thread
+// waits until the parts queued before it are submitted, so whatever it puts on the queue comes after them, as when
+// the submitting thread submitted them itself. Not inside a held lock: the recorder takes this lock to submit.
 static PlatRMutex g_ql;
-void vk_queue_lock(void) { plat_rmutex_lock(&g_ql); }
-void vk_queue_unlock(void) { plat_rmutex_unlock(&g_ql); }
+static _Thread_local int ql_depth;
+void vk_queue_lock(void) {
+    if (!ql_depth) rec_queue_wait();
+    plat_rmutex_lock(&g_ql);
+    ql_depth++;
+}
+void vk_queue_unlock(void) {
+    ql_depth--;
+    plat_rmutex_unlock(&g_ql);
+}
 
 // ---- window state shared with the back end
 static VkSurfaceKHR g_surface;
@@ -72,6 +83,7 @@ void gfx_window_closed(void) {
     rt_log("gfx: window closed; %s", restart ? "restarting" : "exiting");
     fs_save_flush();
     vk_pipeline_save();
+    playtime_save();
     prof_write();   // plat_exit runs no atexit handlers
     if (restart) {
         plat_setenv("TOTK_REEXEC", NULL);   // the new process counts its own address-space retries (memory.c)
@@ -237,6 +249,7 @@ static void window_settings_live(void) {
     res_fov_live();
     res_grass_live();
     res_scene_live();
+    res_dynres_live();
     const char *e = cfg_value("TOTK_VK_PRESENT");
     if (!started || strncmp(e, present, sizeof present - 1)) {
         snprintf(present, sizeof present, "%s", e);
@@ -297,8 +310,7 @@ static void free_capture(void) {
     g_cap_valid = 0;
 }
 
-// Returns 1 with a usable swapchain, 0 when the window has no area (minimised). Called with g_pl held.
-static int create_swapchain(void) {
+static int build_swapchain(void) {
     flip_locked();   // the acquired image goes out before its swapchain is replaced
     VkCtx *c = vk_ctx();
     VkSurfaceCapabilitiesKHR caps;
@@ -366,8 +378,17 @@ static int create_swapchain(void) {
     }
     free_capture();
     vk_queue_unlock();
-    plat_xchg32(&g_dirty, 0);
     return 1;
+}
+
+// Returns 1 with a usable swapchain, 0 when the window has no area (minimised). Called with g_pl held. The stale mark
+// goes before the surface is read: a resize during the build keeps it. The switch to fullscreen at start lands there
+// on the window thread, and the driver does not report the swapchain as out of date.
+static int create_swapchain(void) {
+    plat_xchg32(&g_dirty, 0);
+    if (build_swapchain()) return 1;
+    plat_xchg32(&g_dirty, 1);
+    return 0;
 }
 
 static void sync_barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 s0,
@@ -545,6 +566,15 @@ static void save_capture(const char *path) {
 // TOTK_ASPECT=stretch, else (fit, the default) the largest one of the picture's own aspect ratio, centred (a 16:9 picture
 // on the Steam Deck's 1280x800 screen gets bars of 40 rows above and below; a 16:9 picture in a 21:9 window, bars at the
 // sides).
+// Where the last present put the picture, as fractions of the swapchain (x, y, w, h): menu_cursor.c's pointer
+static float g_pic[4];
+static volatile int32_t g_pic_ok;
+int gfx_picture_rect(float out[4]) {
+    if (!__atomic_load_n(&g_pic_ok, __ATOMIC_ACQUIRE)) return 0;
+    memcpy(out, g_pic, sizeof g_pic);
+    return 1;
+}
+
 void gfx_fit_rect(int cw, int ch, int dw, int dh, int out[4]) {
     out[0] = out[1] = 0, out[2] = dw, out[3] = dh;
     if (cw <= 0 || ch <= 0 || !strcmp(cfg_value("TOTK_ASPECT"), "stretch")) return;
@@ -618,6 +648,10 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     const int rect[4] = {cx, cy, cw, ch};
     int to[4];   // where the picture goes in the swapchain image: {x, y, w, h}
     gfx_fit_rect(cw, ch, (int)g_sc_ext.width, (int)g_sc_ext.height, to);
+    if (g_sc_ext.width && g_sc_ext.height) {
+        for (int i = 0; i < 4; i++) g_pic[i] = (float)to[i] / (float)(i & 1 ? g_sc_ext.height : g_sc_ext.width);
+        __atomic_store_n(&g_pic_ok, 1, __ATOMIC_RELEASE);
+    }
     if (to[2] != (int)g_sc_ext.width || to[3] != (int)g_sc_ext.height) {   // black bars beside or above and below it
         VkClearColorValue black = {.float32 = {0, 0, 0, 1}};
         VkImageSubresourceRange all = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};

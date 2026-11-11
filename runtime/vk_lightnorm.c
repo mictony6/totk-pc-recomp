@@ -51,20 +51,20 @@ static struct {
     int done, pending;                  // the copy was found this frame; ours is due before the next pass
 } L;
 
-static void swap_off(void) {
+static void swap_off(VkExec *ex) {
     if (!vk_lightnorm_swap_img) return;
     vk_lightnorm_swap_img = NULL, vk_lightnorm_swap_view = VK_NULL_HANDLE;
-    vk_exec_draw_new_cb();   // a draw with the same bindings as the one before must not keep the swapped view
+    vk_exec_draw_new_cb(ex);   // a draw with the same bindings as the one before must not keep the swapped view
 }
 
-static void update_mode(void) {
+static void update_mode(VkExec *ex) {
     unsigned v = cfg_version();
     if (L.tried && v == L.cfg_ver) return;
     int on = !strcmp(cfg_value("TOTK_LIGHT_NORMALS"), "average"), first = !L.tried;
     L.tried = 1, L.cfg_ver = v;
     if (on == L.on && !first) return;
     L.on = on;
-    if (!on) swap_off(), vk_lightnorm_watch = 0;
+    if (!on) swap_off(ex), vk_lightnorm_watch = 0;
     rt_log(on ? "vk: point lights shade from averaged half-resolution normals"
               : "vk: point lights shade from the game's half-resolution normals");
 }
@@ -173,14 +173,14 @@ static int gbuffer(const VkExec *ex, const VkTexImage **normals, const VkTexImag
 void vk_lightnorm_present(uint64_t frame) { __atomic_store_n(&L.frame, frame, __ATOMIC_RELAXED); }
 
 void vk_lightnorm_pass_begin(VkExec *ex) {
-    update_mode();
+    update_mode(ex);
     if (L.on) {
         const VkTexImage *n, *d;
         uint64_t f = __atomic_load_n(&L.frame, __ATOMIC_RELAXED);
         if (gbuffer(ex, &n, &d) && (f != L.gb_frame || !L.gnormal)) {   // a new frame's G-buffer
             L.gb_frame = f, L.gnormal = n, L.depth = d, L.dw = ex->pass_w, L.dh = ex->pass_h;
             L.done = L.pending = 0;
-            swap_off();
+            swap_off(ex);
         }
     }
     vk_lightnorm_flush(ex);
@@ -189,7 +189,7 @@ void vk_lightnorm_pass_begin(VkExec *ex) {
 // A draw about to be recorded, its pass open: a candidate for the copy while it writes one RGBA8 target of half the
 // G-buffer's size; tex_info then reports what it samples.
 void vk_lightnorm_draw(VkExec *ex) {
-    update_mode();
+    update_mode(ex);
     vk_lightnorm_watch = 0;
     if (!L.on || L.done || !L.gnormal || ex->pass_ncolor != 1) return;
     const VkExecTarget *t = &ex->color[0];
@@ -268,7 +268,7 @@ void vk_lightnorm_flush(VkExec *ex) {
     }
     // the game's bound compute pipeline and descriptors were replaced: bind them again; from here the lighting samples
     // our normals
-    vk_exec_draw_new_cb();
+    vk_exec_draw_new_cb(ex);
     vk_lightnorm_swap_img = L.half, vk_lightnorm_swap_view = L.out.view;
 }
 

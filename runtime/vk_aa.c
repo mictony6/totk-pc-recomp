@@ -294,7 +294,7 @@ void vk_aa_flush(VkExec *ex) {
     VkSampler bs[2] = {A.linear, A.linear};
     run(cb, P_BLEND, 2, bi, bs, scene);
     ex->recorded += n + 4 * 5;
-    vk_exec_draw_new_cb();   // the game's bound compute pipeline and descriptors were replaced: bind them again
+    vk_exec_draw_new_cb(ex);   // the game's bound compute pipeline and descriptors were replaced: bind them again
 }
 
 void vk_aa_present(uint64_t frame) { __atomic_store_n(&A.frame, frame, __ATOMIC_RELAXED); }

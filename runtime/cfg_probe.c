@@ -230,9 +230,23 @@ int probe_cfg(void) {
     dn[KEY_MOUSE_R] = dn[KEY_Z] = 1;
     CHECK(input_map_buttons(dn) == (1ull << B_Y | 1ull << B_ZL), "keys: right mouse button and Z both press ZL");
     memset(dn, 0, sizeof dn);
+    dn[KEY_T] = 1;
+    CHECK(input_map_buttons(dn) == 1ull << B_Y, "keys: T is Y too (the left button is A in the menus)");
+    plat_setenv("TOTK_BIND_X", "key:t");
+    input_map_configure();
+    CHECK(input_map_buttons(dn) == 1ull << B_X, "bind: bind_X = key:t takes T from Y's defaults");
+    dn[KEY_T] = 0, dn[KEY_MOUSE_L] = 1;
+    CHECK(input_map_buttons(dn) == 1ull << B_Y, "bind: Y keeps the left mouse button");
+    plat_setenv("TOTK_BIND_X", NULL);
+    input_map_reset();
+    memset(dn, 0, sizeof dn);
     dn[KEY_X] = dn[KEY_TAB] = dn[KEY_M] = dn[KEY_LCTRL] = dn[KEY_3] = 1;
     CHECK(input_map_buttons(dn) == (1ull << B_ZR | 1ull << B_PLUS | 1ull << B_MINUS | 1ull << B_STICK_L | 1ull << B_RIGHT),
           "keys: X ZR, Tab Plus, M Minus, Left Ctrl stick click, 3 D-pad right");
+    memset(dn, 0, sizeof dn);
+    dn[KEY_G] = 1;
+    CHECK(input_map_buttons(dn) == 0 && input_map_held(dn, B_SHAKE) && !input_map_held(dn, B_A),
+          "keys: G shakes and presses no button");
     memset(dn, 0, sizeof dn);
     dn[KEY_W] = 1;
     input_map_stick(dn, 0, st);
@@ -273,19 +287,19 @@ int probe_cfg(void) {
           "pad stick: a square gate's corner stays on the unit circle");
     input_pad_stick(0, 32767 / 2 + 1, 0.2f, st);
     CHECK(abs(st[1] - 32767 * 3 / 8) <= 3, "pad stick: half deflection past a 20% zone is (0.5 - 0.2) / 0.8 of full");
-    _putenv_s("TOTK_STICK_DEADZONE", "12");
-    _putenv_s("TOTK_LSTICK_DEADZONE", "");
-    _putenv_s("TOTK_RSTICK_DEADZONE", "");
+    plat_setenv("TOTK_STICK_DEADZONE", "12");
+    plat_setenv("TOTK_LSTICK_DEADZONE", NULL);
+    plat_setenv("TOTK_RSTICK_DEADZONE", NULL);
     CHECK(fabsf(input_pad_deadzone(0) - 0.12f) < 1e-6f && fabsf(input_pad_deadzone(1) - 0.12f) < 1e-6f,
           "pad dead zone: both sticks follow stick_deadzone while lstick/rstick are unset");
-    _putenv_s("TOTK_RSTICK_DEADZONE", "20");
+    plat_setenv("TOTK_RSTICK_DEADZONE", "20");
     CHECK(fabsf(input_pad_deadzone(0) - 0.12f) < 1e-6f && fabsf(input_pad_deadzone(1) - 0.20f) < 1e-6f,
           "pad dead zone: rstick_deadzone sets the right stick alone");
-    _putenv_s("TOTK_LSTICK_DEADZONE", "80");
+    plat_setenv("TOTK_LSTICK_DEADZONE", "80");
     CHECK(fabsf(input_pad_deadzone(0) - 0.5f) < 1e-6f, "pad dead zone: clamped to 50%");
-    _putenv_s("TOTK_STICK_DEADZONE", "");
-    _putenv_s("TOTK_LSTICK_DEADZONE", "");
-    _putenv_s("TOTK_RSTICK_DEADZONE", "");
+    plat_setenv("TOTK_STICK_DEADZONE", NULL);
+    plat_setenv("TOTK_LSTICK_DEADZONE", NULL);
+    plat_setenv("TOTK_RSTICK_DEADZONE", NULL);
     CHECK(input_stick_percent(32767, 0) > 99.99 && input_stick_percent(32767, 0) < 100.01 &&
               input_stick_percent(0, 0) == 0 && fabs(input_stick_percent(3000, -4000) - 5000 * 100.0 / 32767) < 1e-9,
           "stick percent: an axis's end is 100%, the centre 0%, round in between");
@@ -301,6 +315,11 @@ int probe_cfg(void) {
     CHECK(input_prompts_pick(NULL, "auto") == PROMPTS_NINTENDO && input_prompts_pick("", "xbox") == PROMPTS_NINTENDO &&
               input_prompts_pick("Xbox", "nintendo") == PROMPTS_XBOX && input_prompts_pick("nintendo", "xbox") == PROMPTS_NINTENDO,
           "prompts: the game's own unless set to Xbox");
+    CHECK(input_prompts_pick("PC", "nintendo") == PROMPTS_PC && input_prompts_pick("pc", "xbox_prompts") == PROMPTS_PC &&
+              EQ(input_prompts_folder(PROMPTS_PC, "nintendo"), "romfs-patches-pc") &&
+              EQ(input_prompts_folder(PROMPTS_PC, "xbox"), "romfs-patches-pc") &&
+              EQ(input_prompts_folder(PROMPTS_PC, NULL), "romfs-patches-pc"),
+          "prompts: pc shows the keyboard and mouse whatever the pad layout");
     CHECK(input_prompts_pick(NULL, "xbox_prompts") == PROMPTS_XBOX && input_prompts_pick("nintendo", "xbox_prompts") == PROMPTS_NINTENDO,
           "prompts: 0.1.9's pad_layout = xbox_prompts means Xbox while prompts is unset");
     CHECK(!input_prompts_folder(PROMPTS_NINTENDO, "nintendo") && !input_prompts_folder(PROMPTS_NINTENDO, "xbox"),
@@ -456,6 +475,11 @@ int probe_cfg(void) {
         if (!ok) fprintf(stderr, "FAIL cfg: default '%s' of %s is not one of its values '%s'\n", m->def, m->key, m->values), fails++;
     }
     CHECK(listed >= 30, "the defaults table was walked");
+    // cfg_meta answers with the first row of a key: a second row would be dead, and Reset would visit the key twice
+    for (int i = 0; cfg_meta_at(i); i++)
+        for (int j = i + 1; cfg_meta_at(j); j++)
+            if (!strcmp(cfg_meta_at(i)->key, cfg_meta_at(j)->key))
+                fprintf(stderr, "FAIL cfg: %s has two rows in the defaults table\n", cfg_meta_at(i)->key), fails++;
     printf("probe-cfg: %s\n", fails ? "FAIL" : "ok");
     return fails ? 1 : 0;
 }

@@ -59,13 +59,13 @@ static struct {
     int debug;                          // TOTK_UNDERWATER_DEBUG: ours is solid magenta, to see where it is shown
 } U;
 
-static void swap_off(void) {
+static void swap_off(VkExec *ex) {
     if (!vk_underwater_swap_img) return;
     vk_underwater_swap_img = NULL, vk_underwater_swap_view = VK_NULL_HANDLE;
-    vk_exec_draw_new_cb();   // a draw with the same bindings as the one before must not keep the swapped view
+    vk_exec_draw_new_cb(ex);   // a draw with the same bindings as the one before must not keep the swapped view
 }
 
-static void update_mode(void) {
+static void update_mode(VkExec *ex) {
     unsigned v = cfg_version();
     if (U.tried && v == U.cfg_ver) return;
     int on = !strcmp(cfg_value("TOTK_UNDERWATER_UPSAMPLE"), "smooth"), first = !U.tried;
@@ -74,7 +74,7 @@ static void update_mode(void) {
     U.debug = dbg && *dbg && strcmp(dbg, "0");
     if (on == U.on && !first) return;
     U.on = on;
-    if (!on) swap_off(), U.pending = 0, vk_underwater_watch = 0;
+    if (!on) swap_off(ex), U.pending = 0, vk_underwater_watch = 0;
     rt_log(on ? "vk: water and ice show the scene behind them upsampled to full size"
               : "vk: water and ice show the game's half-size scene");
 }
@@ -180,7 +180,7 @@ static void vk_underwater_flush(VkExec *ex);
 void vk_underwater_present(uint64_t frame) { __atomic_store_n(&U.frame, frame, __ATOMIC_RELAXED); }
 
 void vk_underwater_pass_begin(VkExec *ex) {
-    update_mode();
+    update_mode(ex);
     vk_underwater_watch = 0;
     if (!U.on) return;
     const VkTexImage *d = gbuffer_depth(ex);
@@ -196,7 +196,7 @@ void vk_underwater_pass_begin(VkExec *ex) {
         U.gb_frame = f, U.gdepth = d, U.written = 0;
         U.src = U.hdepth = NULL;
         U.pending = 0;
-        swap_off();
+        swap_off(ex);
     }
     vk_underwater_watch = !U.src_addr;
     vk_underwater_flush(ex);   // a later G-buffer pass of the frame: the water's
@@ -215,7 +215,7 @@ void vk_underwater_pass_end(VkExec *ex) {
     if (!src) return;
     U.src = src, U.written = 1;
     if (hd) U.hdepth = hd;   // a later write without its depth keeps the depth of the frame's earlier one
-    swap_off();              // ours shows the write before this one
+    swap_off(ex);              // ours shows the write before this one
     if (U.hdepth) U.pending = 1;
 }
 
@@ -241,14 +241,14 @@ static void vk_underwater_flush(VkExec *ex) {
     if (!U.on || !U.src || !U.hdepth || !U.gdepth) return;
     VkCtx *c = vk_ctx();
     if (!U.init_tried) init(c);
-    if (!U.ok || !ensure_image(c, U.gdepth->width, U.gdepth->height)) return swap_off();
+    if (!U.ok || !ensure_image(c, U.gdepth->width, U.gdepth->height)) return swap_off(ex);
     VkImageView s = vk_exec_target_view(U.src, VK_FORMAT_B10G11R11_UFLOAT_PACK32, VK_IMAGE_VIEW_TYPE_2D,
                                         VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1, 0);
     VkImageView hd = vk_exec_target_view(U.hdepth, VK_FORMAT_R32_SFLOAT, VK_IMAGE_VIEW_TYPE_2D,
                                          VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1, 0);
     VkImageView fd = vk_exec_target_view(U.gdepth, VK_FORMAT_R32_SFLOAT, VK_IMAGE_VIEW_TYPE_2D,
                                          VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1, 0);
-    if (!s || !hd || !fd) return swap_off();
+    if (!s || !hd || !fd) return swap_off(ex);
     vk_exec_barrier(ex);   // the game's writes; images in the feedback layout go back to GENERAL
     VkCommandBuffer cb = ex->cb;
     VkImageMemoryBarrier2 ib = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -305,7 +305,7 @@ static void vk_underwater_flush(VkExec *ex) {
         vk_dump_image(ex, U.out.img, VK_FORMAT_R16G16B16A16_SFLOAT, U.w, U.h, "underwater_upsample");
     // the game's bound compute pipeline and descriptors were replaced: bind them again; from here full-size passes
     // sample ours
-    vk_exec_draw_new_cb();
+    vk_exec_draw_new_cb(ex);
     vk_underwater_swap_img = U.src, vk_underwater_swap_view = U.out.view;
 }
 

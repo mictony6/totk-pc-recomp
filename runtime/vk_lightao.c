@@ -59,13 +59,13 @@ static struct {
     int lit;                            // a pass has drawn the point lights since the frame's lighting pass
 } A;
 
-static void swap_off(void) {
+static void swap_off(VkExec *ex) {
     if (!vk_lightao_swap_img) return;
     vk_lightao_swap_img = NULL, vk_lightao_swap_view = VK_NULL_HANDLE;
-    vk_exec_draw_new_cb();   // a draw with the same bindings as the one before must not keep the swapped view
+    vk_exec_draw_new_cb(ex);   // a draw with the same bindings as the one before must not keep the swapped view
 }
 
-static void update_mode(void) {
+static void update_mode(VkExec *ex) {
     unsigned v = cfg_version();
     if (A.tried && v == A.cfg_ver) return;
     int pct = cfg_int("TOTK_AO_LIGHT");
@@ -74,7 +74,7 @@ static void update_mode(void) {
     A.tried = 1, A.cfg_ver = v;
     if (on == A.on && !first) return;
     A.on = on;
-    if (!on) swap_off();
+    if (!on) swap_off(ex);
     rt_log(on ? "vk: point lights lift the occlusion over them, up to %.0f %%"
               : "vk: point lights are cut by the game's occlusion",
            A.strength * 100.0f);
@@ -189,7 +189,7 @@ static void flush(VkExec *ex);
 void vk_lightao_present(uint64_t frame) { __atomic_store_n(&A.frame, frame, __ATOMIC_RELAXED); }
 
 void vk_lightao_pass_begin(VkExec *ex) {
-    update_mode();
+    update_mode(ex);
     if (!A.on) return;
     if (gbuffer(ex)) {
         uint64_t f = __atomic_load_n(&A.frame, __ATOMIC_RELAXED);
@@ -197,7 +197,7 @@ void vk_lightao_pass_begin(VkExec *ex) {
             A.gb_frame = f, A.gw = ex->pass_w;
             A.occ = A.lights = NULL;
             A.dirty = A.lit = 0;
-            swap_off();
+            swap_off(ex);
         }
         return;
     }
@@ -214,7 +214,7 @@ void vk_lightao_pass_end(VkExec *ex) {
     for (uint32_t i = 0; i < ex->pass_ncolor && i < 8; i++) {
         const VkExecTarget *t = &ex->color[i];
         if (!t->img) continue;
-        if (t->img == A.occ) A.dirty = 1, swap_off();
+        if (t->img == A.occ) A.dirty = 1, swap_off(ex);
         else if (i == 0 && t->img == A.lights) A.lit = 1;
     }
 }
@@ -224,12 +224,12 @@ static void flush(VkExec *ex) {
     A.dirty = 0;
     VkCtx *c = vk_ctx();
     if (!A.init_tried) init(c);
-    if (!A.ok || !A.occ || !A.lights || !ensure_image(c, A.occ->width, A.occ->height)) return swap_off();
+    if (!A.ok || !A.occ || !A.lights || !ensure_image(c, A.occ->width, A.occ->height)) return swap_off(ex);
     VkImageView o = vk_exec_target_view(A.occ, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_VIEW_TYPE_2D,
                                         VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1, 0);
     VkImageView l = vk_exec_target_view(A.lights, VK_FORMAT_B10G11R11_UFLOAT_PACK32, VK_IMAGE_VIEW_TYPE_2D_ARRAY,
                                         VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 2, 0);
-    if (!o || !l) return swap_off();
+    if (!o || !l) return swap_off(ex);
     vk_exec_barrier(ex);   // the game's writes; images in the feedback layout go back to GENERAL
     VkCommandBuffer cb = ex->cb;
     VkImageMemoryBarrier2 ib = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -276,7 +276,7 @@ static void flush(VkExec *ex) {
         vk_dump_image(ex, A.out.img, VK_FORMAT_R8G8B8A8_UNORM, A.w, A.h, "light_ao");
     // the game's bound compute pipeline and descriptors were replaced: bind them again; from here the composite
     // samples ours
-    vk_exec_draw_new_cb();
+    vk_exec_draw_new_cb(ex);
     vk_lightao_swap_img = A.occ, vk_lightao_swap_view = A.out.view;
 }
 

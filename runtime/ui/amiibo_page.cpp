@@ -17,6 +17,7 @@
 extern "C" {
 #include "amiibo.h"
 #include "cfg.h"
+#include "folder_pick.h"
 #include "platform/platform.h"
 #include "ui_text.h"
 }
@@ -30,12 +31,13 @@ struct FileEntry {
 
 static const char kDefaultAmiiboDir[] = "./amiibo";
 static std::string g_current_dir = kDefaultAmiiboDir;
-static char g_dir_input[512] = "./amiibo";
 static std::vector<FileEntry> g_entries;
 static int g_selected_entry = -1;
 // The last action: a catalog id and the file or folder it names, formatted when drawn (the menu language can change)
 static UiTextId g_status_id = UI_MENU_AMIIBO_READY;
 static std::string g_status_arg;
+// Flag to request font rebuild (set when amiibo directory is refreshed with new files)
+static bool g_font_rebuild_requested = false;
 
 static void set_status(UiTextId id, const std::string &arg = std::string()) {
     g_status_id = id;
@@ -61,8 +63,22 @@ static bool iequals(std::string_view a, std::string_view b) {
 
 static void set_current_dir(const std::string &path) {
     g_current_dir = path;
-    snprintf(g_dir_input, sizeof(g_dir_input), "%s", g_current_dir.c_str());
     cfg_set("TOTK_AMIIBO_DIR", g_current_dir.c_str());
+}
+
+// The host's folder dialog (folder_pick.h) answers on its own thread; the page takes the answer when it draws.
+static PlatMutex g_pick_lock = PLAT_MUTEX_INIT;
+static bool g_pick_open;
+static bool g_pick_ready;
+static std::string g_pick_path;
+
+static void on_folder_picked(const char *path, void *ctx) {
+    (void)ctx;
+    plat_mutex_lock(&g_pick_lock);
+    g_pick_ready = path != NULL;
+    if (path) g_pick_path = path;
+    g_pick_open = false;
+    plat_mutex_unlock(&g_pick_lock);
 }
 
 static void refresh_dir(void) {
@@ -110,6 +126,9 @@ static void refresh_dir(void) {
         if (a.is_dir != b.is_dir) return a.is_dir;
         return a.name < b.name;
     });
+    
+    // Request font rebuild to include any new filenames
+    amiibo_request_font_rebuild();
 }
 
 void tab_amiibo(float scale) {
@@ -122,9 +141,19 @@ void tab_amiibo(float scale) {
         } else {
             g_current_dir = kDefaultAmiiboDir;
         }
-        snprintf(g_dir_input, sizeof(g_dir_input), "%s", g_current_dir.c_str());
         refresh_dir();
         s_inited = true;
+    }
+
+    plat_mutex_lock(&g_pick_lock);
+    bool picking = g_pick_open;
+    std::string picked;
+    if (g_pick_ready) picked.swap(g_pick_path);
+    g_pick_ready = false;
+    plat_mutex_unlock(&g_pick_lock);
+    if (!picked.empty()) {
+        set_current_dir(picked);
+        refresh_dir();
     }
 
     // Two panes: Left (Directory Browser & Tag List), Right (Amiibo Tag Details & Controls)
@@ -136,17 +165,17 @@ void tab_amiibo(float scale) {
     ImGui::BeginChild("##amiibo_explorer", ImVec2(left_w, content_h), true);
     ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1.0f), "%s", menu_text(UI_MENU_AMIIBO_DIR));
 
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-    if (ImGui::InputText("##amiibo_dir_input", g_dir_input, sizeof(g_dir_input), ImGuiInputTextFlags_EnterReturnsTrue)) {
-        set_current_dir(g_dir_input);
-        refresh_dir();
-    }
+    ImGui::TextWrapped("%s", g_current_dir.c_str());
 
     ImGui::Spacing();
+    ImGui::BeginDisabled(picking);
     if (ImGui::Button(menu_text(UI_MENU_AMIIBO_OPEN))) {
-        set_current_dir(g_dir_input);
-        refresh_dir();
+        plat_mutex_lock(&g_pick_lock);
+        g_pick_open = true;
+        plat_mutex_unlock(&g_pick_lock);
+        folder_pick(g_current_dir.c_str(), on_folder_picked, NULL);
     }
+    ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button(menu_text(UI_MENU_AMIIBO_DEFAULT_DIR))) {
         set_current_dir(kDefaultAmiiboDir);
@@ -161,6 +190,11 @@ void tab_amiibo(float scale) {
     ImGui::TextDisabled("%s", menu_text(UI_MENU_AMIIBO_PICK));
 
     ImGui::BeginChild("##file_list", ImVec2(0, 0), true);
+    if (g_status_id == UI_MENU_AMIIBO_NO_DIR) {
+        char missing[512];
+        snprintf(missing, sizeof missing, menu_text(UI_MENU_AMIIBO_NO_DIR), g_current_dir.c_str());
+        ImGui::TextWrapped("%s", missing);
+    }
     for (size_t i = 0; i < g_entries.size(); i++) {
         const auto &e = g_entries[i];
         std::string label = e.is_dir ? e.name + "/" : e.name;
@@ -198,7 +232,7 @@ void tab_amiibo(float scale) {
     ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1.0f), "%s", menu_text(UI_MENU_AMIIBO_READER));
     ImGui::Separator();
 
-    AmiiboDeviceState state = amiibo_get_device_state();
+    AmiiboDeviceState state = amiibo_get_reader_state();
     UiTextId state_id = UI_MENU_AMIIBO_STATE_IDLE;
     ImVec4 state_col = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
     switch (state) {
@@ -273,4 +307,45 @@ void tab_amiibo(float scale) {
     ImGui::TextDisabled(menu_text(UI_MENU_AMIIBO_STATUS), status);
 
     ImGui::EndChild();
+}
+
+// Collect amiibo filenames for font glyph building (called from menu.cpp fonts_up)
+void amiibo_collect_filenames(void (*callback)(void *, const char *), void *ctx) {
+    std::error_code ec;
+    fs::path dir_path(g_current_dir);
+    
+    if (!fs::exists(dir_path, ec) || !fs::is_directory(dir_path, ec)) {
+        return;
+    }
+    
+    for (const auto &entry : fs::directory_iterator(dir_path, fs::directory_options::skip_permission_denied, ec)) {
+        if (ec) break;
+        std::error_code status_ec;
+        bool is_dir = entry.is_directory(status_ec);
+        if (status_ec || is_dir) continue;
+        
+        std::string ext = entry.path().extension().string();
+        if (!iequals(ext, ".bin") && !iequals(ext, ".nfc")) {
+            continue;
+        }
+        
+        std::string filename = entry.path().filename().string();
+        if (!filename.empty()) {
+            callback(ctx, filename.c_str());
+        }
+    }
+}
+
+// Request font atlas rebuild on next frame
+void amiibo_request_font_rebuild(void) {
+    g_font_rebuild_requested = true;
+}
+
+// Check and clear font rebuild request flag
+extern "C" bool amiibo_check_font_rebuild(void) {
+    if (g_font_rebuild_requested) {
+        g_font_rebuild_requested = false;
+        return true;
+    }
+    return false;
 }

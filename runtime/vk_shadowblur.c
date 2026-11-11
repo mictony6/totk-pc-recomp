@@ -62,20 +62,20 @@ static struct {
     int row_done;                       // out[0] holds this frame's row blur
 } S;
 
-static void swap_off(void) {
+static void swap_off(VkExec *ex) {
     if (!vk_shadowblur_swap_img) return;
     vk_shadowblur_swap_img = NULL, vk_shadowblur_swap_view = VK_NULL_HANDLE;
-    vk_exec_draw_new_cb();   // a draw with the same bindings as the one before must not keep the swapped view
+    vk_exec_draw_new_cb(ex);   // a draw with the same bindings as the one before must not keep the swapped view
 }
 
-static void update_mode(void) {
+static void update_mode(VkExec *ex) {
     unsigned v = cfg_version();
     if (S.tried && v == S.cfg_ver) return;
     int on = !strcmp(cfg_value("TOTK_SHADOW_BLUR"), "depth"), first = !S.tried;
     S.tried = 1, S.cfg_ver = v;
     if (on == S.on && !first) return;
     S.on = on;
-    if (!on) S.src = S.dst = S.merged = NULL, S.row_done = 0, vk_shadowblur_watch = 0, swap_off();
+    if (!on) S.src = S.dst = S.merged = NULL, S.row_done = 0, vk_shadowblur_watch = 0, swap_off(ex);
     rt_log(on ? "vk: the shadow mask's blur stops at depth edges" : "vk: the shadow mask keeps the game's blur");
 }
 
@@ -237,7 +237,7 @@ static void flush_row(VkExec *ex) {
     if (vk_dump_armed)   // TOTK_DUMP: ours
         vk_dump_image(ex, S.out[0].img, VK_FORMAT_R8G8B8A8_UNORM, S.w, S.h, "shadow_blur_row");
     // the game's bound compute pipeline and descriptors were replaced: bind them again; from here the merge samples ours
-    vk_exec_draw_new_cb();
+    vk_exec_draw_new_cb(ex);
     vk_shadowblur_swap_img = dst, vk_shadowblur_swap_view = S.out[0].view;
     vk_shadowblur_swap_hits = 0;
     S.swap_frame = __atomic_load_n(&S.frame, __ATOMIC_RELAXED);
@@ -263,7 +263,7 @@ static void flush_column(VkExec *ex) {
     ex->recorded += 8;
     if (vk_dump_armed)   // TOTK_DUMP: ours
         vk_dump_image(ex, S.out[1].img, VK_FORMAT_R8G8B8A8_UNORM, S.w, S.h, "shadow_blur_column");
-    vk_exec_draw_new_cb();   // the game's bound compute pipeline and descriptors were replaced: bind them again
+    vk_exec_draw_new_cb(ex);   // the game's bound compute pipeline and descriptors were replaced: bind them again
 }
 
 float vk_shadowblur_slope(void) { return SLOPE; }
@@ -284,10 +284,10 @@ void vk_shadowblur_flush(VkExec *ex) {
 void vk_shadowblur_present(uint64_t frame) { __atomic_store_n(&S.frame, frame, __ATOMIC_RELAXED); }
 
 void vk_shadowblur_pass_begin(VkExec *ex) {
-    update_mode();
+    update_mode(ex);
     if (!S.on) return;
     // a frame where nothing read the swap (the mask pass did not run): the image may mean something else by now
-    if (vk_shadowblur_swap_img && S.swap_frame != __atomic_load_n(&S.frame, __ATOMIC_RELAXED)) swap_off();
+    if (vk_shadowblur_swap_img && S.swap_frame != __atomic_load_n(&S.frame, __ATOMIC_RELAXED)) swap_off(ex);
     const VkExecTarget *t = &ex->color[0];
     if (ex->pass_ncolor == 1 && t->img && !t->level && t->format == VK_FORMAT_R32_SFLOAT) S.depth = t->img;
     vk_shadowblur_flush(ex);
@@ -296,12 +296,12 @@ void vk_shadowblur_pass_begin(VkExec *ex) {
 // The pass that ends: once the merge has sampled ours, the swap is over.
 void vk_shadowblur_pass_end(VkExec *ex) {
     (void)ex;
-    if (vk_shadowblur_swap_img && vk_shadowblur_swap_hits) swap_off();
+    if (vk_shadowblur_swap_img && vk_shadowblur_swap_hits) swap_off(ex);
 }
 
 // A draw about to be recorded, its pass open.
 void vk_shadowblur_draw(VkExec *ex) {
-    if (!S.tried) update_mode();
+    if (!S.tried) update_mode(ex);
     vk_shadowblur_watch = 0;
     if (!S.on || !ex->pass_ncolor) return;
     const VkExecTarget *d = &ex->color[0];

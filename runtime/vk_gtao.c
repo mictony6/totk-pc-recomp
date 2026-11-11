@@ -99,15 +99,15 @@ static struct {
     int pending;                        // the mask is finished: GTAO before the next pass
 } G;
 
-static void swap_off(void) {
+static void swap_off(VkExec *ex) {
     if (!vk_gtao_swap_img) return;
     vk_gtao_swap_img = NULL, vk_gtao_swap_view = VK_NULL_HANDLE;
-    vk_exec_draw_new_cb();   // a draw with the same bindings as the one before must not keep the swapped view
+    vk_exec_draw_new_cb(ex);   // a draw with the same bindings as the one before must not keep the swapped view
 }
 
 static int read_mode(void) { return !strcmp(cfg_value("TOTK_AO"), "gtao") ? AO_GTAO : AO_GAME; }
 
-static void update_mode(void) {
+static void update_mode(VkExec *ex) {
     unsigned v = cfg_version();
     if (G.tried && v == G.cfg_ver) return;
     if (!G.tried) {
@@ -148,7 +148,7 @@ static void update_mode(void) {
     G.thin = minimal ? 0.7f : 0.0f, G.fade = minimal ? 0.85f : 0.0f;
     if (m == G.mode && !first) return;
     G.mode = m;
-    if (m != AO_GTAO) swap_off();
+    if (m != AO_GTAO) swap_off(ex);
     rt_log(m == AO_GTAO ? "vk: ambient occlusion GTAO at half resolution in place of the game's SSAO, strength %.0f%%, "
                           "radius %.2f m, foliage %s"
                         : "vk: ambient occlusion: the game's own",
@@ -380,7 +380,7 @@ void vk_gtao_flush(VkExec *ex) {
     }
     // the game's bound compute pipeline and descriptors were replaced: bind them again; and from here the lighting
     // samples the half-resolution mask
-    vk_exec_draw_new_cb();
+    vk_exec_draw_new_cb(ex);
     vk_gtao_swap_img = G.mask, vk_gtao_swap_view = G.img[I_OUT].view;
 }
 
@@ -431,7 +431,7 @@ static const VkTexImage *gbuffer_depth(const VkExec *ex, const VkTexImage **mate
 }
 
 void vk_gtao_pass_begin(VkExec *ex) {
-    update_mode();
+    update_mode(ex);
     if (ex->pass_w > G.max_w) G.max_w = ex->pass_w;
     if (G.mode == AO_GTAO) {
         // the camera block: c4 of the fragment stage, 0x940 bytes, as vk_contact.c finds it
@@ -448,7 +448,7 @@ void vk_gtao_pass_begin(VkExec *ex) {
             G.gb_frame = f;
             G.depth = d, G.material = mat, G.albedo = alb, G.gnormal = gn, G.dw = ex->pass_w, G.dh = ex->pass_h;
             G.raw_seen = G.done = 0;
-            swap_off();
+            swap_off(ex);
         }
     }
     vk_gtao_flush(ex);
@@ -468,7 +468,7 @@ static void log_draw(VkExec *ex) {
 
 // A draw about to be recorded, its pass open.
 void vk_gtao_draw(VkExec *ex) {
-    update_mode();
+    update_mode(ex);
     if (G.log_frame) log_draw(ex);
     if (G.mode != AO_GTAO || G.done || !G.depth || ex->pass_ncolor < 5) return;
     const VkExecTarget *t = &ex->color[0];

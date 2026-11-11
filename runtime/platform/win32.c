@@ -19,6 +19,13 @@
 
 #include "platform.h"
 
+// Hybrid laptops: the drivers read these exports of the executable when it starts and run it on the dedicated GPU.
+// NVIDIA Optimus can otherwise hide its GPU from a program it put on the integrated one, whatever the Windows and NVIDIA
+// settings say; AMD switchable graphics read the second one. TOTK_GPU_INDEX still picks another GPU. Savage Wind Recomp
+// exports the same two (runtime/platform/windows.c).
+__declspec(dllexport) DWORD NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+
 _Static_assert(sizeof(PlatMutex) == sizeof(SRWLOCK), "PlatMutex holds an SRWLOCK");
 _Static_assert(sizeof(PlatCond) == sizeof(CONDITION_VARIABLE), "PlatCond holds a CONDITION_VARIABLE");
 
@@ -294,6 +301,98 @@ uint32_t plat_cpu_usable(void) {
     return plat_cpu_count();
 }
 
+// ---- performance cores of a hybrid CPU
+// An Intel CPU with P-cores and E-cores (a Core 5 210H: 4 P-cores with two threads each, 4 E-cores) runs a thread on an
+// E-core at about 60% of a P-core's speed, and the frame waits for its slowest critical thread. The few threads every
+// frame goes through ask for the P-cores (plat_thread_perf_core): their selected CPU sets are the logical processors
+// above the lowest efficiency class that the process affinity allows. A thread's CPU sets bind it like an affinity
+// mask, except that processors the system reserves for itself are left out instead of failing. Nothing is selected
+// on a CPU with one efficiency class, or when the affinity already leaves only P-cores or only E-cores. LAS Recomp
+// does the same for its game, render and vsync threads (runtime/platform/windows.c plat_thread_perf_core).
+// Nothing is selected either below PC_MIN_CORES physical P-cores (an i5-1235U or Core 3 100U has 2): the five bound
+// threads (perf_core_thread) and a spinning recorder would crowd two cores and their hyperthreads while the E-cores
+// stay idle, which can be slower than letting the scheduler place them.
+#define PC_MIN_CORES 4
+static ULONG *pc_ids;   // the CPU set ids of the allowed P-core logical processors; NULL: none selected
+static ULONG pc_n;
+
+int plat_perf_core_setup(char *why, size_t n) {
+    ULONG len = 0;
+    GetSystemCpuSetInformation(NULL, 0, &len, GetCurrentProcess(), 0);
+    uint8_t *buf = len ? malloc(len) : NULL;
+    if (!buf || !GetSystemCpuSetInformation((PSYSTEM_CPU_SET_INFORMATION)buf, len, &len, GetCurrentProcess(), 0)) {
+        free(buf);
+        snprintf(why, n, "no CPU set information (error %lu)", GetLastError());
+        return 0;
+    }
+    // The process affinity mask covers its first processor group only: it filters on a single-group system.
+    DWORD_PTR proc = 0, sys = 0;
+    int filter = GetActiveProcessorGroupCount() == 1 && GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys) && proc;
+    int lo = 255, hi = -1, all = 0;
+    for (ULONG off = 0; off < len;) {
+        SYSTEM_CPU_SET_INFORMATION *i = (SYSTEM_CPU_SET_INFORMATION *)(buf + off);
+        if (!i->Size) break;
+        if (i->Type == CpuSetInformation) {
+            int ec = i->CpuSet.EfficiencyClass;
+            lo = ec < lo ? ec : lo, hi = ec > hi ? ec : hi, all++;
+        }
+        off += i->Size;
+    }
+    if (!all || hi <= lo) {
+        free(buf);
+        snprintf(why, n, "not a hybrid CPU (%d logical processors, one efficiency class)", all);
+        return 0;
+    }
+    ULONG *ids = calloc((size_t)all, sizeof *ids);
+    uint16_t *cores = calloc((size_t)all, sizeof *cores);   // group << 8 | core index of each allowed physical P-core
+    int np = 0, ne = 0, ok_p = 0, ok_e = 0, nc = 0;
+    for (ULONG off = 0; ids && cores && off < len;) {
+        SYSTEM_CPU_SET_INFORMATION *i = (SYSTEM_CPU_SET_INFORMATION *)(buf + off);
+        if (!i->Size) break;
+        if (i->Type == CpuSetInformation) {
+            int perf = i->CpuSet.EfficiencyClass > lo;
+            int allowed = !filter || (i->CpuSet.Group == 0 && i->CpuSet.LogicalProcessorIndex < 64 &&
+                                      (proc >> i->CpuSet.LogicalProcessorIndex) & 1);
+            perf ? np++ : ne++;
+            if (allowed) perf ? ok_p++ : ok_e++;
+            if (allowed && perf) {
+                ids[pc_n++] = i->CpuSet.Id;
+                uint16_t key = (uint16_t)(i->CpuSet.Group << 8 | i->CpuSet.CoreIndex);
+                int k = 0;
+                while (k < nc && cores[k] != key) k++;
+                if (k == nc) cores[nc++] = key;
+            }
+        }
+        off += i->Size;
+    }
+    int counted = ids && cores;
+    free(buf);
+    free(cores);
+    if (!counted || !ok_p || !ok_e) {
+        free(ids);
+        pc_n = 0;
+        snprintf(why, n, "hybrid CPU, %d P-core + %d E-core logical processors; the affinity allows %d + %d, so it decides",
+                 np, ne, ok_p, ok_e);
+        return 0;
+    }
+    if (nc < PC_MIN_CORES) {
+        free(ids);
+        pc_n = 0;
+        snprintf(why, n, "hybrid CPU, %d P-core + %d E-core logical processors on %d P-cores, fewer than %d", np, ne, nc,
+                 PC_MIN_CORES);
+        return 0;
+    }
+    pc_ids = ids;
+    snprintf(why, n, "hybrid CPU, %d P-core + %d E-core logical processors%s", np, ne,
+             ok_p != np || ok_e != ne ? " (affinity-limited)" : "");
+    return (int)pc_n;
+}
+
+int plat_thread_perf_core(void) {
+    if (!pc_ids) return -1;
+    return SetThreadSelectedCpuSets(GetCurrentThread(), pc_ids, pc_n) ? 1 : 0;
+}
+
 // PLAT_PRIO_* are the THREAD_PRIORITY_* values.
 void plat_thread_priority(int prio) { SetThreadPriority(GetCurrentThread(), prio); }
 void plat_thread_set_priority(PlatThread *t, int prio) { SetThreadPriority(t->h, prio); }
@@ -323,6 +422,17 @@ uint64_t plat_counter_hz(void) { return qpc_freq(); }
 
 // The default timer tick is 15.6 ms; a 1 ms wait would cost a full tick.
 void plat_timer_1ms(void) { timeBeginPeriod(1); }
+
+// Windows 11 runs the threads of a process it deems in the background at EcoQoS (on the E-cores of a hybrid Intel CPU,
+// at a low clock) and ignores its timer resolution while its window is hidden. The game is always latency-bound, so it
+// opts out of both. Windows before 10 1709 does not know the class: 0.
+int plat_power_full(void) {
+    PROCESS_POWER_THROTTLING_STATE s = {
+        .Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        .ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+        .StateMask = 0};
+    return SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &s, sizeof s) ? 1 : 0;
+}
 
 static PlatScale qpc_ns;   // set before main, so no thread reads it half written
 
@@ -631,8 +741,21 @@ void plat_mem_fault_hook(int (*fn)(uint64_t addr)) {
 
 static void (*crash_fn)(const PlatCrash *c);
 
+// The faulting thread's general registers, for the report to tie the faulting instruction to its operands.
+static void regs_of(const CONTEXT *x, PlatCrash *c) {
+    const DWORD64 r[16] = {x->Rax, x->Rcx, x->Rdx, x->Rbx, x->Rsp, x->Rbp, x->Rsi, x->Rdi,
+                           x->R8,  x->R9,  x->R10, x->R11, x->R12, x->R13, x->R14, x->R15};
+    for (int i = 0; i < 16; i++) c->gpr[i] = r[i];
+    c->has_regs = 1;
+}
+
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep);
+
 static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
     DWORD code = ep->ExceptionRecord->ExceptionCode;
+    // Heap corruption is raised by the heap manager, which then ends the process itself: it never reaches the
+    // unhandled-exception filter, so it is reported from here, wherever the heap was called from.
+    if (code == 0xc0000374u) return crash_filter(ep);   // STATUS_HEAP_CORRUPTION
     const char *what = code == EXCEPTION_ACCESS_VIOLATION ? "access violation"
                      : code == EXCEPTION_ILLEGAL_INSTRUCTION ? "illegal instruction"
                      : code == EXCEPTION_INT_DIVIDE_BY_ZERO ? "integer division by zero"
@@ -648,6 +771,7 @@ static LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep) {
     PlatCrash c = {what, (uint32_t)code, rip, rip - (uintptr_t)mi.lpBaseOfDll, -1, 0};
     if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2)
         c.access = (int)ep->ExceptionRecord->ExceptionInformation[0], c.addr = ep->ExceptionRecord->ExceptionInformation[1];
+    regs_of(ep->ContextRecord, &c);
     crash_fn(&c);
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -670,6 +794,134 @@ __attribute__((noinline)) static void crash_from_runtime(const char *what, uint3
     crash_fn(&c);
 }
 
+// The name a DLL records for itself in its export directory ("amdvlk64.dll"). Read from its mapped headers, not through
+// the loader, whose lock another thread may hold when the process crashes.
+static const char *image_name(const char *base) {
+    const IMAGE_NT_HEADERS64 *nt = (const void *)(base + ((const IMAGE_DOS_HEADER *)base)->e_lfanew);
+    const IMAGE_DATA_DIRECTORY *d = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (!d->VirtualAddress || !d->Size) return "unnamed module";
+    return base + ((const IMAGE_EXPORT_DIRECTORY *)(base + d->VirtualAddress))->Name;
+}
+
+// The return addresses on the crashed thread's stack, innermost first, with their modules: unwinds the faulting context
+// with the x64 unwind tables; a function without a table entry (a leaf, or address 0 after a call through a null
+// pointer) has its return address on top of the stack. The walk stops at return address 0 (the thread's first frame)
+// and when the stack pointer leaves the thread's stack, so a damaged stack ends it instead of faulting. A driver can
+// nest deeper than the report holds, so frames in other modules stop being kept after the first 12 (counted in
+// frames_left_out) and the frames in this executable, which name the host call that ran into the driver, still fit.
+static void frames_of(const CONTEXT *at, PlatCrash *x) {
+    enum { MAX = sizeof x->frames / sizeof *x->frames, OTHER_MAX = 12 };
+    CONTEXT c = *at;
+    ULONG_PTR low, high;
+    GetCurrentThreadStackLimits(&low, &high);
+    void *exe = GetModuleHandleW(NULL);
+    int other = 0;
+    for (int i = 0; i < 256 && x->nframes < MAX && (c.Rip || !i) && c.Rsp >= low && c.Rsp + 8 <= high; i++) {
+        DWORD64 img;
+        RUNTIME_FUNCTION *fe = RtlLookupFunctionEntry(c.Rip, &img, NULL);
+        if (fe) {
+            void *data;
+            DWORD64 frame;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, img, c.Rip, fe, &c, &data, &frame, NULL);
+        } else {
+            c.Rip = *(const DWORD64 *)c.Rsp;
+            c.Rsp += 8;
+        }
+        if (!c.Rip) break;
+        void *base = NULL;
+        RtlPcToFileHeader((void *)(uintptr_t)c.Rip, &base);
+        if (base != exe && other++ >= OTHER_MAX) {
+            x->frames_left_out++;
+            continue;
+        }
+        int n = x->nframes++;
+        x->frames[n] = (uintptr_t)c.Rip;
+        x->frame_module[n] = base == exe ? NULL : base ? image_name(base) : "";
+        x->frame_offset[n] = (uintptr_t)c.Rip - (uintptr_t)base;
+    }
+}
+
+// MSVC's C++ throw (0xe06d7363) passes the thrown object in ExceptionInformation[1], its ThrowInfo in [2] and the image
+// base the ThrowInfo's 32-bit offsets are relative to in [3] (magic 0x19930520..0x19930522 in [0]). The ThrowInfo lists
+// the types a catch may match, the thrown type first; each type descriptor holds a vtable pointer, a spare pointer and
+// the decorated name. A std::exception keeps its what() text in the pointer right after its vtable pointer (MSVC's
+// __std_exception_data). Every read is checked: the exception may come from a damaged heap.
+typedef struct { uint32_t attributes; int32_t unwind, forward_compat, catchable_types; } CxxThrowInfo;
+typedef struct { uint32_t properties; int32_t type, this_mdisp, this_pdisp, this_vdisp, size, copy; } CxxCatchableType;
+
+// Copies the string at p into buf (cut to n - 1 characters), checking each page before reading it; NULL when the first
+// byte cannot be read.
+static const char *copy_cstr(uintptr_t p, char *buf, size_t n) {
+    size_t i = 0;
+    for (; p && i + 1 < n; i++) {
+        if ((!i || !((p + i) & 4095)) && !plat_mem_readable(p + i, 1)) break;
+        if (!(buf[i] = ((const char *)p)[i])) return buf;
+    }
+    buf[i] = 0;
+    return i ? buf : NULL;
+}
+
+static void cxx_info(const EXCEPTION_RECORD *er, PlatCrash *x) {
+    if (er->NumberParameters < 4 || er->ExceptionInformation[0] - 0x19930520u > 2) return;
+    uintptr_t obj = er->ExceptionInformation[1], info = er->ExceptionInformation[2],
+              base = er->ExceptionInformation[3];
+    if (!info || !plat_mem_readable(info, sizeof(CxxThrowInfo))) return;
+    const CxxThrowInfo *ti = (const void *)info;
+    uintptr_t arr = base + (uintptr_t)(intptr_t)ti->catchable_types;
+    if (!ti->catchable_types || !plat_mem_readable(arr, 4)) return;
+    int32_t n = *(const int32_t *)arr;
+    if (n <= 0 || n > 64 || !plat_mem_readable(arr + 4, 4u * (uint64_t)n)) return;
+    static char type[128], what[256];   // the crash report runs once: crash_fn ends the process
+    int exception = 0;
+    for (int32_t i = 0; i < n; i++) {
+        uintptr_t ct = base + (uintptr_t)(intptr_t)((const int32_t *)(arr + 4))[i];
+        if (!plat_mem_readable(ct, sizeof(CxxCatchableType))) continue;
+        uintptr_t td = base + (uintptr_t)(intptr_t)((const CxxCatchableType *)ct)->type;
+        char name[64];
+        if (!copy_cstr(td + 16, i ? name : type, i ? sizeof name : sizeof type))   // past vtable and spare pointers
+            continue;
+        if (!i) x->cxx_type = type;
+        if (!strcmp(i ? name : type, ".?AVexception@std@@")) exception = 1;
+    }
+    if (exception && obj && plat_mem_readable(obj + 8, 8))
+        x->cxx_what = copy_cstr(*(const uintptr_t *)(obj + 8), what, sizeof what);
+}
+
+// The last-chance filter: an exception no handler took, in any module. crash_veh reports faults in this executable as
+// they happen; this one catches the rest, which used to end the process with no line in the log: a fault in a GPU
+// driver's own thread or in a driver call (vkQueueSubmit, vkAllocateMemory), a C++ exception a library let escape, a
+// call through a null pointer (rip 0, outside every module). Windows calls it only after every handler declined, so
+// the exceptions drivers raise and catch themselves never get here; it costs nothing until a crash.
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
+    const EXCEPTION_RECORD *er = ep->ExceptionRecord;
+    DWORD code = er->ExceptionCode;
+    uintptr_t rip = (uintptr_t)ep->ContextRecord->Rip;
+    PlatCrash c = {code == EXCEPTION_ACCESS_VIOLATION        ? "access violation"
+                   : code == EXCEPTION_ILLEGAL_INSTRUCTION   ? "illegal instruction"
+                   : code == EXCEPTION_INT_DIVIDE_BY_ZERO    ? "integer division by zero"
+                   : code == EXCEPTION_PRIV_INSTRUCTION      ? "privileged instruction"
+                   : code == EXCEPTION_STACK_OVERFLOW        ? "stack overflow"
+                   : code == EXCEPTION_IN_PAGE_ERROR         ? "in-page error"
+                   : code == EXCEPTION_BREAKPOINT            ? "breakpoint"
+                   : code == 0xe06d7363u                     ? "C++ exception"
+                   : code == 0xc0000374u                     ? "heap corruption"   // STATUS_HEAP_CORRUPTION
+                                                             : "unhandled exception",
+                   (uint32_t)code, rip, 0, -1, 0};
+    if (code == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2)
+        c.access = (int)er->ExceptionInformation[0], c.addr = er->ExceptionInformation[1];
+    regs_of(ep->ContextRecord, &c);
+    void *base = NULL;
+    RtlPcToFileHeader((void *)rip, &base);
+    uintptr_t exe = (uintptr_t)GetModuleHandleW(NULL);
+    c.offset = rip - (uintptr_t)base;
+    if (!base) c.module = "";
+    else if ((uintptr_t)base != exe) c.module = image_name(base);
+    if (c.module) frames_of(ep->ContextRecord, &c);
+    if (code == 0xe06d7363u) cxx_info(er, &c);
+    crash_fn(&c);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 static void abort_signal(int sig) { crash_from_runtime("abort", (uint32_t)sig); }
 
 static void invalid_parameter(const wchar_t *expr, const wchar_t *func, const wchar_t *file, unsigned line,
@@ -681,6 +933,7 @@ static void invalid_parameter(const wchar_t *expr, const wchar_t *func, const wc
 void plat_crash_hook(void (*fn)(const PlatCrash *c)) {
     crash_fn = fn;
     AddVectoredExceptionHandler(0, crash_veh);
+    SetUnhandledExceptionFilter(crash_filter);   // replaces the C runtime's filter; crash_fn never returns
     signal(SIGABRT, abort_signal);
     _set_invalid_parameter_handler(invalid_parameter);
 }
@@ -785,6 +1038,14 @@ int plat_mem_read(uint64_t addr, void *out, size_t n) {
     return ReadProcessMemory(GetCurrentProcess(), (const void *)(uintptr_t)addr, out, n, &got) && got == n;
 }
 
+// The display mode's own size: physical pixels whatever the process's DPI awareness and the display scale
+int plat_screen_size(int *w, int *h) {
+    DEVMODEW dm = {.dmSize = sizeof dm};
+    if (!EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &dm) || !dm.dmPelsWidth || !dm.dmPelsHeight) return 0;
+    *w = (int)dm.dmPelsWidth, *h = (int)dm.dmPelsHeight;
+    return 1;
+}
+
 int plat_mem_readable(uint64_t addr, uint64_t n) {
     for (uint64_t a = addr, end = addr + n; a < end || a == addr;) {
         MEMORY_BASIC_INFORMATION mbi;
@@ -801,7 +1062,33 @@ void plat_aligned_free(void *p) { _aligned_free(p); }
 
 // ---- process
 
+#ifdef TOTK_PGO_GEN
+// compiler-rt's profile runtime (an instrumented build, tools/build_game.py --pgo gen). It writes its counters from an
+// atexit handler, which ExitProcess skips; __llvm_profile_dump writes them once and makes later writes no-ops.
+int __llvm_profile_dump(void);
+int __llvm_profile_write_file(void);
+void __llvm_profile_reset_counters(void);
+
+// A long played session must not lose its counts to a crash or a reboot: every minute the counters are added to the
+// .profraw (the file merges, -fprofile-generate's %m) and zeroed. Counts taken between the write and the reset are lost.
+static DWORD WINAPI pgo_flush_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        Sleep(60 * 1000);
+        if (__llvm_profile_write_file() == 0) __llvm_profile_reset_counters();
+    }
+}
+
+__attribute__((constructor)) static void pgo_flush_start(void) {
+    HANDLE h = CreateThread(NULL, 0, pgo_flush_thread, NULL, 0, NULL);
+    if (h) CloseHandle(h);
+}
+#endif
+
 void plat_exit(int code) {
+#ifdef TOTK_PGO_GEN
+    __llvm_profile_dump();
+#endif
     fflush(stdout);
     fflush(stderr);
     ExitProcess((UINT)code);
@@ -947,7 +1234,11 @@ const void *plat_file_map(PlatFile *f) {
     return v;
 }
 
+static __thread DWORD fs_last_error;
+int plat_fs_os_error(void) { return (int)fs_last_error; }
+
 static int fs_err(DWORD e) {
+    fs_last_error = e;
     switch (e) {
     case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: case ERROR_DIRECTORY: return PLAT_FS_NOT_FOUND;
     case ERROR_FILE_EXISTS: case ERROR_ALREADY_EXISTS: return PLAT_FS_EXISTS;
@@ -957,12 +1248,28 @@ static int fs_err(DWORD e) {
     }
 }
 
+// A symbolic link or junction is a link: removed as a link, never followed. Any other reparse point (OneDrive's cloud
+// placeholders, deduplicated files) is an ordinary file or directory whose content the file system fetches on access.
+static int fs_kind_of(const WIN32_FIND_DATAW *fd) {
+    DWORD a = fd->dwFileAttributes;
+    if (a & FILE_ATTRIBUTE_REPARSE_POINT && (fd->dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd->dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT))
+        return PLAT_FS_LINK;
+    return a & FILE_ATTRIBUTE_DIRECTORY ? PLAT_FS_DIR : PLAT_FS_FILE;
+}
+
 int plat_fs_kind(const char *path) {
     wchar_t w[WPATH];
     if (!widen(path, w, WPATH)) return PLAT_FS_MISSING;
     DWORD a = GetFileAttributesW(w);
     if (a == INVALID_FILE_ATTRIBUTES) return PLAT_FS_MISSING;
-    return a & FILE_ATTRIBUTE_REPARSE_POINT ? PLAT_FS_LINK : a & FILE_ATTRIBUTE_DIRECTORY ? PLAT_FS_DIR : PLAT_FS_FILE;
+    if (!(a & FILE_ATTRIBUTE_REPARSE_POINT)) return a & FILE_ATTRIBUTE_DIRECTORY ? PLAT_FS_DIR : PLAT_FS_FILE;
+    // the reparse tag comes with the find data only; FindFirstFileW is asked only here, since it fails on a path
+    // with a trailing separator and reads wildcards
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(w, &fd);
+    if (h == INVALID_HANDLE_VALUE) return PLAT_FS_LINK;
+    FindClose(h);
+    return fs_kind_of(&fd);
 }
 
 int plat_fs_mkdir(const char *path) {
@@ -974,7 +1281,15 @@ int plat_fs_mkdir(const char *path) {
 int plat_fs_rmdir(const char *path) {
     wchar_t w[WPATH];
     if (!widen(path, w, WPATH)) return PLAT_FS_ERROR;
-    return RemoveDirectoryW(w) ? PLAT_FS_OK : fs_err(GetLastError());
+    if (RemoveDirectoryW(w)) return PLAT_FS_OK;
+    DWORD e = GetLastError(), a = GetFileAttributesW(w);
+    if (e == ERROR_ACCESS_DENIED && a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_READONLY)) {
+        // a read-only directory (copied over from another emulator's save folder) refuses RemoveDirectoryW
+        SetFileAttributesW(w, a & ~(DWORD)FILE_ATTRIBUTE_READONLY);
+        if (RemoveDirectoryW(w)) return PLAT_FS_OK;
+        e = GetLastError();
+    }
+    return fs_err(e);
 }
 
 int plat_fs_unlink(const char *path) {
@@ -1119,9 +1434,7 @@ int plat_fs_list(const char *dir, int (*cb)(const char *name, int kind, uint64_t
         if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
         char name[1024];
         if (!WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, name, sizeof name, NULL, NULL)) continue;
-        DWORD a = fd.dwFileAttributes;
-        int kind = a & FILE_ATTRIBUTE_REPARSE_POINT ? PLAT_FS_LINK : a & FILE_ATTRIBUTE_DIRECTORY ? PLAT_FS_DIR
-                                                                                                   : PLAT_FS_FILE;
+        int kind = fs_kind_of(&fd);
         if (!cb(name, kind, (uint64_t)fd.nFileSizeHigh << 32 | fd.nFileSizeLow, ctx)) break;
     } while (FindNextFileW(h, &fd));
     FindClose(h);
@@ -1339,6 +1652,27 @@ void *plat_lib_open(const char *name) {
 
 void *plat_lib_sym(void *lib, const char *name) { return lib ? (void *)GetProcAddress((HMODULE)lib, name) : NULL; }
 
+void plat_lib_error(char *out, size_t cap) { snprintf(out, cap, "error %lu", GetLastError()); }
+
+int plat_ngx_core_path(char *out, size_t cap) {
+    wchar_t dir[WPATH];
+    DWORD n = sizeof dir;
+    char d[PLAT_PATH_MAX];
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\NVIDIA Corporation\\Global\\NGXCore", L"FullPath", RRF_RT_REG_SZ,
+                     NULL, dir, &n) != ERROR_SUCCESS ||
+        !WideCharToMultiByte(CP_UTF8, 0, dir, -1, d, (int)sizeof d, NULL, NULL))
+        return 0;
+    return snprintf(out, cap, "%s\\_nvngx.dll", d) < (int)cap;
+}
+
+int plat_exe_dir_wide(wchar_t *out, size_t cap) {
+    DWORD len = GetModuleFileNameW(NULL, out, (DWORD)cap);
+    if (!len || len >= cap) return 0;
+    while (len && out[len - 1] != L'\\' && out[len - 1] != L'/') len--;
+    out[len] = 0;
+    return len != 0;
+}
+
 // ---- machine load: GetSystemTimes for the CPU, PDH (pdh.dll, loaded on first use) for the thermal zones and the GPU
 // engine and adapter memory counters that Task Manager reads.
 
@@ -1531,6 +1865,12 @@ void plat_commit_info(double *proc_mb, double *used_mb, double *limit_mb) {
         *proc_mb = (double)(pmc.PrivateUsage >> 20);
 }
 
+void plat_mem_room(uint64_t *commit_room, uint64_t *phys_room) {
+    *commit_room = *phys_room = UINT64_MAX;
+    MEMORYSTATUSEX ms = {.dwLength = sizeof ms};
+    if (GlobalMemoryStatusEx(&ms)) *commit_room = ms.ullAvailPageFile, *phys_room = ms.ullAvailPhys;
+}
+
 void plat_process_memory(uint64_t *resident, uint64_t *private_bytes) {
     PROCESS_MEMORY_COUNTERS_EX pm = {.cb = sizeof pm};
     *resident = *private_bytes = 0;
@@ -1659,6 +1999,56 @@ long plat_child_read(PlatChild *c, void *buf, size_t cap) {
     return (long)got;
 }
 
+// ---- local IPC (platform.h): Discord's Rich Presence named pipe
+struct PlatIpc { HANDLE h; };
+
+PlatIpc *plat_ipc_connect(const char *name) {
+    wchar_t wname[128], path[152];
+    if (!widen(name, wname, 128)) return NULL;
+    swprintf(path, 152, L"\\\\.\\pipe\\%ls", wname);
+    HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) return NULL;   // no listener, or the pipe is busy: the caller retries later
+    PlatIpc *p = malloc(sizeof *p);
+    if (!p) {
+        CloseHandle(h);
+        return NULL;
+    }
+    p->h = h;
+    return p;
+}
+
+int plat_ipc_read(PlatIpc *p, void *buf, size_t n, uint32_t ms) {
+    uint64_t deadline = plat_now_ms() + ms;
+    for (;;) {
+        DWORD have = 0;
+        if (!PeekNamedPipe(p->h, NULL, 0, NULL, &have, NULL)) return -1;   // the writer closed the pipe
+        if (have) {
+            DWORD got = 0;
+            if (!ReadFile(p->h, buf, have < n ? have : (DWORD)n, &got, NULL) || !got) return -1;
+            return (int)got;
+        }
+        if (plat_now_ms() >= deadline) return 0;
+        plat_sleep_ms(5);
+    }
+}
+
+int plat_ipc_write(PlatIpc *p, const void *buf, size_t n) {
+    const uint8_t *at = buf;
+    while (n) {
+        DWORD put = 0;
+        if (!WriteFile(p->h, at, n > (1u << 30) ? 1u << 30 : (DWORD)n, &put, NULL) || !put) return 0;
+        at += put, n -= put;
+    }
+    return 1;
+}
+
+void plat_ipc_close(PlatIpc *p) {
+    if (!p) return;
+    CloseHandle(p->h);
+    free(p);
+}
+
+
 // ---- restart
 // TOTK_RESTART_WAIT names the process that called plat_restart, as its id and creation time: a process that has only
 // reused the id is not waited for. Waiting keeps the new process off the old one's files (the log it moves at start,
@@ -1703,6 +2093,51 @@ int plat_console_hide(void) {
 void plat_error_box(const char *text) {
     if (!InterlockedCompareExchange(&g_console_hidden, 1, 1)) return;
     MessageBoxA(NULL, text, "TotK Recomp", MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
+}
+
+// One argument of a command line as CommandLineToArgvW reads it back: in quotes, a backslash run doubled before a quote
+// and at the end, a quote escaped.
+static size_t quote_arg(const wchar_t *a, wchar_t *out, size_t cap, size_t at) {
+#define PUT(c) do { if (at + 1 < cap) out[at] = (c); at++; } while (0)
+    PUT(L'"');
+    for (const wchar_t *p = a;; p++) {
+        size_t slashes = 0;
+        while (*p == L'\\') p++, slashes++;
+        size_t times = !*p || *p == L'"' ? 2 : 1;
+        for (size_t k = 0; k < slashes * times; k++) PUT(L'\\');
+        if (!*p) break;
+        if (*p == L'"') PUT(L'\\');
+        PUT(*p);
+    }
+    PUT(L'"');
+    PUT(L' ');
+#undef PUT
+    return at;
+}
+
+int plat_spawn(const char *const *argv, const char *cwd) {
+    enum { CMD = 32768 };
+    wchar_t *cmd = calloc(CMD, sizeof *cmd), *arg = malloc(WPATH * sizeof *arg), *dir = malloc(WPATH * sizeof *dir);
+    int ok = cmd && arg && dir && argv[0] && widen(cwd, dir, WPATH);
+    size_t at = 0;
+    for (int i = 0; ok && argv[i]; i++) {
+        ok = widen(argv[i], arg, WPATH);
+        if (ok) at = quote_arg(arg, cmd, CMD, at);
+    }
+    ok = ok && at < CMD && at > 0;
+    if (ok) cmd[at - 1] = 0;   // the last separator
+    STARTUPINFOW si = {.cb = sizeof si};
+    PROCESS_INFORMATION pi;
+    ok = ok && CreateProcessW(NULL, cmd, NULL, NULL, FALSE, DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, NULL, dir, &si,
+                              &pi);
+    if (ok) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    free(cmd);
+    free(arg);
+    free(dir);
+    return ok;
 }
 
 int plat_restart_wait(uint32_t timeout_ms) {

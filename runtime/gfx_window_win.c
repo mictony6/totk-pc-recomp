@@ -279,6 +279,24 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcW(h, m, w, l);
 }
 
+// Brings the game window to the front. Windows refuses SetForegroundWindow to a process that was not the last to get
+// input, which is the case for a game started by a frontend; attaching this thread's input queue to the foreground
+// window's thread for the call is the documented way around it. The window is not left topmost.
+static void raise_window(HWND h) {
+    HWND fg = GetForegroundWindow();
+    DWORD me = GetCurrentThreadId(), other = fg ? GetWindowThreadProcessId(fg, NULL) : 0;
+    int attached = other && other != me && AttachThreadInput(me, other, TRUE);
+    ShowWindow(h, IsIconic(h) ? SW_RESTORE : SW_SHOW);
+    BringWindowToTop(h);
+    SetForegroundWindow(h);
+    SetActiveWindow(h);
+    if (attached) AttachThreadInput(me, other, FALSE);
+    if (GetForegroundWindow() != h) {   // still refused: a topmost toggle puts it above the others without keeping it there
+        SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        SetWindowPos(h, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    }
+}
+
 static void window_main(void *arg) {
     (void)arg;
     HINSTANCE inst = GetModuleHandleW(NULL);
@@ -293,10 +311,11 @@ static void window_main(void *arg) {
     int cw, ch, ow, oh;
     cfg_window_size(&cw, &ch);
     outer_size(NULL, cw, ch, &ow, &oh);
-    // The window opens in front and takes the focus, so the game is what the player sees at start, not the console
-    // window it was started from; TOTK_FULLSCREEN applies at that first activation.
-    // TOTK_BACKGROUND_WINDOW=1 (test runs): the window opens behind the user's windows without taking focus, so it
-    // does not cover their work; no flashing, never fullscreen at start, and F11 keeps the window's place.
+    // The window opens behind the user's windows first and is then raised (raise_window): a game started by a frontend
+    // has no other way to reach it. The game counts itself in focus until the first WM_ACTIVATEAPP, so loading goes on,
+    // and keyboard input waits for the foreground (input_win.c). If Windows still refuses the foreground, the taskbar
+    // button flashes, and TOTK_FULLSCREEN waits for the first activation.
+    // TOTK_BACKGROUND_WINDOW=1 (test runs): no flashing, never fullscreen at start, and F11 keeps the window's place.
     int background = g_background = cfg_get("TOTK_BACKGROUND_WINDOW") && atoi(cfg_get("TOTK_BACKGROUND_WINDOW"));
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"TotK Recomp", WND_STYLE, CW_USEDEFAULT, CW_USEDEFAULT, ow, oh, NULL,
                              NULL, inst, NULL);
@@ -312,23 +331,17 @@ static void window_main(void *arg) {
         // The frame was measured at the system DPI; the window may have opened on a monitor at another scale.
         plat_xchg32(&g_dpi, (int32_t)GetDpiForWindow(g_hwnd));
         outer_size(g_hwnd, cw, ch, &ow, &oh);
-        if (background) {
-            SetWindowPos(g_hwnd, HWND_BOTTOM, 0, 0, ow, oh, SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        } else {
-            SetWindowPos(g_hwnd, HWND_TOP, 0, 0, ow, oh, SWP_NOMOVE | SWP_SHOWWINDOW);
-            // Windows lets only the foreground process take the foreground; the console this was started from may
-            // still hold it, so the window thread joins that window's input queue for the call.
-            HWND fg = GetForegroundWindow();
-            DWORD fg_thread = fg ? GetWindowThreadProcessId(fg, NULL) : 0, me = GetCurrentThreadId();
-            int joined = fg_thread && fg_thread != me && AttachThreadInput(me, fg_thread, TRUE);
-            BringWindowToTop(g_hwnd);
-            SetForegroundWindow(g_hwnd);
-            SetFocus(g_hwnd);
-            if (joined) AttachThreadInput(me, fg_thread, FALSE);
+        SetWindowPos(g_hwnd, HWND_BOTTOM, 0, 0, ow, oh, SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        if (!background) {
+            // Pending before the raise: the activation it gets is the first WM_ACTIVATEAPP, which takes the fullscreen
+            // setting; set after it, fullscreen waited for the next activation and the game started in a window
+            g_fs_pending = cfg_fullscreen();
+            raise_window(g_hwnd);   // a frontend's player may have no way to reach a window left behind
+            FLASHWINFO fw = {.cbSize = sizeof fw, .hwnd = g_hwnd, .dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG};
+            FlashWindowEx(&fw);
             // The console a double-clicked game opened is of no use once the window is up; TOTK_CONSOLE=1 keeps it
             const char *keep = cfg_get("TOTK_CONSOLE");
             if (!(keep && atoi(keep))) plat_console_hide();
-            g_fs_pending = cfg_fullscreen();
         }
         note_applied();
         refresh_rate_update(g_hwnd, 1);

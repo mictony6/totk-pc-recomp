@@ -49,6 +49,7 @@ static void wait_until(uint64_t at) {
 
 static void present_main(void *arg) {
     (void)arg;
+    perf_core_thread(PCORE_PRESENT);
     uint64_t last = 0, last_queued = 0;
     plat_mutex_lock(&pl);
     for (;;) {
@@ -165,6 +166,7 @@ static PlatCond rcv = PLAT_COND_INIT;   // item queued, item taken, item done
 static ReplayItem rq[RQ_CAP];
 static int rq_head, rq_n, r_busy, r_started;
 static uint64_t r_presents_queued, r_presents_done, r_submit_done, game_frames;
+static uint64_t r_value_done;   // under rl: the newest timeline value the replay thread submitted
 // Under rl: calls, calls that waited and the time waited per cause, since the last replay_log line and over the run.
 static uint64_t dr_calls[DR_N], dr_waits[DR_N], dr_ns[DR_N], dr_tcalls[DR_N], dr_twaits[DR_N], dr_tns[DR_N];
 // TOTK_REPLAY_CHECK: ReadTexels compared with a read after a full drain (under rl): checked, differing, differing
@@ -174,7 +176,11 @@ static uint64_t ck_reads, ck_diff, ck_diff_unexplained, ck_diff_idle;
 int vk_replay_async(void) {
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("TOTK_REPLAY_ASYNC");   // off by default: no measured gain yet, one more frame of latency
+        // Off by default. Where the game waits for the GPU it overlaps the replay with the game threads (a GTX 1650 in
+        // the Depths went from 450-686 frames over 50 ms a minute to 10-13, issue #88), the only place a gain was
+        // measured. While it was the default, a GTX 1660 Ti at the 60 fps cap with the GPU at 26 % reported uneven
+        // motion that 0.3.4 did not have (#659). It adds up to a frame of latency.
+        on = cfg_bool("TOTK_REPLAY_ASYNC");
         rt_log("vk: replay %s (TOTK_REPLAY_ASYNC=%d)",
                on ? "on its own thread, at most one frame behind the game" : "on the submitting thread", on);
     }
@@ -193,6 +199,15 @@ uint64_t gfx_replayed_submits(void) {
     return v;
 }
 
+// TOTK_SYNC_AHEAD (nvn_api_core.c nvnSyncWait): waits until the replay thread submitted value v, so every shadow copy
+// of v was made before the game writes memory v reads. The caller has given its core up.
+void gfx_replay_wait_value(uint64_t v) {
+    if (!gfx_replay_async()) return;
+    plat_mutex_lock(&rl);
+    while (r_value_done < v) plat_cond_wait(&rcv, &rl);
+    plat_mutex_unlock(&rl);
+}
+
 static uint64_t submit_sync(const uint64_t *handles, int n) {
     vk_sync_start();
     vk_present_drain();
@@ -203,6 +218,7 @@ static uint64_t submit_sync(const uint64_t *handles, int n) {
 static void replay_main(void *arg) {
     (void)arg;
     perf_replay_thread();
+    perf_core_thread(PCORE_REPLAY);
     plat_mutex_lock(&rl);
     for (;;) {
         while (!rq_n) plat_cond_wait(&rcv, &rl);
@@ -227,6 +243,7 @@ static void replay_main(void *arg) {
             present_image(it.tex, it.has_crop ? it.crop : NULL, it.at, it.queued, frame, it.value);
         }
         plat_mutex_lock(&rl);
+        if (it.kind != RI_RELEASE) r_value_done = it.value;
         if (it.kind == RI_SUBMIT) r_submit_done = it.submit_no;
         else r_presents_done++;
         r_busy = 0;
@@ -323,10 +340,13 @@ static void replay_log(uint64_t frame, int total) {
 // vk_backend_shutdown.
 void gfx_exit_log(void) {
     static int32_t done;
+    rec_check_log();
     if (gfx_replay_async() && r_started && !plat_xchg32(&done, 1)) replay_log(game_frames, 1);
 }
 
 static void vk_be_present(const tex_t *t, const int crop[4], uint64_t at_ns) {
+    static _Thread_local int pcore;   // the game's render thread: the one that presents
+    if (!pcore) pcore = 1, perf_core_thread(PCORE_RENDER);
     vk_sync_start();
     if (!gfx_replay_async()) {
         uint64_t frame = __atomic_add_fetch(&gfx_counters.frames, 1, __ATOMIC_RELAXED);
