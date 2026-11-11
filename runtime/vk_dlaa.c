@@ -997,8 +997,10 @@ static void next_jitter(uint32_t w, uint32_t ow) {
 // K, j is the other transformer model, which NVIDIA describes as slightly less ghosting at the cost of extra flicker, e
 // the older CNN model, cheaper on slower RTX cards. The value is an NVSDK_NGX_DLSS_Hint_Render_Preset (1 A ... 13 M),
 // read when a feature is created; a change recreates the features (preset_check).
+#define PRESET_DLL 100   // dlss_preset = dll: no hint, the model nvngx_dlss.dll picks itself
 static int preset_value(void) {
     const char *v = cfg_get("TOTK_DLSS_PRESET");
+    if (v && !strcmp(v, "dll")) return PRESET_DLL;
     int c = v && v[0] && !v[1] ? v[0] | 0x20 : 0;
     return c >= 'a' && c <= 'm' ? c - 'a' + 1 : 0;
 }
@@ -1073,7 +1075,8 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
         // DLSS 4.5 (310.x): K (transformer) for DLAA, Quality and Balanced, M for Performance, L for Ultra Performance.
         // M and L cost more on cards without FP8 (RTX 20/30). dlss_preset (D.preset, preset_check) takes one model for
         // every mode instead.
-        int pk = D.preset ? D.preset : 11, pm = D.preset ? D.preset : 13, pl = D.preset ? D.preset : 12;
+        int own = D.preset == PRESET_DLL, one = D.preset && !own;
+        int pk = own ? 0 : one ? D.preset : 11, pm = own ? 0 : one ? D.preset : 13, pl = own ? 0 : one ? D.preset : 12;
         p_setu(p, "DLSS.Hint.Render.Preset.DLAA", (unsigned)pk);
         p_setu(p, "DLSS.Hint.Render.Preset.UltraQuality", (unsigned)pk);
         p_setu(p, "DLSS.Hint.Render.Preset.Quality", (unsigned)pk);
@@ -1085,7 +1088,7 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
         D.reset = 1;
         int q = perf_quality(w, ow), pr = q == 0 ? pm : q == 3 ? pl : pk;
         rt_log("dlaa: DLSS feature created at %ux%u -> %ux%u, quality value %d, preset %c (scene format %d, depth format "
-               "%d)", w, h, ow, oh, q, 'A' + pr - 1, (int)t->format, (int)z->format);
+               "%d)", w, h, ow, oh, q, pr ? 'A' + pr - 1 : '0', (int)t->format, (int)z->format);
     }
     if (D.last_color != t->image) D.reset = 1, D.why[2]++, D.last_color = t->image;
     NgxResourceVK rc = res_image(cv, t->image, t->format, w, h, VK_IMAGE_ASPECT_COLOR_BIT, 0);
@@ -1293,7 +1296,8 @@ static void preset_check(void) {
     int p = preset_value();
     if (p == D.preset) return;
     if (D.evals) {
-        if (p) rt_log("dlaa: DLSS preset %c in every mode; the features are created again", 'A' + p - 1);
+        if (p == PRESET_DLL) rt_log("dlaa: DLSS model by nvngx_dlss.dll in every mode; the features are created again");
+        else if (p) rt_log("dlaa: DLSS preset %c in every mode; the features are created again", 'A' + p - 1);
         else rt_log("dlaa: DLSS presets per mode; the features are created again");
     }
     D.preset = p, D.preset_dirty = 1, D.reset = 1;

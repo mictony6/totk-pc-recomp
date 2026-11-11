@@ -210,9 +210,11 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS_PRESET_DESC] = "Which DLSS model runs. Automatic follows NVIDIA's advice per mode: K for DLAA, Quality "
                                  "and Balanced, M for Performance, L for Ultra Performance. J: slightly less ghosting "
                                  "behind moving characters, a little more flicker. K: the sharpest model in every mode. "
-                                 "Applies at once.",
+                                 "CNN: the older model, softer with more ghosting, the cheapest. Transformer 2: the "
+                                 "model nvngx_dlss.dll picks itself, the slowest. Applies at once.",
     [UI_MENU_DLSS_PRESET_DEFAULT] = "Automatic", [UI_MENU_DLSS_PRESET_K] = "K (sharpest)",
     [UI_MENU_DLSS_PRESET_J] = "J (less ghosting)",
+    [UI_MENU_DLSS_PRESET_E] = "CNN (fastest)", [UI_MENU_DLSS_PRESET_DLL] = "Transformer 2 (slowest)",
     [UI_MENU_DLSS_CHARS] = "DLSS character trails",
     [UI_MENU_DLSS_CHARS_DESC] = "Reduces the faint trails behind moving characters, animals and what they hold: DLSS takes "
                                 "less of the previous frames there. Stronger removes more of the trails and leaves those "
@@ -770,6 +772,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                  "мерцания. K: самая чёткая модель во всех режимах. Действует сразу.",
     [UI_MENU_DLSS_PRESET_DEFAULT] = "Автоматически", [UI_MENU_DLSS_PRESET_K] = "K (самая чёткая)",
     [UI_MENU_DLSS_PRESET_J] = "J (меньше шлейфов)",
+    [UI_MENU_DLSS_PRESET_E] = "CNN (самая быстрая)", [UI_MENU_DLSS_PRESET_DLL] = "Transformer 2 (самая медленная)",
     [UI_MENU_DLSS_CHARS] = "Шлейфы персонажей в DLSS",
     [UI_MENU_DLSS_CHARS_DESC] = "Убирает слабые шлейфы за движущимися персонажами, животными и тем, что они держат: DLSS "
                                 "берёт там меньше от прошлых кадров. Чем сильнее, тем меньше шлейфов и тем чуть менее "
@@ -1701,6 +1704,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                  "o modelo mais nítido em todos os modos. Vale na hora.",
     [UI_MENU_DLSS_PRESET_DEFAULT] = "Automático", [UI_MENU_DLSS_PRESET_K] = "K (mais nítido)",
     [UI_MENU_DLSS_PRESET_J] = "J (menos rastro)",
+    [UI_MENU_DLSS_PRESET_E] = "CNN (mais rápido)", [UI_MENU_DLSS_PRESET_DLL] = "Transformer 2 (mais lento)",
     [UI_MENU_DLSS_CHARS] = "Rastros de personagens no DLSS",
     [UI_MENU_DLSS_CHARS_DESC] = "Reduz os rastros fracos atrás de personagens, animais e do que eles seguram em movimento: "
                                 "ali o DLSS usa menos dos quadros anteriores. Mais forte remove mais rastros e deixa essas "
@@ -2377,6 +2381,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                                  "J：移动角色身后的拖影略少，闪烁略多。K：所有模式都用最清晰的模型。立即生效。",
     [UI_MENU_DLSS_PRESET_DEFAULT] = "自动", [UI_MENU_DLSS_PRESET_K] = "K（最清晰）",
     [UI_MENU_DLSS_PRESET_J] = "J（拖影更少）",
+    [UI_MENU_DLSS_PRESET_E] = "CNN（最快）", [UI_MENU_DLSS_PRESET_DLL] = "Transformer 2（最慢）",
     [UI_MENU_DLSS_CHARS] = "DLSS 角色拖影",
     [UI_MENU_DLSS_CHARS_DESC] = "减少移动中的角色、动物及其手持物品身后的淡淡拖影：DLSS 在这些位置少用之前的帧。越强拖影越少，"
                                 "这些边缘也略欠平滑。立即生效。",
