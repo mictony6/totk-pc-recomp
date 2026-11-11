@@ -72,7 +72,7 @@ static struct {
 // The scene size is decided before the device exists, so NGX cannot be asked yet. NGX loads DLSS from nvngx_dlss.dll
 // next to totk.exe on Windows, libnvidia-ngx-dlss.so.<version> next to totk on Linux (vk_dlaa.c vk_dlaa_init):
 // without that file DLSS never runs, and a DLSS mode would leave the game's plain scaling at 50..67 % of the output.
-static int dlss_dll(void) {
+int res_dlss_dll(void) {
 #ifdef _WIN32
     char exe[1024], path[1024 + 32];
     if (!plat_exe_path(exe, sizeof exe)) return 1;
@@ -126,7 +126,7 @@ static double dlss_share(const char *m) {
     if (!cfg_bool("TOTK_DLAA")) return 0;
     for (int i = 0; i < (int)(sizeof dlss / sizeof dlss[0]); i++)
         if (!strcmp(m, dlss[i].name)) {
-            if (dll < 0 && !(dll = dlss_dll())) {
+            if (dll < 0 && !(dll = res_dlss_dll())) {
 #ifdef _WIN32
                 rt_log("resolution: DLSS %s needs nvngx_dlss.dll next to totk.exe, which is missing: the scene follows "
                        "render_scale", m);

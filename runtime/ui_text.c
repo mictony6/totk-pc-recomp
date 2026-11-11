@@ -228,7 +228,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS_OBJMV] = "DLSS per-object motion",
     [UI_MENU_DLSS_OBJMV_DESC] = "Gives moving characters, animals and objects their own motion, so DLSS keeps them clean "
                                 "while they move. Costs CPU time every frame: turn it off if the frame rate is limited by "
-                                "the CPU. Applies at once.",
+                                "the CPU. Applies after a restart.",
     [UI_MENU_FXAA] = "Game anti-aliasing (FXAA)",
     [UI_MENU_FXAA_DESC] = "The game's own FXAA edge smoothing. It blurs fine detail a little; with DLAA on it is not needed.",
 
@@ -785,7 +785,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS_OBJMV] = "Движение объектов в DLSS",
     [UI_MENU_DLSS_OBJMV_DESC] = "Даёт движущимся персонажам, животным и предметам собственное движение, чтобы DLSS держал "
                                 "их чистыми на ходу. Тратит время процессора каждый кадр: выключите, если частоту кадров "
-                                "ограничивает процессор. Действует сразу.",
+                                "ограничивает процессор. Действует после перезапуска.",
     [UI_MENU_FXAA] = "Сглаживание игры (FXAA)",
     [UI_MENU_FXAA_DESC] = "Собственное сглаживание FXAA. Слегка размывает мелкие детали; с DLAA оно не нужно.",
 
@@ -1710,7 +1710,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS_OBJMV] = "Movimento por objeto no DLSS",
     [UI_MENU_DLSS_OBJMV_DESC] = "Dá a personagens, animais e objetos em movimento o seu próprio movimento, para o DLSS "
                                 "mantê-los limpos enquanto se movem. Gasta tempo de CPU a cada quadro: desligue se a taxa "
-                                "de quadros for limitada pela CPU. Vale na hora.",
+                                "de quadros for limitada pela CPU. Vale após reiniciar.",
     [UI_MENU_FXAA] = "Antisserrilhado do jogo (FXAA)",
     [UI_MENU_FXAA_DESC] = "A suavização de bordas FXAA do próprio jogo. Borra um pouco os detalhes finos; com o DLAA "
                           "ligado não é necessária.",
@@ -2384,7 +2384,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS_CHARS_FULL] = "强",
     [UI_MENU_DLSS_OBJMV] = "DLSS 逐对象运动",
     [UI_MENU_DLSS_OBJMV_DESC] = "为移动中的角色、动物和物体提供各自的运动信息，让 DLSS 在它们移动时保持干净。每帧都会占用 CPU "
-                                "时间：如果帧率受 CPU 限制，请关闭。立即生效。",
+                                "时间：如果帧率受 CPU 限制，请关闭。重启后生效。",
     [UI_MENU_FXAA] = "游戏抗锯齿（FXAA）",
     [UI_MENU_FXAA_DESC] = "游戏自身的 FXAA 边缘平滑。会让细节略微模糊；开启 DLAA 时不需要。",
     [UI_MENU_TAB_CHEATS] = "金手指",

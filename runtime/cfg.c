@@ -150,11 +150,11 @@ static const CfgMeta metas[] = {
     // the half-size scene behind water and ice (vk_underwater.c), upsampled when the game writes it; applies at once
     {"UNDERWATER_UPSAMPLE", "game", "game|smooth", LIVE},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
-    {"DLAA", "0", "0|1", RESTART},
+    {"DLAA", "0", "0|1", LIVE},   // vk_dlaa.c vk_dlaa_frame
     {"DLSS", "dlaa", "dlaa|quality|balanced|performance|ultra_performance", LIVE},
     {"DLSS_PRESET", "default", "default|k|j", LIVE},
     {"DLSS_CHAR_MASK", "65", "0|35|65|100", LIVE},   // vk_dlaa.c char_bias
-    {"DLAA_OBJMV", "1", "0|1", LIVE},   // vk_mvprev.c vk_mvprev_frame
+    {"DLAA_OBJMV", "1", "0|1", RESTART},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"MOVIE_ASPECT", "keep", "keep|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"GRASS_DIST", "100", "100..150", LIVE},   // resolution.c res_grass_live
     {"ANISO", "game", "game|2|4|8|16", RESTART},   // vk_texture.c sampler_features

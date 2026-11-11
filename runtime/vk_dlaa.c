@@ -100,14 +100,11 @@ static int p_getp(const NgxParam *p, const char *n, void **v) { return NGX_OK(((
 #define DLSS_MODEL "libnvidia-ngx-dlss.so.<version>"
 #endif
 
-// NGX is brought up only when dlaa is on at start: its device extensions can only be asked for at device creation, and
-// loading the driver's NGX core on every NVIDIA machine would cost start time and change the device with DLAA off. So
-// dlaa applies after a restart; switched off, nothing else of DLAA runs.
-int vk_dlaa_wanted(void) {
-    static int wanted = -1;
-    if (wanted < 0) wanted = cfg_bool("TOTK_DLAA");
-    return wanted;
-}
+// NGX is brought up whenever the DLSS model file is next to the executable (resolution.c res_dlss_dll), whatever dlaa
+// says at start: its device extensions can only be asked for at device creation, so this is what lets dlaa switch on
+// and off in play (vk_dlaa_frame reads the setting at each present). Without the file DLSS cannot run and NGX stays
+// unloaded, so machines without DLSS keep their start time and device. Switched off, nothing of DLAA runs per frame.
+int vk_dlaa_wanted(void) { return res_dlss_dll(); }
 
 static int core_load(void) {
     if (N.tried) return N.loaded;
@@ -272,14 +269,16 @@ static struct {
     uint64_t holds;
     // camera (vk_dlaa_draw) and motion vectors (mv_pass)
     uint64_t cam_addr;           // this frame's scene camera block (c4 of a scene draw's vertex stage), 0: none seen
-    VkBuffer camb;               // two CAM_SLOT slots: this frame's block and last frame's
+    VkBuffer camb;               // CAM_SLOTS slots of CAM_SLOT bytes, host-written: each frame's camera block
     VmaAllocation camb_mem;
+    uint8_t *camb_map;
     VkBuffer mvm;                // MVM_SLOTS pairs of blocks for dlaa_mv.comp: the identity and the reprojection (mv_pass)
     VmaAllocation mvm_mem;
     uint8_t *mvm_map;
     uint32_t mvm_slot;
     double cam_prev[16];         // last frame's view-projection (rows 3-6 of its block), for the reprojection
-    int cam_slot, cam_prev_ok;   // the slot this frame writes / the other slot holds last frame's camera
+    uint32_t cam_last;           // the camb slot mv_pass wrote last (last frame's camera for the per-object pass)
+    int cam_prev_ok;
     VkDescriptorSetLayout mv_dsl;
     VkPipelineLayout mv_layout;
     VkPipeline mv_pipe;
@@ -465,6 +464,7 @@ static void times_begin(VkCommandBuffer cb) {
 #define CAM_BYTES 256u   // vec4 rows 0-15: view, view-projection (3-6), projection, inverse view
 #define CAM_BLOCK 0x940u   // the whole block, kept for the per-object motion pass's vertex shaders (vk_exec_draw.c)
 #define CAM_SLOT 0xa00u    // camb slot stride
+#define CAM_SLOTS 16u      // frames the GPU may still be reading a camb slot of
 #define MVM_SLOTS 16u      // frames the GPU may still be reading the reprojection blocks of
 
 static int mv_init(void) {
@@ -492,9 +492,12 @@ static int mv_init(void) {
     VkShaderModuleCreateInfo mi = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = sizeof dlaa_mv_spv,
                                    .pCode = dlaa_mv_spv};
     VkShaderModule m = VK_NULL_HANDLE;
-    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = 2 * CAM_SLOT,
-                             .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
-    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = CAM_SLOTS * CAM_SLOT,
+                             .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT};
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                  .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                           VMA_ALLOCATION_CREATE_MAPPED_BIT};
+    VmaAllocationInfo cinfo;
     if (vkCreateDescriptorSetLayout(c->device, &dci, NULL, &D.mv_dsl) != VK_SUCCESS) goto fail;
     VkBufferCreateInfo mbi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = MVM_SLOTS * 2 * CAM_BYTES,
                               .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT};
@@ -509,8 +512,9 @@ static int mv_init(void) {
     if (vkCreatePipelineLayout(c->device, &li, NULL, &D.mv_layout) != VK_SUCCESS ||
         vkCreateSampler(c->device, &si, NULL, &D.mv_samp) != VK_SUCCESS ||
         vkCreateShaderModule(c->device, &mi, NULL, &m) != VK_SUCCESS ||
-        vmaCreateBuffer(c->vma, &bi, &ai, &D.camb, &D.camb_mem, NULL) != VK_SUCCESS)
+        vmaCreateBuffer(c->vma, &bi, &ai, &D.camb, &D.camb_mem, &cinfo) != VK_SUCCESS)
         goto fail;
+    D.camb_map = cinfo.pMappedData;
     VkComputePipelineCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
                                       .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                                                 .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = m, .pName = "main"},
@@ -583,11 +587,19 @@ static int mv_pass(VkExec *ex, struct Size *e, VkImageView zv, float jx, float j
             have_m = 1;
         }
     }
-    int s = D.cam_slot, had_prev = D.cam_prev_ok;
-    VkBufferCopy bc = {cam.offset, (VkDeviceSize)s * CAM_SLOT, CAM_BLOCK};
-    vkCmdCopyBuffer(cb, cam.buffer, D.camb, 1, &bc);
-    full_barrier(cb);
-    D.cam_slot ^= 1, D.cam_prev_ok = cr != NULL;
+    int had_prev = D.cam_prev_ok;
+    // the whole block into the next camb slot from the CPU, for the next frame's per-object pass: from the snapshot's
+    // host copy, which keeps the game's rows (the device copy the draws read carries the jitter, see "jitter" below)
+    // and goes through no command, so nothing passes the recorder thread (vk_rec.h); a slot is written again
+    // CAM_SLOTS frames later
+    const uint8_t *blk0 = vk_usnap_bytes(D.cam_addr, CAM_BLOCK);
+    if (blk0) {
+        uint32_t s = (D.cam_last + 1) % CAM_SLOTS;
+        memcpy(D.camb_map + (size_t)s * CAM_SLOT, blk0, CAM_BLOCK);
+        vmaFlushAllocation(vk_ctx()->vma, D.camb_mem, (VkDeviceSize)s * CAM_SLOT, CAM_BLOCK);   // a no-op on coherent memory
+        D.cam_last = s;
+    }
+    D.cam_prev_ok = cr != NULL && blk0 != NULL;
     if (cr) memcpy(D.cam_prev, cur_vp, sizeof cur_vp);
     if (!had_prev || !have_m) {   // nothing to reproject into: zero motion, new history
         e->chars_ok = 0;
@@ -657,11 +669,11 @@ static int mv_pass(VkExec *ex, struct Size *e, VkImageView zv, float jx, float j
     return 1;
 }
 
-// Last frame's camera block for the per-object motion pass, recorded before this frame's mv_pass: that pass writes
-// this frame's into slot cam_slot and leaves the other slot, last frame's, as it is. 0: none (no history).
+// Last frame's camera block for the per-object motion pass, looked up while the replay lists the draws, before this
+// frame's mv_pass writes its own into the next slot. 0: none (no history).
 int vk_dlaa_prev_camera(VkDescriptorBufferInfo *out, float jitter[2]) {
     if (!dl_active() || !D.cam_prev_ok || !D.camb) return 0;
-    *out = (VkDescriptorBufferInfo){D.camb, (VkDeviceSize)(D.cam_slot ^ 1) * CAM_SLOT, CAM_BLOCK};
+    *out = (VkDescriptorBufferInfo){D.camb, (VkDeviceSize)D.cam_last * CAM_SLOT, CAM_BLOCK};
     jitter[0] = D.jit_ok ? D.jx : 0.0f, jitter[1] = D.jit_ok ? D.jy : 0.0f;
     return 1;
 }
@@ -840,9 +852,74 @@ static int ended_at(const VkExec *ex) {
     return !ex->chunked || ex->fence != D.end_fence || ex->pos >= D.end_pos;
 }
 
+// Draws with the scene camera block take the jitter in their projection instead of their viewport: the uniform
+// snapshot's device copy of the block (vk_usnap.c; guest memory and the snapshot's host copy keep the game's values)
+// has the view-projection (rows 3-6) and the projection (rows 7-10) moved, once per copy, and the viewport of those
+// draws stays put. A viewport offset moves where a draw rasterises but not the positions its vertex shader outputs,
+// and TotK's water G-buffer draw looks up the half-size linear depth and the scene behind it at its projected position
+// (a vertex output divided by w), point-sampled: the lookup missed the jittered content by the offset, and near half a
+// pixel up it took the neighbouring texel, so distant water flashed once per 16 frames. Other draws (other cameras,
+// none bound) keep the viewport offset. The motion vectors read the block's rows from the host copy, before the change.
+// The copy is patched where the camera is noted in replay order (vk_dlaa_draw, or vk_dlaa_scan_draw for a chunked
+// replay, whose chunks record the draws afterwards), so the chunks never patch.
+static PlatMutex pj_lock = PLAT_MUTEX_INIT;
+static struct { uint64_t addr, gen; uint32_t frame; int ok; float row[8]; } pjt[8];   // per camera block
+static unsigned pj_next;
+
+// The block's entry. A scene can bind more than one camera block, and in turn: with Ultrahand the draws alternate
+// between two, and a single memo took the first block's already patched copy for a fresh one when its draws came back,
+// so it was patched again and the later draws got the jitter twice. pj_lock held.
+static int pj_entry(uint64_t addr) {
+    for (int i = 0; i < 8; i++)
+        if (pjt[i].addr == addr) return i;
+    int i = (int)(pj_next++ & 7);
+    memset(&pjt[i], 0, sizeof pjt[i]);
+    pjt[i].addr = addr;
+    return i;
+}
+
+// The scene camera block of this draw gets the frame's jitter in the snapshot's device copy, once per copy.
+static void pj_patch(const VkExec *ex) {
+    const p_bind_buf *b = &ex->ubo[0][1];
+    const VkExecTarget *z = &ex->depth;
+    if (!D.jit_ok || D.ended || !b->addr || b->addr != D.cam_addr || !z->image || z->image != D.jdepth) return;
+    plat_mutex_lock(&pj_lock);
+    int i = pj_entry(b->addr);
+    uint64_t gen = vk_usnap_gen();
+    if (pjt[i].gen != gen || pjt[i].frame != D.jframe + 1) {
+        pjt[i].gen = gen, pjt[i].frame = D.jframe + 1;
+        float *cam = (float *)vk_usnap_host(b->addr, CAM_BYTES, 4);
+        pjt[i].ok = cam != NULL;
+        // rows 3-4 as patched last tell a patched copy from a fresh one: row 3 alone takes only the horizontal jitter,
+        // which is 0 on one Halton phase, so on that phase a still camera would make every fresh copy match it
+        if (cam && memcmp(cam + 12, pjt[i].row, sizeof pjt[i].row)) {
+            float kx = 2.0f * D.jx / (float)z->width, ky = -2.0f * D.jy / (float)z->height;
+            for (int c = 0; c < 4; c++) {
+                cam[12 + c] += kx * cam[24 + c], cam[16 + c] += ky * cam[24 + c];   // view-projection, rows 3-6
+                cam[28 + c] += kx * cam[40 + c], cam[32 + c] += ky * cam[40 + c];   // projection, rows 7-10
+            }
+            memcpy(pjt[i].row, cam + 12, sizeof pjt[i].row);
+        }
+    }
+    plat_mutex_unlock(&pj_lock);
+}
+
+// 1: the draw's camera block was patched this frame and the draw reads the patched copy, so it takes its jitter there.
+static int pj_for_draw(const VkExec *ex) {
+    const p_bind_buf *b = &ex->ubo[0][1];
+    if (!D.jit_ok || !b->addr || !ex->depth.image || ex->depth.image != D.jdepth || ended_at(ex)) return 0;
+    int ok = 0;
+    plat_mutex_lock(&pj_lock);
+    for (int i = 0; i < 8; i++)
+        if (pjt[i].addr == b->addr && pjt[i].frame == D.jframe + 1 && pjt[i].ok) ok = 1;
+    plat_mutex_unlock(&pj_lock);
+    VkDescriptorBufferInfo bi;
+    return ok && vk_usnap_find(b->addr, CAM_BYTES, ex->chunked ? ex->drop_n : UINT32_MAX, 4, &bi);
+}
+
 void vk_dlaa_viewport(VkExec *ex, VkViewport *v) {
     if (!D.jit_ok || !ex->depth.image || ex->depth.image != D.jdepth || ended_at(ex)) return;
-    v->x += D.jx, v->y += D.jy;
+    if (!ex->dlaa_pj) v->x += D.jx, v->y += D.jy;
     D.ux = D.jx, D.uy = D.jy;
     __atomic_store_n(&D.jit_used, 1, __ATOMIC_RELAXED);
 }
@@ -889,11 +966,13 @@ void vk_dlaa_draw(VkExec *ex) {
             }
         }
     }
-    if (!ex->chunked) note_camera(ex);
+    if (!ex->chunked) note_camera(ex), pj_patch(ex);
+    int pj = pj_for_draw(ex);
+    if (pj != ex->dlaa_pj) ex->dlaa_pj = (uint8_t)pj, ex->dirty |= VK_EXEC_DIRTY_VIEWPORT;
 }
 
 void vk_dlaa_scan_draw(const VkExec *ex) {
-    if (dl_active() && !D.ended) note_camera(ex);
+    if (dl_active() && !D.ended) note_camera(ex), pj_patch(ex);
 }
 
 // The jitter moves on right after DLAA ran, not at the present: the replay can record the next frame's scene before

@@ -164,6 +164,7 @@ typedef struct VkExec {
     uint32_t njobs;
     uint32_t upd_n, cond_i, job_i;       // updates, results and records before the op being recorded
     uint32_t drop_n;                     // ops before it that may write uniform ranges (vk_usnap_drop_at)
+    uint8_t dlaa_pj;                     // vk_dlaa_draw: the draw's camera block carries the DLSS jitter, its viewport does not
     const uint32_t *wpos;                // the positions of the draws and dispatches among those ops (vk_exec_draw_writes)
     uint32_t wpos_i, wpos_end;           // the next of them, and the end of the chunk's
     uint32_t pos;                        // ops of the submission up to and with it (the scan's too)
