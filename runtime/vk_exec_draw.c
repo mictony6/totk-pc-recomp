@@ -2515,17 +2515,11 @@ static struct { uint64_t h; int n; } rep[REP_MAX];
 static int rep_n;
 static _Thread_local int rep_cur;
 
-static uint64_t fs_spv_hash(const GfxShader *fs) {
-    static struct { const GfxShader *s; uint64_t h; } tab[1024];
-    static int n;
-    for (int i = 0; i < n; i++)
-        if (tab[i].s == fs) return tab[i].h;
-    uint64_t words = 0, h = 0xcbf29ce484222325ull;
-    const uint8_t *b = (const uint8_t *)gfx_shader_spirv(fs, &words);
-    for (uint64_t k = 0; k < words * 4; k++) h = (h ^ b[k]) * 0x100000001b3ull;
-    if (n < 1024) tab[n].s = fs, tab[n].h = h, n++;
-    return h;
-}
+// Every draw asks twice (fs_hidden and the mist shader check). The hash is kept on the shader: a table of 1024 entries
+// searched in a line, as this was, ran out in a long session, and from then on every draw of a shader that did not fit
+// hashed its whole SPIR-V again (about 70% of the draw replay's time in the profile of a session that had slowed to 30
+// fps, gone after a restart).
+static uint64_t fs_spv_hash(const GfxShader *fs) { return gfx_shader_spirv_hash(fs); }
 
 // TOTK_DRAW_HIDE=<from>-<to>:<hash>[,<hash>...][;<from>-<to>:...]: draws whose fragment shader's SPIR-V hash (FNV-1a 64 of
 // the SPIR-V words' bytes, hex: the fs column of TOTK_DUMP's passes.txt) is listed are not drawn in presents from..to.

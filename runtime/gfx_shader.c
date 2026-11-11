@@ -87,6 +87,8 @@ struct GfxShader {
     GfxShaderIo in[32], out[32];
     uint32_t local[3];
     uint32_t mvprev_banks;                                 // .res.json "mvprev_banks" (patch 0015), 0 none
+    uint64_t spv_hash;                                     // gfx_shader_spirv_hash, valid once spv_hashed is set
+    uint8_t spv_hashed;
 };
 
 static PlatMutex cache_lock = PLAT_MUTEX_INIT;                  // memory cache
@@ -1725,6 +1727,20 @@ void gfx_shader_prewarm(const uint8_t (*iids)[32], size_t n, const GfxShader **o
 const uint32_t *gfx_shader_spirv(const GfxShader *s, uint64_t *words) {
     if (words) *words = s->words;
     return s->spirv;
+}
+
+// FNV-1a 64 of the SPIR-V words' bytes (the fs column of TOTK_DUMP's passes.txt), worked out once per shader: the draw
+// path asks for it on every draw, and a SPIR-V is tens of kilobytes. Two threads asking at once both compute the same
+// value; the flag is set after the value.
+uint64_t gfx_shader_spirv_hash(const GfxShader *s) {
+    GfxShader *m = (GfxShader *)s;
+    if (__atomic_load_n(&m->spv_hashed, __ATOMIC_ACQUIRE)) return m->spv_hash;
+    const uint8_t *b = (const uint8_t *)s->spirv;
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (uint64_t k = 0; k < s->words * 4; k++) h = (h ^ b[k]) * 0x100000001b3ull;
+    m->spv_hash = h;
+    __atomic_store_n(&m->spv_hashed, 1, __ATOMIC_RELEASE);
+    return h;
 }
 
 int gfx_shader_stage(const GfxShader *s) { return s->stage; }
