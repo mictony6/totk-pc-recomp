@@ -888,8 +888,6 @@ static void tex_point(VkExec *ex) {
 static struct { uint64_t addr, size; } buf_list[4];
 static int buf_n;
 void vk_exec_readback_buf(uint64_t addr, uint64_t size) {
-    for (int i = 0; i < buf_n; i++)   // the same buffer again (draws of one pass that write it): once is enough
-        if (buf_list[i].addr == addr && buf_list[i].size == size) return;
     if (buf_n < 4 && size <= BUF_MAX && nvn_frame_overlap()) buf_list[buf_n].addr = addr, buf_list[buf_n++].size = size;
 }
 static void buf_point(VkExec *ex) {

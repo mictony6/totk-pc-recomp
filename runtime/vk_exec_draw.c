@@ -1026,17 +1026,7 @@ static uint64_t fs_spv_hash(const GfxShader *fs);
 // and leaving the write-back of these buffers out with overlap off did the same. The buffers it writes go to
 // vk_exec_readback_buf, which copies them back after the dispatch and ends the part with a readback point.
 #define VK_READBACK_CS 0x8d15007aadc9628bull
-// In shrines a 23232-byte buffer (1.4.3: 0x1ba68e000, one copy, CPU-visible, mirrored) is written by a dozen shaders a
-// frame, and the CPU reads what this compute shader, about halfway through the frame, leaves in it for the next frame's
-// ambient lighting. With frame overlap it sometimes read the copy of the frame before and the indirect light of walls
-// and floors dipped for a frame (flicker). A readback point after any one of the other writers left the dips in;
-// after this one alone they were gone, as with overlap off.
-#define VK_READBACK_CS_AMBIENT 0xec2dbdc463f171a9ull
-static int readback_cs;   // the dispatch being set up runs one of them (op_dispatch, op_dispatch_ind)
-static int readback_cs_is(const GfxShader *cs) {
-    uint64_t h = fs_spv_hash(cs);
-    return h == VK_READBACK_CS || h == VK_READBACK_CS_AMBIENT;
-}
+static int readback_cs;   // the dispatch being set up runs VK_READBACK_CS (op_dispatch)
 // Small buffers a draw writes are results the CPU reads, and go to vk_exec_readback_buf as well. TotK's vertex shaders
 // write 64-byte records into rings of them (about 20 draws in a minute of play), and one ring hands an ability, while
 // Ultrahand or Recall is in use, a pointer to the object it works on: with frame overlap the CPU read a copy the GPU
@@ -3298,7 +3288,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     bind_pipeline(ex, VK_PIPELINE_BIND_POINT_COMPUTE, p);
     c0_dim[0] = (uint32_t)d->x, c0_dim[1] = (uint32_t)d->y, c0_dim[2] = (uint32_t)d->z;
     twin_dispatch = 1;
-    readback_cs = readback_cs_is(cs);
+    readback_cs = fs_spv_hash(cs) == VK_READBACK_CS;
     bind_resources(ex, info);
     twin_dispatch = 0;
     readback_cs = 0;
@@ -3328,10 +3318,8 @@ static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
     c0_dim[0] = c0_dim[1] = c0_dim[2] = 0;
     B.c0_valid[2] = 0;   // a fresh c0 range: the copy below must not change one an earlier dispatch reads
     twin_dispatch = 1;
-    readback_cs = readback_cs_is(cs);
     bind_resources(ex, info);
     twin_dispatch = 0;
-    readback_cs = 0;
     if (B.c0_valid[2]) {   // the shader binds c0
         VkBufferCopy cp = {ip.offset, B.c0_off[2] + 0x200, sizeof(VkDispatchIndirectCommand)};
         vkCmdCopyBuffer(ex->cb, ip.buffer, B.c0_buf[2], 1, &cp);
