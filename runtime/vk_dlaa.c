@@ -879,7 +879,14 @@ static int pj_entry(uint64_t addr) {
 }
 
 // The scene camera block of this draw gets the frame's jitter in the snapshot's device copy, once per copy.
+static int pj_on(void) {   // TOTK_DLAA_PROJJIT=0 (test): the jitter goes into every draw's viewport, as before the water fix
+    static int on = -1;
+    if (on < 0) on = rt_knob("DLAA_PROJJIT", "1");
+    return on;
+}
+
 static void pj_patch(const VkExec *ex) {
+    if (!pj_on()) return;
     const p_bind_buf *b = &ex->ubo[0][1];
     const VkExecTarget *z = &ex->depth;
     if (!D.jit_ok || D.ended || !b->addr || b->addr != D.cam_addr || !z->image || z->image != D.jdepth) return;
@@ -906,6 +913,7 @@ static void pj_patch(const VkExec *ex) {
 
 // 1: the draw's camera block was patched this frame and the draw reads the patched copy, so it takes its jitter there.
 static int pj_for_draw(const VkExec *ex) {
+    if (!pj_on()) return 0;
     const p_bind_buf *b = &ex->ubo[0][1];
     if (!D.jit_ok || !b->addr || !ex->depth.image || ex->depth.image != D.jdepth || ended_at(ex)) return 0;
     int ok = 0;
