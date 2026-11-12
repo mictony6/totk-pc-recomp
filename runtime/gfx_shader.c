@@ -1737,7 +1737,7 @@ uint64_t gfx_shader_spirv_hash(const GfxShader *s) {
     if (__atomic_load_n(&m->spv_hashed, __ATOMIC_ACQUIRE)) return m->spv_hash;
     const uint8_t *b = (const uint8_t *)s->spirv;
     uint64_t h = 0xcbf29ce484222325ull;
-    for (uint64_t k = 0; k < s->words * 4; k++) h = (h ^ b[k]) * 0x100000001b3ull;
+    for (uint64_t k = 0; b && k < s->words * 4; k++) h = (h ^ b[k]) * 0x100000001b3ull;
     m->spv_hash = h;
     __atomic_store_n(&m->spv_hashed, 1, __ATOMIC_RELEASE);
     return h;

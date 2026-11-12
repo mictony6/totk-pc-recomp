@@ -1351,32 +1351,10 @@ void vk_dlaa_frame(void) {
 static const uint64_t FXAA_FS[] = {0xf450003ebeb3dc52ull, 0x0a12f4bc2a9a4fbeull, 0x5c43ae18948d52cbull,
                                    0xaad42238801d31d8ull};
 
-// Chunks of one submission look shaders up side by side: an entry's hash is stored before its shader, and entries are
-// added under the lock.
-static uint64_t spirv_hash(const GfxShader *s) {
-    static struct { const GfxShader *s; uint64_t h; } tab[8192];
-    static PlatMutex lk = PLAT_MUTEX_INIT;
-    uintptr_t k = ((uintptr_t)s >> 4) * 0x9E3779B97F4A7C15ull;
-    for (uint32_t i = 0, j = (uint32_t)(k >> 51); i < 8192; i++, j = (j + 1) & 8191) {
-        const GfxShader *e = __atomic_load_n(&tab[j].s, __ATOMIC_ACQUIRE);
-        if (e == s) return tab[j].h;
-        if (e) continue;
-        plat_mutex_lock(&lk);
-        e = tab[j].s;
-        if (!e) {
-            uint64_t words = 0, h = 0xcbf29ce484222325ull;
-            const uint8_t *b = (const uint8_t *)gfx_shader_spirv(s, &words);
-            for (uint64_t n = 0; b && n < words * 4; n++) h = (h ^ b[n]) * 0x100000001b3ull;
-            tab[j].h = h;
-            __atomic_store_n(&tab[j].s, s, __ATOMIC_RELEASE);
-            plat_mutex_unlock(&lk);
-            return h;
-        }
-        plat_mutex_unlock(&lk);
-        if (e == s) return tab[j].h;
-    }
-    return 0;   // table full: no skip
-}
+// The SPIR-V hash is kept on the shader (gfx_shader_spirv_hash), so chunks of one submission look shaders up side by
+// side without a table that could fill up: this had one of 8192 entries, and once it was full every call searched all of
+// them and returned 0, which meant no skip.
+static uint64_t spirv_hash(const GfxShader *s) { return gfx_shader_spirv_hash(s); }
 
 int vk_dlaa_skip_draw(VkExec *ex, const GfxShader *fs) {
     static uint64_t frame_read = ~0ull;
