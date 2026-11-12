@@ -3183,25 +3183,33 @@ static void mvobj_draw_(VkExec *ex, const p_draw_idx *d, VkBuffer ib, VkDeviceSi
     if (!__atomic_load_n(&LIM.ubo_max, __ATOMIC_ACQUIRE)) limits_init();
     // the variant: the translation of the same code and answers, kept per shader once found; it names the banks the
     // position depends on (0: none, the shader is skipped from then on)
-    static struct { const GfxShader *of, *vs; uint32_t banks; } vmemo[1024];
-    uint32_t vi = (uint32_t)((uintptr_t)D->B.st.vs * 0x9E3779B97F4A7C15ull >> 54);
-    if (vmemo[vi].of != D->B.st.vs) {
-        int has, pending = 0;
-        sf_mvprev = 1;
-        const GfxShader *v = shader_for(ex, NVN_STAGE_VS, &has, &pending, 0);
-        sf_mvprev = 0;
-        if (!v || pending) {
-            MO.building++;
-            return;
+    // 4096 sets of two, most recently used first: a single slot per shader address let two vertex shaders that landed
+    // on the same one evict each other on every draw, each time asking the shader cache for the variant again
+    static struct { const GfxShader *of, *vs; uint32_t banks; } vmemo[4096][2];
+    uint32_t vi = (uint32_t)((uintptr_t)D->B.st.vs * 0x9E3779B97F4A7C15ull >> 52);
+    if (vmemo[vi][0].of != D->B.st.vs) {
+        if (vmemo[vi][1].of == D->B.st.vs) {
+            typeof(vmemo[0][0]) t = vmemo[vi][1];
+            vmemo[vi][1] = vmemo[vi][0], vmemo[vi][0] = t;
+        } else {
+            int has, pending = 0;
+            sf_mvprev = 1;
+            const GfxShader *v = shader_for(ex, NVN_STAGE_VS, &has, &pending, 0);
+            sf_mvprev = 0;
+            if (!v || pending) {
+                MO.building++;
+                return;
+            }
+            GfxShaderIo io[32];
+            uint32_t extra = gfx_shader_outputs(v, io) & ~gfx_shader_outputs(D->B.st.vs, io);
+            uint32_t banks = extra ? gfx_shader_mvprev_banks(v) & 0x1fff8u : 0;
+            vmemo[vi][1] = vmemo[vi][0];
+            vmemo[vi][0].of = D->B.st.vs, vmemo[vi][0].vs = v, vmemo[vi][0].banks = banks;
+            vk_mvprev_want((banks & ~(1u << 4)) >> 3);   // binding index = bank - 3
         }
-        GfxShaderIo io[32];
-        uint32_t extra = gfx_shader_outputs(v, io) & ~gfx_shader_outputs(D->B.st.vs, io);
-        uint32_t banks = extra ? gfx_shader_mvprev_banks(v) & 0x1fff8u : 0;
-        vmemo[vi].of = D->B.st.vs, vmemo[vi].vs = v, vmemo[vi].banks = banks;
-        vk_mvprev_want((banks & ~(1u << 4)) >> 3);   // binding index = bank - 3
     }
-    const GfxShader *vs = vmemo[vi].vs;
-    uint32_t banks = vmemo[vi].banks;
+    const GfxShader *vs = vmemo[vi][0].vs;
+    uint32_t banks = vmemo[vi][0].banks;
     if (!banks || !(banks & ~(1u << 4))) {
         MO.no_out++;
         return;
