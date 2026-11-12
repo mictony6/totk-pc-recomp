@@ -903,6 +903,16 @@ static void restart_confirm(void) {
     ImGui::EndPopup();
 }
 
+// A button's result shown in its value for a few seconds: 1 done (done_text), -1 failed.
+struct ActionNote { uint64_t until; int result; };
+
+static const char *action_value(const ActionNote &a, UiTextId done_text) {
+    if (!a.result || plat_now_ns() > a.until) return "";
+    return menu_text(a.result > 0 ? done_text : UI_MENU_ACTION_FAILED);
+}
+
+static void action_done(ActionNote &a, bool ok) { a = {plat_now_ns() + 3000000000ull, ok ? 1 : -1}; }
+
 static void tab_controls(float scale) {
     opt_begin("##controls", scale);
     static const UiTextId layout[] = {UI_MENU_PAD_LAYOUT_AUTO, UI_MENU_PAD_LAYOUT_NINTENDO, UI_MENU_PAD_LAYOUT_XBOX};
@@ -913,6 +923,12 @@ static void tab_controls(float scale) {
     opt_choice("TOTK_PROMPTS", UI_MENU_PROMPTS, prompts, 3, UI_MENU_PROMPTS_DESC, note);
     bool ask = restart && opt_button("##restart", UI_MENU_RESTART, UI_MENU_RESTART_DESC);
     opt_toggle("TOTK_MOTION", UI_MENU_MOTION, UI_MENU_MOTION_DESC);
+    static ActionNote gyro_note;
+    if (opt_button("##gyro_calibrate", UI_MENU_GYRO_CALIBRATE, UI_MENU_GYRO_CALIBRATE_DESC,
+                   action_value(gyro_note, UI_MENU_GYRO_CALIBRATE_DONE))) {
+        motion_calibrate(motion_global());
+        action_done(gyro_note, true);
+    }
     opt_slider("TOTK_RUMBLE_STRENGTH", UI_MENU_RUMBLE_STRENGTH, 0, 300, UI_MENU_RUMBLE_STRENGTH_DESC, 10, "%.0f %%");
     opt_slider("TOTK_RUMBLE_CURVE", UI_MENU_RUMBLE_CURVE, 0.2f, 1.5f, UI_MENU_RUMBLE_CURVE_DESC, 0.05f, "%.2f");
     opt_toggle("TOTK_RUMBLE_TRIGGERS", UI_MENU_RUMBLE_TRIGGERS, UI_MENU_RUMBLE_TRIGGERS_DESC);
@@ -1105,16 +1121,6 @@ static void reset_all(void) {
     opt_save_soon();
     rt_log("menu: reset %d settings to their defaults", done);
 }
-
-// A button's result shown in its value for a few seconds: 1 done (done_text), -1 failed.
-struct ActionNote { uint64_t until; int result; };
-
-static const char *action_value(const ActionNote &a, UiTextId done_text) {
-    if (!a.result || plat_now_ns() > a.until) return "";
-    return menu_text(a.result > 0 ? done_text : UI_MENU_ACTION_FAILED);
-}
-
-static void action_done(ActionNote &a, bool ok) { a = {plat_now_ns() + 3000000000ull, ok ? 1 : -1}; }
 
 static void tab_advanced(float scale) {
     static ActionNote copy_note, log_note;

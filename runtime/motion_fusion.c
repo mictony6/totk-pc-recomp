@@ -6,8 +6,8 @@
 // reports it: acceleration in G, angular velocity in revolutions per second, angle = the integrated revolutions per
 // axis, direction = the controller's three axes in a reference frame whose z is up. The orientation is integrated from
 // the gyro and, while the controller is not being accelerated (|a| within 15 % of 1 G), pulled toward the measured
-// gravity (Mahony, gain 0.5/s: about 2 s), as the Switch's sensor fusion does; yaw has no reference and drifts with the
-// gyro's bias. The newest MOTION_RING samples are kept; reads are newest first. A restart (StartSixAxisSensor) drops
+// gravity (Mahony, gain 0.5/s: about 2 s), as the Switch's sensor fusion does; yaw has no reference, so the gyro's
+// zero-rate offset is learned whenever the pad lies still (feed_bias) and subtracted. The newest MOTION_RING samples are kept; reads are newest first. A restart (StartSixAxisSensor) drops
 // the samples before it: reads return nothing until the next sample, which starts a fresh frame and angle; sampling
 // numbers go on. The feeding thread writes, guest threads read, both under the instance's SRW lock.
 #include <math.h>
@@ -29,7 +29,18 @@ struct MotionFusion {
     double R[3][3];   // controller -> reference; row i = reference axis i in controller coordinates
     double angle[3];
     int restart;
+    // Gyro zero-rate offset: a gyro that is not calibrated reads a small constant rate while lying still, which turns the
+    // yaw (and the bow's aim) steadily. Learned from half a second of still samples (see feed_bias), subtracted from
+    // every sample.
+    double bias[3];
+    double win_sum[3], win_min[3], win_max[3], win_amin[3], win_amax[3];
+    int win_n;
+    int win_len;      // samples a window needs: BIAS_WINDOW, or BIAS_WINDOW_CAL after motion_calibrate
 };
+
+enum { BIAS_WINDOW = 125, BIAS_WINDOW_CAL = 250 };   // samples: 0.5 s and 1 s at the motion thread's 250 Hz
+#define BIAS_GYRO_SPREAD 0.03             // rad/s (about 1.7 deg/s): a hand holding the pad moves more than this
+#define BIAS_ACC_SPREAD 0.03              // G
 
 MotionFusion *motion_new(void) {
     MotionFusion *m = calloc(1, sizeof *m);
@@ -107,11 +118,51 @@ static void integrate(double R[3][3], const double gyro[3], const double acc[3],
     orthonormalize(R);
 }
 
-void motion_feed(MotionFusion *m, const double acc[3], const double gyro[3], uint64_t now) {
+// Collects the raw samples of one window; when every gyro and accelerometer axis stayed within its spread (the pad lay
+// still), the window's mean gyro becomes the offset. Any larger movement starts the window over.
+static void feed_bias(MotionFusion *m, const double acc[3], const double gyro[3]) {
+    if (m->win_n == 0)
+        for (int i = 0; i < 3; i++) {
+            m->win_sum[i] = 0;
+            m->win_min[i] = m->win_max[i] = gyro[i];
+            m->win_amin[i] = m->win_amax[i] = acc[i];
+        }
+    for (int i = 0; i < 3; i++) {
+        m->win_sum[i] += gyro[i];
+        if (gyro[i] < m->win_min[i]) m->win_min[i] = gyro[i];
+        if (gyro[i] > m->win_max[i]) m->win_max[i] = gyro[i];
+        if (acc[i] < m->win_amin[i]) m->win_amin[i] = acc[i];
+        if (acc[i] > m->win_amax[i]) m->win_amax[i] = acc[i];
+        if (m->win_max[i] - m->win_min[i] > BIAS_GYRO_SPREAD || m->win_amax[i] - m->win_amin[i] > BIAS_ACC_SPREAD) {
+            m->win_n = 0;
+            return;
+        }
+    }
+    if (++m->win_n < (m->win_len ? m->win_len : BIAS_WINDOW)) return;
+    for (int i = 0; i < 3; i++) m->bias[i] = m->win_sum[i] / m->win_n;
+    m->win_n = 0;
+    m->win_len = 0;
+}
+
+// The menu's calibration button: throws away the half-collected window and learns the offset from the next full second
+// of stillness (any movement starts that second over), however well the automatic one already did.
+void motion_calibrate(MotionFusion *m) {
+    plat_mutex_lock(&m->lock);
+    m->win_n = 0;
+    m->win_len = BIAS_WINDOW_CAL;
+    plat_mutex_unlock(&m->lock);
+}
+
+void motion_feed(MotionFusion *m, const double acc[3], const double raw_gyro[3], uint64_t now) {
     plat_mutex_lock(&m->lock);
     double dt = m->last_ns && now > m->last_ns ? (double)(now - m->last_ns) / 1e9 : 0.004;
-    if (dt > 0.05) dt = 0.004;   // a gap (no controller, sensors were off): no integration across it
+    if (dt > 0.05) {   // a gap (no controller, sensors were off): no integration across it
+        dt = 0.004;
+        m->win_n = 0;
+    }
     m->last_ns = now;
+    feed_bias(m, acc, raw_gyro);
+    double gyro[3] = {raw_gyro[0] - m->bias[0], raw_gyro[1] - m->bias[1], raw_gyro[2] - m->bias[2]};
     if (m->restart) {
         align_to(m->R, acc);
         memset(m->angle, 0, sizeof m->angle);
