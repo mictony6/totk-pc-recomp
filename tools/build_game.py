@@ -830,10 +830,15 @@ def main():
                     help='profile-guided optimisation, generated code at -O2: gen builds an instrumented totk.exe '
                          '(needs --toolchain on Windows: MSYS2 clang ships no profile runtime); FILE builds with that '
                          '.profdata (tools/pgo.py merge)')
+    ap.add_argument('--gen-opt', choices=('O1', 'O2'), default='O1',
+                    help='optimisation level of the generated code without a profile (default O1; --pgo always uses '
+                         'O2). O2 compiles slower and makes a larger exe; build it into its own --out folder')
     ap.add_argument('--expected', type=Path,
                     help='expected hashes (default tools/data/expected-<display version>.json)')
     args = ap.parse_args()
     set_cpu(args.cpu)
+    if args.gen_opt == 'O2' and not args.pgo:
+        GEN_FLAGS[GEN_FLAGS.index('-O1')] = '-O2'
 
     gen = (args.gen or ROOT / 'generated' / args.version).resolve()
     out = (args.out or ROOT / 'build' / args.version).resolve()

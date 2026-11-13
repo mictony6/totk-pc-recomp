@@ -72,7 +72,7 @@ static struct {
 // The scene size is decided before the device exists, so NGX cannot be asked yet. NGX loads DLSS from nvngx_dlss.dll
 // next to totk.exe on Windows, libnvidia-ngx-dlss.so.<version> next to totk on Linux (vk_dlaa.c vk_dlaa_init):
 // without that file DLSS never runs, and a DLSS mode would leave the game's plain scaling at 50..67 % of the output.
-int res_dlss_dll(void) {
+static int dlss_dll_probe(void) {
 #ifdef _WIN32
     char exe[1024], path[1024 + 32];
     if (!plat_exe_path(exe, sizeof exe)) return 1;
@@ -94,6 +94,17 @@ int res_dlss_dll(void) {
     closedir(d);
     return found;
 #endif
+}
+
+// The probe looks the executable's path up and asks the file system, and the draw path asks on every draw of a chunked
+// replay (vk_exec_draw.c prepare_draw, through vk_dlaa_available): with TOTK_REPLAY_WORKERS that was a third of the
+// replay threads' samples and a frame in the world took 170 ms. The file does not appear or go away while the game
+// runs, so the first answer is kept; two threads asking at once both probe and store the same value.
+int res_dlss_dll(void) {
+    static int cached = -1;
+    int v = __atomic_load_n(&cached, __ATOMIC_RELAXED);
+    if (v < 0) v = dlss_dll_probe(), __atomic_store_n(&cached, v, __ATOMIC_RELAXED);
+    return v;
 }
 
 static uint64_t shadow_kib(void);

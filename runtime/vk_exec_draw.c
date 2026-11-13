@@ -951,18 +951,32 @@ static void answers_for(VkExec *ex, int st, const uint8_t *ctl, uint32_t mask, G
 }
 
 // FNV-1a of the bound program's fragment shader guest code, per program serial; 0 without one. *len: its length.
-#define FSH_N 256
-static _Thread_local struct { uint64_t serial, h; uint32_t len; } fsh[FSH_N];
+// A scene draws well over 256 programs, so the memo is 4096 sets of 2 ways: with 256 direct-mapped slots, programs whose
+// serials landed on the same slot evicted each other and every draw of one of them hashed its whole code again (the
+// vk_aa_draw call, for every draw, showed up at about 4% of the replay thread in a Lookout Landing profile).
+#define FSH_SET_BITS 12
+#define FSH_WAYS 2
+typedef struct { uint64_t serial, h; uint32_t len; } FshEnt;
+static _Thread_local FshEnt fsh[(1u << FSH_SET_BITS) * FSH_WAYS];
 
 uint64_t vk_exec_fs_hash(VkExec *ex, uint32_t *len) {
     const uint8_t *ctl, *code;
     uint32_t n;
     *len = 0;
     if (!ex->prog || !ex->prog->serial) return 0;
-    typeof(fsh[0]) *m = &fsh[ex->prog->serial * 0x9E3779B97F4A7C15ull >> 56];
-    if (m->serial != ex->prog->serial) {
-        m->serial = ex->prog->serial, m->h = 0, m->len = 0;
-        if (find_stage(ex->draw, ex->prog, NVN_STAGE_FS, &ctl, &code, &n)) {
+    uint64_t serial = ex->prog->serial;
+    FshEnt *set = &fsh[(serial * 0x9E3779B97F4A7C15ull >> (64 - FSH_SET_BITS)) * FSH_WAYS];
+    FshEnt *m = NULL;
+    for (int w = 0; w < FSH_WAYS; w++)
+        if (set[w].serial == serial) m = &set[w];
+    if (!m) {
+        // Miss: the newest entry goes in way 0 and the older ones move down, so the oldest of the set is the one lost.
+        for (int w = FSH_WAYS - 1; w > 0; w--) set[w] = set[w - 1];
+        m = &set[0];
+        m->serial = serial, m->h = 0, m->len = 0;
+        // The replay's scan (vk_exec.c) has no draw context; it asks through the lookup that needs none.
+        if (ex->draw ? find_stage(ex->draw, ex->prog, NVN_STAGE_FS, &ctl, &code, &n)
+                     : find_stage_scan(ex->prog, NVN_STAGE_FS, &ctl, &code, &n)) {
             uint64_t h = 0xcbf29ce484222325ull;
             for (uint32_t i = 0; i < n; i++) h = (h ^ code[i]) * 0x100000001b3ull;
             m->h = h, m->len = n;
