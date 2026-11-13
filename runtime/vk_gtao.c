@@ -94,7 +94,7 @@ static struct {
     uint32_t dw, dh;
     uint64_t c4;                        // the camera block's guest address
     const VkTexImage *mask;             // the game's AO mask: the raw AO draw's image
-    uint32_t raw_pass;                  // the raw AO draw's pass (VkExec.pass_serial)
+    uint64_t raw_pass;                  // the raw AO draw's pass (pass_id)
     int raw_seen, done;                 // this frame's raw AO draw was found; its finished mask too (reset at a G-buffer)
     int pending;                        // the mask is finished: GTAO before the next pass
 } G;
@@ -466,19 +466,47 @@ static void log_draw(VkExec *ex) {
            (unsigned long long)h, len);
 }
 
+// A pass told apart from every other one of the frame: pass_serial counts the passes one recording context has begun,
+// and chunks recorded on different threads each have their own count, so two passes of different chunks can share a
+// serial. The chunk's index goes in front (-1, a sequential recording, gives 0).
+static uint64_t pass_id(const VkExec *ex) { return (uint64_t)(uint32_t)(vk_exec_chunk_index() + 1) << 32 | ex->pass_serial; }
+
+// The replay's scan (vk_exec.c scan_draw), which sees draws before any chunk records them. The G-buffer: a pass
+// gbuffer_depth takes. The game's AO draws (the raw one, its blurs, the finished mask): a draw into a pass of five or
+// more targets whose target 0 is RGBA8 at a quarter of the G-buffer's size per axis (dw, dh), as vk_gtao_draw tests.
+// The chunks across them are held and a chunk records the draws only after the chunks before it (vk_gtao_draw), as the
+// state between them (G, the swap) is a sequence that assumes the draws are recorded one after another.
+int vk_gtao_scan_gbuffer(const VkExec *s) {
+    const VkTexImage *m, *a, *n;
+    return gbuffer_depth(s, &m, &a, &n) != NULL;
+}
+
+int vk_gtao_scan_ao(const VkExec *s, uint32_t dw, uint32_t dh) {
+    if (s->pass_ncolor < 5 || strcmp(cfg_value("TOTK_AO"), "gtao")) return 0;
+    const VkExecTarget *t = &s->color[0];
+    if (!t->img || t->level || t->format != VK_FORMAT_R8G8B8A8_UNORM || t->width < 64) return 0;
+    return !(t->width * 4 + 4 < dw || t->width * 4 > dw + 4 || t->height * 4 + 4 < dh || t->height * 4 > dh + 4);
+}
+
 // A draw about to be recorded, its pass open.
 void vk_gtao_draw(VkExec *ex) {
     update_mode(ex);
     if (G.log_frame) log_draw(ex);
-    if (G.mode != AO_GTAO || G.done || !G.depth || ex->pass_ncolor < 5) return;
+    if (G.mode != AO_GTAO || ex->pass_ncolor < 5) return;
     const VkExecTarget *t = &ex->color[0];
     if (!t->img || t->level || t->format != VK_FORMAT_R8G8B8A8_UNORM || t->width < 64) return;
     if (t->width * 4 + 4 < G.dw || t->width * 4 > G.dw + 4 || t->height * 4 + 4 < G.dh || t->height * 4 > G.dh + 4) return;
+    // Before the state is read at all: this frame's G-buffer pass, which resets done and raw_seen (vk_gtao_pass_begin),
+    // is in an earlier chunk that another thread may still be recording. A draw that read done from the frame before
+    // returned here, the reset came after it, and the finished mask then counted as a second raw draw: GTAO did not
+    // run, and the lighting read the game's AO for that frame.
+    if (ex->chunked) vk_exec_chunk_settle();
+    if (G.done || !G.depth) return;
     if (!G.raw_seen) {   // the raw AO draw
-        G.raw_seen = 1, G.mask = t->img, G.raw_pass = ex->pass_serial, T.raw_pass = ex->pass_serial;
+        G.raw_seen = 1, G.mask = t->img, G.raw_pass = pass_id(ex), T.raw_pass = ex->pass_serial;
         return;
     }
-    if (t->img != G.mask || ex->pass_serial == G.raw_pass) return;   // a blur into the other image, or the same pass
+    if (t->img != G.mask || pass_id(ex) == G.raw_pass) return;   // a blur into the other image, or the same pass
     G.done = 1, T.fin_pass = ex->pass_serial;   // the finished mask
     if (!G.init_tried) init(vk_ctx());
     if (G.ok) G.pending = 1;

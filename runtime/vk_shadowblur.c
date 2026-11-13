@@ -299,6 +299,18 @@ void vk_shadowblur_pass_end(VkExec *ex) {
     if (vk_shadowblur_swap_img && vk_shadowblur_swap_hits) swap_off(ex);
 }
 
+// The replay's scan (vk_exec.c scan_draw) asks of every draw of a chunked submission whether it belongs to the blur:
+// 1 the row blur, 2 the merge. The blur's state (S, the swap) is a sequence across passes that assumes the draws are
+// recorded one after another, so the scan holds the chunks that span it (HOLD_BLUR) and a chunk records the draw only
+// once the chunks before it are recorded (vk_shadowblur_draw).
+int vk_shadowblur_scan_draw(VkExec *s) {
+    uint32_t len;
+    uint64_t h = vk_exec_fs_hash(s, &len);
+    if (h != FS_BLUR && h != FS_MERGE) return 0;
+    if (strcmp(cfg_value("TOTK_SHADOW_BLUR"), "depth")) return 0;
+    return h == FS_BLUR ? 1 : 2;
+}
+
 // A draw about to be recorded, its pass open.
 void vk_shadowblur_draw(VkExec *ex) {
     if (!S.tried) update_mode(ex);
@@ -308,6 +320,7 @@ void vk_shadowblur_draw(VkExec *ex) {
     if (!d->img || d->level || d->format != VK_FORMAT_R8G8B8A8_UNORM) return;
     uint32_t len;
     uint64_t h = vk_exec_fs_hash(ex, &len);
+    if ((h == FS_BLUR || h == FS_MERGE) && ex->chunked) vk_exec_chunk_settle();   // the state below is in replay order
     if (h == FS_MERGE && S.row_done) S.merged = d->img;
     if (h != FS_BLUR) return;
     if (!S.depth || S.depth->width != d->width || S.depth->height != d->height) return;

@@ -220,6 +220,7 @@ void vk_exec_noatt_dims(const VkExec *ex, uint32_t *w, uint32_t *h);   // pass s
 int vk_exec_targets_recent(VkExec *ex, int any);
 // The current pass's targets with their formats, extents and the frames they were last rendered in (diagnostics).
 void vk_exec_targets_describe(VkExec *ex, char *buf, size_t cap);
+int vk_exec_tfr_check(void);   // --probe-vkexec: a new target replaces a way of its own set; 1 when it does
 
 extern VkExecFrame vk_exec_frame;
 void vk_exec_frame_written(const tex_t *t);                    // vk_texture_gpu_written: t rendered or copied into
@@ -315,6 +316,10 @@ extern VkImageView vk_lightao_swap_view;
 // the depth-aware blur, by the one pass that reads it (vk_shadowblur_swap_hits, counted by tex_info, ends the swap).
 // vk_shadowblur_watch: tex_info tells vk_shadowblur_sampled what the blur draw samples.
 void vk_shadowblur_draw(VkExec *ex);
+int vk_gtao_scan_gbuffer(const VkExec *s);   // the scan's questions: a G-buffer pass; a draw of the game's AO passes
+int vk_gtao_scan_ao(const VkExec *s, uint32_t dw, uint32_t dh);
+int vk_exec_chunk_index(void);               // the chunk this thread records, -1 outside a chunked replay
+int vk_shadowblur_scan_draw(VkExec *s);   // the scan's question: 1 the blur's row draw, 2 its merge, else 0
 extern int vk_shadowblur_watch;
 void vk_shadowblur_sampled(VkExec *ex, const VkTexImage *img);
 void vk_shadowblur_pass_begin(VkExec *ex);

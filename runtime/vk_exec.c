@@ -316,7 +316,7 @@ static int bc_target(const tex_t *t, const view_t *v, int has_v, const VkTexImag
     return 1;
 }
 
-enum { HOLD_TEX, HOLD_DLSS, HOLD_WRITES, HOLD_N };
+enum { HOLD_TEX, HOLD_DLSS, HOLD_WRITES, HOLD_BLUR, HOLD_AO, HOLD_N };
 static void scan_hold(int why);
 
 // scan: the state scan's resolution, which creates nothing and leaves out a texture without an image yet.
@@ -528,13 +528,36 @@ static void tfr_note(const VkExecTarget *t, uint64_t stamp) {
     plat_mutex_lock(&tfr_lock);
     TargetFrames *e = tfr_find(t);
     if (!e) {
-        e = tfr_set(t);
+        // the way rendered longest ago, indexed from the set's start: the ways past the last set are RP's words
+        TargetFrames *s = tfr_set(t);
+        e = s;
         for (int i = 1; i < TFR_WAYS; i++)
-            if (e[i].last < e->last) e = &e[i];
+            if (s[i].last < e->last) e = &s[i];
         *e = (TargetFrames){t->image, t->level, t->base_layer, 0, 0};
     }
     if (e->last != stamp) e->prev = e->last, e->last = stamp;
     plat_mutex_unlock(&tfr_lock);
+}
+
+// --probe-vkexec: a new target noted into a full set takes the way rendered longest ago, and the set after it keeps
+// its entries. The ways are stamped so that a search stepping from the way it picked last would leave the set. 1 when
+// it holds; the two sets are cleared afterwards.
+int vk_exec_tfr_check(void) {
+    VkExecTarget t[TFR_WAYS + 1];
+    for (int n = 0, k = 1; n <= TFR_WAYS; k++) {
+        t[n] = (VkExecTarget){.image = (VkImage)(uintptr_t)k};
+        n += tfr_set(&t[n]) == tfr[0];
+    }
+    static const uint64_t last[TFR_WAYS] = {8, 7, 100, 6, 100, 100, 5, 100};
+    TargetFrames next[TFR_WAYS];
+    for (int i = 0; i < TFR_WAYS; i++) tfr[0][i] = (TargetFrames){t[i].image, 0, 0, last[i], 0};
+    memcpy(next, tfr[1], sizeof next);
+    tfr_note(&t[TFR_WAYS], 200);
+    plat_mutex_lock(&tfr_lock);
+    int ok = tfr_find(&t[TFR_WAYS]) == &tfr[0][6] && !memcmp(next, tfr[1], sizeof next);
+    plat_mutex_unlock(&tfr_lock);
+    memset(tfr, 0, sizeof tfr[0] * 2);
+    return ok;
 }
 
 static int tfr_recent(const VkExecTarget *t, uint64_t stamp) {
@@ -1122,6 +1145,14 @@ static struct {
     uint64_t holds;                      // chunks that make a new texture or record writes the scan does not know: the
                                          // ones after them wait until they are done
     int per, open, in_chunk;             // scan: draws for this chunk, a pass of the replay may be open, draws in it
+    int blur_open, blur_merged;          // scan: inside the depth shadow blur's span (its row draw to the end of the
+                                         // merge's pass): every chunk of it is held (HOLD_BLUR)
+    int ao_open, ao_fin;                 // scan: inside GTAO's span (the game's raw AO draw to the end of the pass after
+                                         // its finished mask): every chunk of it is held (HOLD_AO)
+    int pass_seq, ao_pass;               // scan: render target changes so far; the pass of the raw AO draw
+    const void *ao_mask;                 // scan: the raw AO draw's image
+    uint32_t gb_w, gb_h;                 // scan: the last G-buffer pass's size, kept across submissions (the AO draws
+                                         // of a frame may follow it in another submission); 0 none yet
     int sub;                             // chunks submitted
     uint64_t t0;                         // the submission's start
     // TOTK_TRACE=perf, per chunked submission: the scan, the first and the last chunk submitted after t0, the chunks'
@@ -1439,6 +1470,8 @@ static void chunk_start(const VkExec *s, int hi, const op_hdr *h) {
     if (SC.nch) SC.ch[SC.nch - 1].job_end = SC.njobs, SC.ch[SC.nch - 1].wpos_end = SC.nwpos, SC.ch[SC.nch - 1].draws = SC.in_chunk;
     SC.in_chunk = 0;
     __atomic_store_n(&SC.nch, SC.nch + 1, __ATOMIC_RELEASE);
+    if (SC.blur_open) scan_hold(HOLD_BLUR);   // a chunk inside the blur's span
+    if (SC.ao_open) scan_hold(HOLD_AO);       // or GTAO's
     if (SC.nch > 1) chunks_publish(0);
     if (SC.nch == 2) SC.per *= 4;   // the first chunk was a quarter
     chunks_submit(0);
@@ -1451,6 +1484,8 @@ static void chunks_wait(int k) {
         while (!__atomic_load_n(&SC.ch[i].done, __ATOMIC_ACQUIRE)) plat_cond_wait(&RP.done, &RP.m);
     plat_mutex_unlock(&RP.m);
 }
+
+int vk_exec_chunk_index(void) { return chunk_k; }
 
 int vk_exec_chunk_behind(void) {
     for (int i = chunk_k - 1; i >= 0; i--)
@@ -1505,6 +1540,19 @@ static void scan_draw(VkExec *s, uint32_t op, const void *a, const op_hdr *h) {
     resolve_rt_as(s, 1);
     scan_pass(s, h);
     vk_dlaa_scan_draw(s);
+    int blur = vk_shadowblur_scan_draw(s);
+    if (blur) {
+        SC.blur_open = 1, SC.blur_merged |= blur == 2;
+        scan_hold(HOLD_BLUR);
+    }
+    if (vk_gtao_scan_gbuffer(s)) {
+        SC.gb_w = s->pass_w, SC.gb_h = s->pass_h;
+    } else if (SC.gb_w && vk_gtao_scan_ao(s, SC.gb_w, SC.gb_h)) {
+        const void *img = s->color[0].img;
+        if (!SC.ao_open) SC.ao_open = 1, SC.ao_mask = img, SC.ao_pass = SC.pass_seq;   // the raw AO draw
+        else if (img == SC.ao_mask && SC.pass_seq != SC.ao_pass) SC.ao_fin = 1;        // the finished mask
+        scan_hold(HOLD_AO);
+    }
 }
 
 static void scan(VkExec *s, int hi, const op_hdr *h, int depth) {
@@ -1534,6 +1582,9 @@ static void scan(VkExec *s, int hi, const op_hdr *h, int depth) {
         case OP_SET_RT:
             if (memcmp(&s->rt, a, sizeof s->rt)) {
                 s->rt = *(const p_set_rt *)a, s->rt_resolved = 0, SC.open = 0;
+                if (SC.blur_merged) SC.blur_open = SC.blur_merged = 0;   // the merge's pass ended
+                if (SC.ao_fin) SC.ao_open = SC.ao_fin = 0;               // the finished mask's pass ended
+                SC.pass_seq++;
                 resolve_rt_as(s, 1);   // here, not at the first draw: a clear or a later chunk may need them live
                 chunks_publish(0);
             }
@@ -1613,7 +1664,7 @@ static void record_chunks(VkExec *ex, const uint64_t *handles, int n, const OpCo
     VkExec *s = &SC.s;
     copy_state(s, ex);
     s->fence = ex->fence, s->rt_resolved = 0, s->pos = 0;
-    SC.holds = 0;
+    SC.holds = 0, SC.blur_open = SC.blur_merged = 0, SC.ao_open = SC.ao_fin = 0, SC.pass_seq = 0, SC.ao_mask = NULL;
     SC.nch = SC.sub = SC.pub = 0, SC.nupd = SC.ncond = SC.njobs = SC.drop_n = SC.ndr = SC.dr_done = 0, SC.open = 0;
     SC.nwpos = 0;
     job_turn = 0;
