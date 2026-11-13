@@ -847,6 +847,8 @@ def main():
             sys.exit('--pgo gen: MSYS2 UCRT64 clang ships no profile runtime (clang_rt.profile); pass --toolchain with '
                      'an llvm-mingw directory')
         set_pgo(args.pgo, out)
+    elif args.gen_o2:
+        GEN_FLAGS[GEN_FLAGS.index('-O1')] = '-O2'
     extracted = None if args.exefs and args.romfs else work_dir() / 'extracted' / args.version
     paths = {'exefs': (args.exefs or extracted / 'exefs').resolve(),
              'romfs': (args.romfs or extracted / 'romfs').resolve(),
