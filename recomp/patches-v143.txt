@@ -1137,3 +1137,13 @@ site grassdist main e7a30c bd41a001 bd41a001 @page:x0 b9406000 4e0c1c01 5fa19021
 # switches the set off without the real-time step, where the page is not written.
 set climb    TOTK_CLIMB_FIX      1
 site climb main 1f497f4 1e201001 @page:x8 bd400104 1e286884 52946dc8 72a7e528 1e270102 1e241842 52828248 72a7dfe8 1e270103 1e232842 529573e8 72a7b5a8 1e270103 1f040862 1e2a3883 2f00e404 1e246863 1e261004 1f048862 1e241004 1e247842 1e226800 1e201001 1e226821   # fmov s1, #2.0 -> s2 = g(u); s0 = max(s0, s2); s1 = max(2.0, s2)
+
+# Rain splashes on the ground (issue #719, analysis and patch by liujixincd): the particle code (main+0x1932b98) keeps
+# a smoothed clearance value at [x19+4] and a fade distance at [x19] (c16[2].w). Below a clearance of 9.5 m it sets the
+# fade to clearance - 3.0 when that is smaller, so the fade distance drops from its 25 m maximum to about 6.5 m in a
+# single frame when the clearance dips under the threshold, and the splashes around the player vanish and come back
+# slowly. The fade becomes clearance * K with K = 25 / 9.5 = 2.6316 (page +104, written by resolution.c
+# res_splash_fade): it is the maximum at the threshold and falls in proportion below it, with no jump. 1.4.3 only.
+set splashfade TOTK_PATCH_SPLASHFADE 1
+site splashfade main 1933000 1e311002 @page:x13 bd4069a2   # fmov s2, #-3.0 -> ldr s2, [page+104]
+site splashfade main 1933004 1e222821 1e220821   # fadd s1, s1, s2 -> fmul s1, s1, s2

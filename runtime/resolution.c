@@ -13,7 +13,8 @@
 // Patch page: +16 the scene size {w, h} as floats, +32 the output size and +48 the swapchain size as {w, h} in one
 // 64-bit word, +40 the renderer (1.2.1) or display configuration (1.4.3) the patched code stores there.
 // +56 the camera's aspect ratio as a float when the output is not 16:9 (set aspect), +60 the field-of-view factor
-// (set fov, res_fov_live), +96 the grass distance factor (set grassdist, res_grass_live), +112 a one-shot request
+// (set fov, res_fov_live), +96 the grass distance factor (set grassdist, res_grass_live), +104 the ground splash fade's
+// slope (set splashfade, res_splash_fade), +112 a one-shot request
 // byte for the game's resize (1.4.3, set scene, res_scene_live).
 // 1.4.3 scales the scene it reads by canvas width / the console mode's base width, 1920 docked and 1280 handheld (a
 // 2560x1440 output renders its 1600x900 scene at 2128x1200 docked; MacNativeGames measured the same), so its page holds
@@ -511,8 +512,19 @@ static void res_shadow_range(void) {
     rt_log("resolution: shadow cascades end at %g, %g, %g and %g m", d[0], d[1], d[2], d[3]);
 }
 
+// The ground splash fade's slope on page +104 (recomp/patches-v143.txt, set splashfade): the fade distance is the
+// smoothed clearance times 25 / 9.5, the game's 25 m maximum at its 9.5 m threshold, instead of the clearance minus 3
+// metres, which dropped from 25 m to 6.5 m in one frame at the threshold and made the rain splashes vanish. Written
+// before the set can run; 1.4.3 only (the other game versions have no such set).
+static void res_splash_fade(void) {
+    if (rt_patch_set("splashfade") < 0) return;
+    float k = 25.0f / 9.5f;
+    memcpy((uint8_t *)rt_patch_page() + 104, &k, sizeof k);
+}
+
 void res_init(void) {
     res_shadow_range();
+    res_splash_fade();
     if (!bigger()) {
         rt_log("resolution: the game's own (output 1920x1080, scene 1600x900)");
         shadow_init(rt_patch_page());
