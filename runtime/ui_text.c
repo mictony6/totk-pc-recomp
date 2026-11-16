@@ -137,6 +137,11 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_HDR_HUE] = "Highlight hue correction",
     [UI_MENU_HDR_HUE_DESC] = "Bright colours such as fire and sparks turn towards white as in the game's own SDR picture, "
                              "matching the light they cast; 0 keeps them fully saturated.",
+    [UI_MENU_WHITE_POINT] = "White point",
+    [UI_MENU_WHITE_POINT_DESC] = "How much of the scene's brightness range the game's tone curve keeps before it turns "
+                                 "white. 1.0 is the game's own curve; higher keeps more detail in bright sky, sunlit "
+                                 "surfaces and fire; the picture comes out darker and a little less saturated, "
+                                 "mid-tones included. SDR only.",
     [UI_MENU_SHADOW_SCALE] = "Shadow resolution",
     [UI_MENU_SHADOW_SCALE_DESC] = "Draws the sun's shadow maps this many times larger on each side than the game's 960x960: "
                                   "sharper shadow edges and leaf shadows. Takes effect at the next start.",

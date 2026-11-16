@@ -170,6 +170,7 @@ void vk_hdr_to_srgb8(const uint8_t *in, uint8_t *out, size_t px, int a2r);
 void vk_hdr_release(void);   // before the device goes away
 // The support buffer's HDR parameters (vk_exec_draw.c support_fill, read by shaders/hdr_tonemap.frag).
 void vk_hdr_support(float out[4]);
+void vk_white_support(float out[4]);   // the SDR tonemap's white point (vk_hdr.c, shaders/white_tonemap.frag)
 // vk_contact.c: screen-space contact shadows on the game's composed scene colour (TOTK_CONTACT_SHADOWS)
 int vk_contact_strength(void);   // percent, 0 = off
 void vk_aa_release(void);        // before the device goes away

@@ -31,6 +31,7 @@
 #include "hdr_fullscreen_spv.h"
 #include "hdr_tonemap_spv.h"
 #include "hdr_ui_spv.h"
+#include "white_tonemap_spv.h"
 #include "host.h"
 #include "nvn_api.h"
 #include "vk_exec.h"
@@ -78,6 +79,12 @@ void vk_hdr_support(float out[4]) {
     out[1] = n.peak > n.game ? n.peak / n.game : 1.0f;   // the peak against the picture's white
     out[2] = n.hue;                                      // hue correction of highlights (hdr_tonemap.frag)
     out[3] = 0;
+}
+
+// The white point of the SDR tonemap (shaders/white_tonemap.frag), read by the replay for every draw.
+void vk_white_support(float out[4]) {
+    out[0] = fminf(fmaxf((float)cfg_double("TOTK_WHITE_POINT"), 1.0f), 4.0f);
+    out[1] = out[2] = out[3] = 0;
 }
 
 // ---- 1. the tonemap shader
@@ -216,8 +223,9 @@ static int fsr_unclamp(uint32_t *w, uint64_t *words) {
 }
 
 void vk_hdr_shader_swap(uint32_t **spirv, uint64_t *words) {
-    if (!vk_hdr_wanted() || !*spirv || *words < 5) return;
-    int unclamped = fsr_unclamp(*spirv, words);
+    int sdr = !vk_hdr_wanted();   // SDR output: the white point tonemap in place of the game's
+    if (!*spirv || *words < 5) return;
+    int unclamped = sdr ? 0 : fsr_unclamp(*spirv, words);   // SDR output keeps the game's FSR clamp
     if (unclamped > 0) {
         static volatile int32_t fsrs;
         rt_log("hdr: the game's FSR pass keeps values above 1 (%d output clamps; %d so far)", unclamped,
@@ -249,9 +257,12 @@ void vk_hdr_shader_swap(uint32_t **spirv, uint64_t *words) {
         i += len;
     }
     if (found != 15) return;
-    if (!vk_shader_swap_named(spirv, words, hdr_tonemap_spv, sizeof hdr_tonemap_spv / 4, tm_names, 5)) return;
+    const uint32_t *ours = sdr ? white_tonemap_spv : hdr_tonemap_spv;
+    uint64_t ours_words = sdr ? sizeof white_tonemap_spv / 4 : sizeof hdr_tonemap_spv / 4;
+    if (!vk_shader_swap_named(spirv, words, ours, ours_words, tm_names, 5)) return;
     static volatile int32_t swaps;
-    rt_log("hdr: the game's tonemap shader runs as shaders/hdr_tonemap.frag (%d so far)", plat_inc32(&swaps));
+    rt_log("hdr: the game's tonemap shader runs as shaders/%s.frag (%d so far)", sdr ? "white_tonemap" : "hdr_tonemap",
+           plat_inc32(&swaps));
 }
 
 // ---- 2. the picture the window texture is copied from

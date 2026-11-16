@@ -749,6 +749,7 @@ static void tab_screen(float scale) {
     opt_choice("TOTK_DLSS_CHAR_MASK", UI_MENU_DLSS_CHARS, chars, 4, UI_MENU_DLSS_CHARS_DESC);
     opt_toggle("TOTK_DLAA_OBJMV", UI_MENU_DLSS_OBJMV, UI_MENU_DLSS_OBJMV_DESC);
     rows_color();
+    opt_slider("TOTK_WHITE_POINT", UI_MENU_WHITE_POINT, 1, 4, UI_MENU_WHITE_POINT_DESC, 0.1f, "%.1f");
     opt_group(UI_MENU_HDR_GROUP);
     opt_toggle("TOTK_HDR", UI_MENU_HDR, UI_MENU_HDR_DESC);
     opt_slider("TOTK_HDR_PEAK_NITS", UI_MENU_HDR_PEAK, 400, 10000, UI_MENU_HDR_PEAK_DESC, 50, "%.0f");

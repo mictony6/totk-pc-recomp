@@ -62,7 +62,7 @@ static const char *const known[] = {
     "TEX_VRAM_PRESSURE", "TIMER_1MS", "TRACE", "TXD_TRANSPOSE", "UBO_SNAPSHOT", "UB_OVERLAY", "UB_OVERLAY_OUT", "UNDERWATER_DEBUG",
     "UNDERWATER_UPSAMPLE", "UPSCALER", "VB_USED", "VK_DYN_A2C", "VK_DYN_VERTEX", "VK_NO_FLOAT64", "VK_PRESENT", "VK_RECORDER", "VK_SSBO_ALIGN",
     "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_VALIDATION", "VMA_BLOCK_MIB", "VOLUME", "VRAM_HEADROOM", "VRAM_LIMIT_MIB", "VS_OUTS", "WALK_KEY",
-    "WALK_SCALE", "WATCH", "WATCH_DUMP", "WB_DIAG", "WB_EXACT", "WB_FENCE_LIMIT", "WB_MERGE", "WINDOW_SIZE", "XLATE", "XLATE_ID", "XLATE_KEEP",
+    "WALK_SCALE", "WATCH", "WATCH_DUMP", "WB_DIAG", "WB_EXACT", "WB_FENCE_LIMIT", "WB_MERGE", "WHITE_POINT", "WINDOW_SIZE", "XLATE", "XLATE_ID", "XLATE_KEEP",
     "XLATE_PROCS",
     "BACKGROUND_WINDOW", "BIND_A", "BIND_B", "BIND_DOWN", "BIND_L", "BIND_LCLICK", "BIND_LEFT", "BIND_LSTICK_DOWN", "BIND_LSTICK_LEFT",
     "BIND_LSTICK_RIGHT", "BIND_LSTICK_UP", "BIND_MINUS",
@@ -82,7 +82,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"SHARPNESS", "display"}, {"DYNAMIC_RES", "display"}, {"ASPECT", "display"}, {"MOVIE_ASPECT", "display"}, {"FOV", "display"}, {"GRASS_DIST", "display"}, {"ANISO", "display"},
     {"COLOR_PRESET", "display"},
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
-    {"COLOR_GAMMA", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
+    {"COLOR_GAMMA", "display"}, {"WHITE_POINT", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
     {"HDR_UI_NITS", "display"}, {"HDR_HUE", "display"}, {"SHADOW_RES", "display"},
     {"DLAA", "display"}, {"DLSS", "display"}, {"DLSS_PRESET", "display"}, {"DLSS_CHAR_MASK", "display"}, {"DLAA_OBJMV", "display"},
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
@@ -157,6 +157,8 @@ static const CfgMeta metas[] = {
     {"COLOR_PRESET", "default", "default|vivid|clarity|custom", LIVE}, {"COLOR_BRIGHTNESS", "0", "-30..30", LIVE},
     {"COLOR_CONTRAST", "100", "70..150", LIVE}, {"COLOR_SATURATION", "100", "50..200", LIVE},
     {"COLOR_GAMMA", "1", "0.8..1.2", LIVE},
+    // the white point of the game's tonemap for SDR output (vk_hdr.c, shaders/white_tonemap.frag): 1 = the game's curve
+    {"WHITE_POINT", "1", "1..4", LIVE},
     // HDR output (vk_hdr.c): on at start (the tonemap shader is swapped as shaders load); the nits apply at once
     {"HDR", "0", "0|1", RESTART}, {"HDR_PEAK_NITS", "1000", "400..10000", LIVE}, {"HDR_GAME_NITS", "203", "80..500", LIVE},
     {"HDR_UI_NITS", "203", "80..500", LIVE}, {"HDR_HUE", "80", "0..100", LIVE},

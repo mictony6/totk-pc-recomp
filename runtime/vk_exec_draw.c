@@ -35,8 +35,9 @@
 #define MAX_DESC 1024
 #define CHUNK_BYTES (4u << 20)
 #define ZERO_BYTES 65536u
-#define SUPPORT_BYTES 1456u   // Ryujinx SupportBuffer (std140): alpha_test, is_bgra[8], viewport_inverse, viewport_size, ...;
-                              // 1408 pcss and 1424 shadow_spread (translator patches 0010, 0011), 1440 HDR (support_fill)
+#define SUPPORT_BYTES 1472u   // Ryujinx SupportBuffer (std140): alpha_test, is_bgra[8], viewport_inverse, viewport_size, ...;
+                              // 1408 pcss and 1424 shadow_spread (translator patches 0010, 0011), 1440 HDR and 1456 white
+                              // point (support_fill)
 #define NVN_STAGE_VS 0
 #define NVN_STAGE_FS 1
 #define NVN_STAGE_CS 5
@@ -1878,6 +1879,10 @@ static void support_fill(uint8_t *b, float w, float h, float point_size) {
         float hdr[4];
         vk_hdr_support(hdr);
         memcpy(b + 1440, hdr, 16);
+    } else {   // SDR: the white point tonemap (shaders/white_tonemap.frag)
+        float white[4];
+        vk_white_support(white);
+        memcpy(b + 1456, white, 16);
     }
 }
 

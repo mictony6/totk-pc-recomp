@@ -333,6 +333,12 @@
 # picture, matching the light they cast; 0 keeps them fully saturated. Changes take effect at once.
 # hdr_hue = 80
 
+# White point of the game's tonemap for SDR output (1 to 4). 1 is the game's own curve, which flattens bright values
+# (scene brightness 3 and 6 end up almost the same white); higher spreads them over more of the curve, so sky, sunlit
+# surfaces and fire keep more detail; the picture comes out darker and a little less saturated, mid-tones included. Not used with
+# hdr = 1. Changes take effect at once.
+# white_point = 1
+
 [language]
 # Language: a Windows locale such as de-DE, or a Switch code (en-US, ja, zh-Hant, ...). Default: the Windows locale.
 # locale = en-US
