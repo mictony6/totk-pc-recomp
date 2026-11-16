@@ -996,7 +996,8 @@ static int query_stamp(uint64_t lo, uint64_t hi, uint32_t g) {
 // spawns, and a CPU copy that skipped pending ranges never let them reach the GPU: falling rain showed only its
 // splashes. Each pending range keeps a base, the words guest memory and the shadow last agreed on (the shadow's bytes
 // when the range became pending). The CPU copy takes the words where guest memory differs from the base; the fence
-// copy back takes the words where the shadow differs from it. A word both changed takes the GPU's.
+// copy back takes the words where the shadow differs from it. A word both changed takes the GPU's. TOTK_WB_MERGE=0
+// skips the pending ranges in the CPU copy and copies them back whole, as before.
 // TOTK_SHADOW=1/0 (shadow in totk.ini) forces the mode on or off; the default is on for Linux and Wine.
 typedef struct { uint64_t lo, hi; uint8_t *base; int refs; } SRange;
 static PlatMutex shadow_lock = PLAT_MUTEX_INIT;   // after pool_lock; before gen_lock
@@ -1407,7 +1408,7 @@ void vk_mem_gpu_pending(uint64_t addr, uint64_t size) {
         spend[i].refs++;
     } else {
         uint8_t *base = NULL;
-        if (r && r->smap && lo >= r->import_lo && hi <= r->import_hi && (base = malloc(size))) {
+        if (r && r->smap && lo >= r->import_lo && hi <= r->import_hi && merge_wanted() && (base = malloc(size))) {
             memcpy(base, r->smap + (lo - r->import_lo), size);
             for (int k = 0; k < nspend; k++) {
                 const SRange *p = &spend[k];
@@ -1992,7 +1993,6 @@ static PlatMutex snap_pool_lock = PLAT_MUTEX_INIT;
 static SnapChunk snap_pool[SNAP_POOL_N];
 static int nsnap_pool;
 static uint64_t snap_pool_bytes;
-static int merge_on = -1;
 static struct {
     int tried, ok;
     PFN_vkCmdPushDescriptorSetKHR push;
@@ -2035,11 +2035,7 @@ fail:
 }
 
 static int merging(void) {
-    if (merge_on < 0) {
-        merge_on = cfg_bool("TOTK_WB_MERGE");
-        rt_log("mem: write-back merge %s (TOTK_WB_MERGE)", merge_on ? "on" : "off");
-    }
-    if (!merge_on) return 0;
+    if (!merge_wanted()) return 0;
     if (!WM.tried) merge_init(vk_ctx());
     return WM.ok;
 }
