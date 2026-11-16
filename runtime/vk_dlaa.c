@@ -1235,6 +1235,18 @@ int vk_dlaa_plan(const VkExec *ex, VkExecJob *j) {
         // RG16F and RGBA8 passes right after the lighting, then more geometry and the transparents; DLSS ended the
         // scene at those, the next G-buffer pass disarmed it and the scaling pass found nothing to evaluate.
         if (!ex->pass_w || ex->pass_w * 4 > D.color.width || !c->image || !scene_color(c->format)) return 0;
+        // The pass must also be the bloom chain's own: level 0 of its target, no depth, and the scene's aspect ratio
+        // within 5 %. In rain by a waterfall the game draws transparents into the light target before the bloom chain:
+        // sky lookups (25x25 RGBA16F, no depth) and quarter-size particles (a quarter of the scene's size, with a depth
+        // buffer of their own, or its mip level 1). Each of those passed the width test and ended the scene, so DLSS
+        // ran before the mist and the other transparents and they were drawn over its picture unprocessed, on runs of
+        // frames. Same rule as upstream totk-pc-recomp vk_dlaa.c bloom_start (pull requests 1161 and 1184).
+        {
+            unsigned bo[2], bs[2];
+            res_sizes(bo, bs);
+            uint64_t ba = (uint64_t)ex->pass_w * bs[1], bb = (uint64_t)ex->pass_h * bs[0];
+            if (ex->depth.image || c->level || ba * 20 < bb * 19 || bb * 20 < ba * 19) return 0;
+        }
         D.end_fence = ex->fence, D.end_pos = ex->pos;
         __atomic_store_n(&D.ended, 1, __ATOMIC_RELEASE);
         unsigned o[2], s[2];
