@@ -119,6 +119,9 @@
 # bind_skip = 1
 # shader_memo = 1
 # pipe_memo = 1
+# The replay's per-draw compares and copies run inline (32-byte loads in the caller) instead of calling the C runtime's
+# memcmp and memcpy: 1 inline, 0 the library calls, check runs both and logs any compare they answer differently.
+# memx = 1
 # tex_memo = 1
 # desc_template = 1
 # push_skip = 1
