@@ -52,7 +52,7 @@ static const char *const known[] = {
     "OPERATION_MODE", "OUTPUT_RES", "PAD_LAYOUT", "PASS_CRUMBS", "PATCH_OUTPUT", "PATCH_SCENE", "PCORE", "PCSS", "PCSS_K", "PERF_OVERLAY",
     "PERF_SLOW_MS", "PIPELINE_CACHE", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SKIP", "PIPE_SYNC", "PIPE_WAIT", "PREWARM_XLATE", "PROBE_MOVIE",
     "PROBE_MOVIE_BENCH", "PROBE_MOVIE_SHOT", "PROFILE", "PROFILE_CHAINS", "PROFILE_DIR", "PROFILE_FRAMES", "PROFILE_MAIN", "PROFILE_RENDER",
-    "PROMPTS", "PUSH_SKIP", "PUSH_STAGE", "RDOC", "RDOC_DIR", "RDOC_DLL", "REALTIME", "REC_ASYNC", "REC_END", "REC_SPIN_US", "REEXEC", "REFLEX", "RENDER_SCALE",
+    "PROMPTS", "PUSH_SKIP", "PUSH_STAGE", "RDOC", "RDOC_DIR", "RDOC_DLL", "REALTIME", "REC_ASYNC", "REC_END", "REC_SPIN_US", "REEXEC", "RENDER_SCALE",
     "REPLAY_ASYNC", "REPLAY_CHECK", "REPLAY_CHUNKS", "REPLAY_CHUNK_DRAWS", "REPLAY_SKEW_US", "REPLAY_STATE_CHECK", "REPLAY_WORKERS", "RESOLVE_CHECK",
     "RESTART_WAIT", "ROMFS", "ROMFS_INDEX", "ROMFS_MMAP", "ROMFS_MODS", "ROMFS_PATCHES", "ROMFS_PROOF_DIR", "ROMFS_VERIFY", "RSTICK_DEADZONE",
     "RUMBLE", "RUMBLE_CURVE", "RUMBLE_STRENGTH", "RUMBLE_TRIGGERS", "SAVE_PROFILE", "SHADER_CACHE", "SHADER_MEMO", "SHADOW_BLUR", "SHADOW_DEFER",
@@ -85,7 +85,6 @@ static const struct { const char *key, *section; } sections[] = {
     {"COLOR_GAMMA", "display"}, {"WHITE_POINT", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
     {"HDR_UI_NITS", "display"}, {"HDR_HUE", "display"}, {"SHADOW_RES", "display"},
     {"DLAA", "display"}, {"DLSS", "display"}, {"DLSS_PRESET", "display"}, {"DLSS_CHAR_MASK", "display"}, {"DLAA_OBJMV", "display"},
-    {"REFLEX", "display"},
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
     {"DISCORD_RPC", "discord"}, {"DISCORD_APP_ID", "discord"}, {"DISCORD_IMAGE", "discord"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
@@ -151,7 +150,6 @@ static const CfgMeta metas[] = {
     {"DLSS_PRESET", "default", "default|k|j|e|dll", LIVE},
     {"DLSS_CHAR_MASK", "65", "0|35|65|100", LIVE},   // vk_dlaa.c char_bias
     {"DLAA_OBJMV", "1", "0|1", RESTART},
-    {"REFLEX", "off", "off|on|boost", RESTART},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"MOVIE_ASPECT", "keep", "keep|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"GRASS_DIST", "100", "100..150", LIVE},   // resolution.c res_grass_live
     {"ANISO", "game", "game|2|4|8|16", RESTART},   // vk_texture.c sampler_features
