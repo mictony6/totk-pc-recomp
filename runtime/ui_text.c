@@ -197,10 +197,6 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_RANGE_DESC] = "Moves the steps where shadows turn softer (the game's 20, 40, 80 and 160 m) further "
                                   "away. Spreads the shadow map over more ground: raise Shadow resolution with it. "
                                   "Takes effect at the next start.",
-    [UI_MENU_GRASS_RANGE] = "Grass range",
-    [UI_MENU_GRASS_RANGE_DESC] = "How far around the camera grass grows (the game's: 62.5 m). Higher keeps the "
-                                 "grass in meadows further out instead of growing it in just in front of you; lower "
-                                 "draws less of it. Takes effect at the next start.",
     [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
     [UI_MENU_DLAA_DESC] = "NVIDIA DLSS for the 3D scene (NVIDIA RTX GPUs; " DLSS_FILE " next to " EXE_FILE "): smoother "
                           "edges and less shimmer. The HUD is not touched. The mode below sets the resolution it works "
@@ -753,10 +749,6 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_RANGE_DESC] = "Отодвигает границы, за которыми тени становятся мягче (в игре 20, 40, 80 и 160 м). "
                                   "Карта теней растягивается на большую площадь, поэтому вместе с этим поднимайте "
                                   "разрешение теней. Действует после перезапуска.",
-    [UI_MENU_GRASS_RANGE] = "Дальность травы",
-    [UI_MENU_GRASS_RANGE_DESC] = "Как далеко вокруг камеры растёт трава (в игре 62,5 м). Выше: трава на лугах видна "
-                                 "дальше и не вырастает прямо перед вами; ниже: травы меньше. Действует после "
-                                 "перезапуска.",
     [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
     [UI_MENU_DLAA_DESC] = "NVIDIA DLSS для 3D-сцены (видеокарты NVIDIA RTX; " DLSS_FILE " рядом с " EXE_FILE "): ровнее "
                           "края и меньше мерцания. Интерфейс не затрагивается. Режим ниже задаёт разрешение, с которым он "
@@ -1624,10 +1616,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_RANGE_DESC] = "Afasta os degraus em que as sombras ficam mais suaves (20, 40, 80 e 160 m no "
                                   "jogo). Espalha o mapa de sombras por mais terreno: aumente a Resolução das sombras "
                                   "junto. Vale no próximo início.",
-    [UI_MENU_GRASS_RANGE] = "Alcance da grama",
-    [UI_MENU_GRASS_RANGE_DESC] = "Até onde a grama cresce ao redor da câmera (62,5 m no jogo). Mais alto mantém a "
-                                 "grama dos campos mais longe em vez de ela surgir logo à sua frente; mais baixo "
-                                 "desenha menos grama. Vale no próximo início.",
     [UI_MENU_AA] = "Antisserrilhado",
     [UI_MENU_AA_DESC] = "Suaviza as bordas serrilhadas. Do jogo: o FXAA do jogo (a menos que um mod o desligue). SMAA: "
                         "bordas mais nítidas e limpas que o FXAA, aplicado antes da interface para o texto continuar nítido.",
@@ -2310,8 +2298,6 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_SCALE_DESC] = "将太阳阴影贴图的每条边绘制为游戏 960x960 的若干倍：阴影边缘和树叶阴影更清晰。下次启动时生效。",
     [UI_MENU_SHADOW_RANGE] = "阴影级联范围",
     [UI_MENU_SHADOW_RANGE_DESC] = "把阴影变柔和的分界（游戏中为 20、40、80 和 160 米）推得更远。阴影贴图会覆盖更大的地面，请同时提高阴影分辨率。下次启动时生效。",
-    [UI_MENU_GRASS_RANGE] = "草地范围",
-    [UI_MENU_GRASS_RANGE_DESC] = "镜头周围长草的距离（游戏中为 62.5 米）。调高后草地延伸得更远，不会在你面前才长出来；调低则少画一些草。下次启动时生效。",
     [UI_MENU_AA] = "抗锯齿",
     [UI_MENU_AA_DESC] = "平滑锯齿状边缘。游戏：游戏自带的 FXAA（除非模组将其关闭）。SMAA：边缘比 FXAA 更锐利干净，"
                         "在界面之前处理，文字保持清晰。",
