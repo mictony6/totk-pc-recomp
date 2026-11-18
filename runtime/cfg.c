@@ -44,7 +44,7 @@ static const char *const known[] = {
     "FLUSH_SPAN", "FOV", "FOV_PATCH", "FPS60", "FPS_LIMIT", "FRAME_QUEUE", "FREEZE_IDLE",
     "FREE_CORES", "FULLSCREEN", "FXAA", "GPL", "GPL_DRAW_BUILD", "GPU", "GPU_INDEX", "GPU_NAME", "GRASS_DIST", "GRASS_DIST_PATCH", "HDR",
     "HDR_GAME_NITS", "HDR_HUE", "HDR_PEAK_NITS", "HDR_UI_NITS", "HIGHFPS_FIX", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "KSPIN_US", "LANG",
-    "LIB_PREBUILD", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LIGHT_NORMALS", "LOCALE", "LOD_GUARD", "LSTICK_DEADZONE", "MEMORY", "MEMX",
+    "LIB_PREBUILD", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LIGHT_NORMALS", "LOCALE", "LOD_GUARD", "LOD_STEADY", "LSTICK_DEADZONE", "MEMORY", "MEMX",
     "MEM_RESERVE_MIB", "MENU_CURSOR", "MENU_CURSOR_LOG", "MENU_LANG", "MENU_TEST", "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MIRROR_GAP",
     "MIRROR_LIST", "MIRROR_RANGE", "MODS_DIR", "MODS_DISABLED", "MODS_ORDER", "MODS_REBUILD", "MOTION", "MOUSE_AIM_SCALE", "MOUSE_DIRECT_PATCH",
     "MOUSE_MODE", "MOUSE_SENS", "MOVIE_ASPECT", "MOVIE_HOST", "MOVIE_PACE", "MVOBJ_ALL", "MVOBJ_BANKS", "MVOBJ_EQUAL", "MVOBJ_EXACT", "MVOBJ_EXEC",
@@ -79,7 +79,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"CLIMB_FIX", "frame rate"},
     {"FULLSCREEN", "display"}, {"WINDOW_SIZE", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
     {"GPU_INDEX", "display"}, {"OUTPUT_RES", "display"}, {"RENDER_SCALE", "display"}, {"UPSCALER", "display"},
-    {"SHARPNESS", "display"}, {"DYNAMIC_RES", "display"}, {"ASPECT", "display"}, {"MOVIE_ASPECT", "display"}, {"FOV", "display"}, {"GRASS_DIST", "display"}, {"ANISO", "display"},
+    {"SHARPNESS", "display"}, {"DYNAMIC_RES", "display"}, {"ASPECT", "display"}, {"MOVIE_ASPECT", "display"}, {"FOV", "display"}, {"GRASS_DIST", "display"}, {"LOD_STEADY", "display"}, {"ANISO", "display"},
     {"COLOR_PRESET", "display"},
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
     {"COLOR_GAMMA", "display"}, {"WHITE_POINT", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
@@ -152,6 +152,7 @@ static const CfgMeta metas[] = {
     {"DLAA_OBJMV", "1", "0|1", RESTART},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"MOVIE_ASPECT", "keep", "keep|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"GRASS_DIST", "100", "100..150", LIVE},   // resolution.c res_grass_live
+    {"LOD_STEADY", "0", "0|1", RESTART},   // sets steady
     {"ANISO", "game", "game|2|4|8|16", RESTART},   // vk_texture.c sampler_features
     // colour adjustment (vk_color.c); the preset is the menu's, the four values are what the present uses
     {"COLOR_PRESET", "default", "default|vivid|clarity|custom", LIVE}, {"COLOR_BRIGHTNESS", "0", "-30..30", LIVE},

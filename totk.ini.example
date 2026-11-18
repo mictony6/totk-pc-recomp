@@ -109,6 +109,10 @@
 # Wait for the game to finish rewriting level-of-detail data before the GPU reads it: stops objects flashing in the
 # wrong place and a flat far field for a frame.
 # lod_guard = 1
+# Steady detail under load: 1 skips the game's setup for lowering model and texture detail when the frame rate drops,
+# as the emulator mod "Disable LOD Quality Reduction" does (set steady); 0 (the default) leaves it. Leave it off on weak
+# PCs, where that drop keeps the frame rate up. Game version 1.4.3 here. Read at start.
+# lod_steady = 0
 # Fill the driver-reserved constant bank c0 (storage sizes, dispatch size, point size, base instance) instead of zeros.
 # fix_c0 = 1
 # New GPU memory pools start zero-filled, as Switch memory does.
