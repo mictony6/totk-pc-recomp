@@ -26,10 +26,6 @@
 # cloth_realtime = 1
 # Fix for physics that bounce at high frame rates.
 # highfps_fix = 1
-# Frame overlap (1.4.3): the GPU finishes one frame while the next is prepared, instead of the game waiting for it
-# every frame. More frames per second (about 10 more at 4K output on a laptop RTX 4060, most with DLSS) for one frame
-# more of input delay. Changes apply at once.
-# frame_overlap = 1
 
 [performance]
 # The keys of this section and of [diagnostics] are for testing and troubleshooting, and take effect at the next start.
@@ -59,9 +55,13 @@
 # game waits once for the GPU to finish the frame it presented last; with 1 that wait covers the frame before it
 # instead. On Great Sky Island (Linux, RX 9070 XT) with shadow_defer = 1 this took about 73 to 100 fps. Costs one more
 # frame of input delay, and frame times vary more from frame to frame than with 0. GPU results the game reads back after that wait, for example occlusion queries, every frame after that wait, for example its depth queries, can be a frame old; a result it reads only once is waited for.
-# Works on 1.2.1 and 1.4.3; 1.1.0 ignores it. Needs shadow storage, which is on by default on Linux and Wine and needs
-# the environment variable TOTK_SHADOW=1 on native Windows; without it the setting is ignored and the log says so.
+# Works on 1.2.1 and 1.4.3; 1.1.0 ignores it. Needs shadow storage (shadow below), which is on by default on Linux and
+# Wine and needs shadow = 1 on native Windows; without it the setting is ignored and the log says so.
 # sync_ahead = 0
+# Shadow storage, 0 or 1: each CPU-visible memory pool of the game gets a host-visible copy that the GPU reads, in
+# place of importing the game's memory. Default: on under Linux and Wine, off on native Windows. sync_ahead needs it.
+# Costs about 0.2 ms a frame and doubles the memory of those pools (about 1.1 GB; docs/building.md). Read at start.
+# shadow = 0
 # With sync_ahead = 1: when the game changes memory the GPU still reads, queue the copy into the GPU's shadow of that
 # memory for the GPU to run in order, 0 or 1. Default: on. With 0 the replay thread waits for the GPU to finish
 # reading instead, which costs part of the gain.
