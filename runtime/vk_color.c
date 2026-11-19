@@ -148,11 +148,14 @@ static void barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkPipel
 }
 
 // The scene pass below already adjusted this frame's picture before the HUD was drawn: the present leaves it alone. A
-// frame without that pass (a screen the tonemap draw does not make, a game version whose tonemap is not known) takes
-// the whole picture's adjustment here as before.
+// frame without that pass takes the whole picture's adjustment here as before, except with TOTK_COLOR_HUD = 0 on 1.4.3,
+// where such a frame is a menu, the map or the title screen and stays as the game drew it.
 VkImage vk_color_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, const int crop[4]) {
     if (__atomic_exchange_n(&C.scene_graded, 0, __ATOMIC_ACQ_REL)) return VK_NULL_HANDLE;
     if (!adjusting()) return VK_NULL_HANDLE;
+    // TOTK_COLOR_HUD = 0 where the scene pass knows the game's tonemap (1.4.3): a frame without that draw is a screen of
+    // the game's menus, the map or the title, which have no scene to adjust, so they keep their colours as the HUD does
+    if (!C.hud && rt_game_version == 143) return VK_NULL_HANDLE;
     VkCtx *c = vk_ctx();
     if (!C.tried) init(c);
     if (!C.ok || !ensure_image(c, (uint32_t)crop[2], (uint32_t)crop[3])) return VK_NULL_HANDLE;

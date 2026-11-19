@@ -233,7 +233,7 @@
 # color_saturation = 100
 # color_gamma = 1
 # color_hud = 1: the HUD is adjusted with the picture; 0 adjusts the scene before the HUD is drawn, so the HUD keeps its own
-# colours (SDR only; a screen where the game's tonemap draw is not found is adjusted as a whole). Changes apply at once.
+# colours (SDR only; menus, the map and the title screen, which have no scene, keep their colours too; other game versions adjust the whole picture). Changes apply at once.
 # color_hud = 1
 # Sun shadow map size: game (the game's own, which changes with the view and drops to about 400 near the ground, so
 # leaf shadows look blocky and jump) or a fixed 256, 512, 768, 1024, 1536 or 2048. Above 960 the texture heap grows with
