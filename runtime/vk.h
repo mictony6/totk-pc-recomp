@@ -152,6 +152,8 @@ void vk_fsr_release(void);   // before the device goes away
 // src's crop rectangle {x, y, w, h}, adjusted, into an RGBA16F image of that size in GENERAL and returns it (the caller
 // scales that one instead, crop {0, 0, w, h}); VK_NULL_HANDLE = nothing recorded. src is in GENERAL, fmt its format.
 VkImage vk_color_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, const int crop[4]);
+int vk_color_scene_wanted(void);   // TOTK_COLOR_HUD = 0 with an adjustment set, on an SDR output: vk_aa.c adjusts the scene before the HUD
+int vk_color_scene_record(VkCommandBuffer cb, VkImageView scene, uint32_t w, uint32_t h);   // 1 when recorded
 void vk_color_release(void);   // before the device goes away
 // HDR output (vk_hdr.c). vk_hdr_wanted: TOTK_HDR, read once. vk_hdr_surface_format: the HDR10 surface format when wanted
 // and offered (1). vk_hdr_set_active: gfx_present.c says whether the swapchain is HDR10 (vk_hdr_active). vk_hdr_encode:

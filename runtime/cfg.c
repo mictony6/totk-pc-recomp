@@ -35,7 +35,7 @@ static const char *const known[] = {
     "AA", "AA_LOG", "AB", "AMIIBO_DIR", "ANISO", "AO", "AO_CHAR", "AO_CREASE", "AO_DENOISE", "AO_FOLIAGE", "AO_GRASS", "AO_KEPT", "AO_LIGHT",
     "AO_LOG", "AO_MICRO", "AO_RADIUS", "AO_SLICES", "AO_STEPS", "AO_STRENGTH", "AO_TILT", "AO_TRACE", "APP_POOL", "ASPECT", "ASPECT_PATCH",
     "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_CHANNELS", "AUDIO_OFF", "AUDIO_PREFILL_MS", "BIND_ZL", "BIND_ZR",
-    "BLOCK_VIEWS_3D", "CLIMB_FIX", "CLOTH_REALTIME", "COLOR_BRIGHTNESS", "COLOR_CONTRAST", "COLOR_GAMMA", "COLOR_PRESET",
+    "BLOCK_VIEWS_3D", "CLIMB_FIX", "CLOTH_REALTIME", "COLOR_BRIGHTNESS", "COLOR_CONTRAST", "COLOR_GAMMA", "COLOR_HUD", "COLOR_PRESET",
     "COLOR_SATURATION", "CONSOLE", "CONTACT_DEBUG", "CONTACT_SHADOWS", "CORE_DIAG", "CRIT", "CRIT_OUT", "DESC_TEMPLATE", "DESWIZZLE",
     "DEVICE_PROFILE", "DISCORD_APP_ID", "DISCORD_IMAGE", "DISCORD_RPC", "DLAA", "DLAA_JITTER", "DLAA_MASKDEBUG", "DLAA_MV", "DLAA_MVDEBUG",
     "DLAA_OBJMV", "DLAA_PROJJIT", "DLAA_SURVEY", "DLAA_TIMES", "DLSS", "DLSS_CHAR_MASK", "DLSS_PRESET", "DLSS_REACTIVE", "DRAW_LOG", "DUMP", "DUMP_BUF", "DUMP_DIR",
@@ -82,7 +82,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"SHARPNESS", "display"}, {"DYNAMIC_RES", "display"}, {"ASPECT", "display"}, {"MOVIE_ASPECT", "display"}, {"FOV", "display"}, {"GRASS_DIST", "display"}, {"LOD_STEADY", "display"}, {"ANISO", "display"},
     {"COLOR_PRESET", "display"},
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
-    {"COLOR_GAMMA", "display"}, {"WHITE_POINT", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
+    {"COLOR_GAMMA", "display"}, {"COLOR_HUD", "display"}, {"WHITE_POINT", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
     {"HDR_UI_NITS", "display"}, {"HDR_HUE", "display"}, {"SHADOW_RES", "display"},
     {"DLAA", "display"}, {"DLSS", "display"}, {"DLSS_PRESET", "display"}, {"DLSS_CHAR_MASK", "display"}, {"DLAA_OBJMV", "display"},
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
@@ -157,7 +157,7 @@ static const CfgMeta metas[] = {
     // colour adjustment (vk_color.c); the preset is the menu's, the four values are what the present uses
     {"COLOR_PRESET", "default", "default|vivid|clarity|custom", LIVE}, {"COLOR_BRIGHTNESS", "0", "-30..30", LIVE},
     {"COLOR_CONTRAST", "100", "70..150", LIVE}, {"COLOR_SATURATION", "100", "50..200", LIVE},
-    {"COLOR_GAMMA", "1", "0.8..1.2", LIVE},
+    {"COLOR_GAMMA", "1", "0.8..1.2", LIVE}, {"COLOR_HUD", "1", "0|1", LIVE},
     // the white point of the game's tonemap for SDR output (vk_hdr.c, shaders/white_tonemap.frag): 1 = the game's curve
     {"WHITE_POINT", "1", "1..4", LIVE},
     // HDR output (vk_hdr.c): on at start (the tonemap shader is swapped as shaders load); the nits apply at once

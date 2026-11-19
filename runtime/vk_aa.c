@@ -61,8 +61,8 @@ static struct {
     Img old[8][3];                 // images of earlier sizes; recorded work may still use them, freed at release
     int nold;
     uint32_t w, h;
-    const VkTexImage *scene;       // the tonemapped scene colour waiting for SMAA
-    int pending;
+    const VkTexImage *scene;       // the tonemapped scene colour waiting for SMAA and the colour adjustment
+    int pending, want_smaa, want_grade;
 } A;
 
 static int mode(void) {
@@ -265,35 +265,44 @@ static void run(VkCommandBuffer cb, int p, int nin, const VkImageView *in, const
     mem_barrier(cb);
 }
 
-// The tonemap ran: SMAA on its scene colour, outside any pass.
+// The tonemap ran: SMAA and then the colour adjustment (TOTK_COLOR_HUD = 0, vk_color.c) on its scene colour, outside
+// any pass and before the HUD is drawn.
 void vk_aa_flush(VkExec *ex) {
     if (!A.pending) return;
     A.pending = 0;
-    if (ex->in_pass || !A.ok) return;
+    if (ex->in_pass) return;
     VkCtx *c = vk_ctx();
-    if (!ensure_images(c, A.scene->width, A.scene->height)) return;
+    int smaa = A.want_smaa && A.ok && ensure_images(c, A.scene->width, A.scene->height);
+    if (!smaa && !A.want_grade) return;
     VkImageView scene = vk_exec_target_view(A.scene, VK_FORMAT_B10G11R11_UFLOAT_PACK32, VK_IMAGE_VIEW_TYPE_2D,
                                             VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1, 0);
     if (!scene) return;
     VkCommandBuffer cb = ex->cb;
     int n = 1;
     mem_barrier(cb);   // the tonemap's writes, before SMAA reads them
-    if (!A.uploaded) upload_lookup(cb), A.uploaded = 1, n += 6;
-    if (A.fresh) {
-        barrier(cb, A.copy.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-        barrier(cb, A.edges.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-        barrier(cb, A.weights.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-        A.fresh = 0, n += 3;
+    if (smaa) {
+        if (!A.uploaded) upload_lookup(cb), A.uploaded = 1, n += 6;
+        if (A.fresh) {
+            barrier(cb, A.copy.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+            barrier(cb, A.edges.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+            barrier(cb, A.weights.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+            A.fresh = 0, n += 3;
+        }
+        run(cb, P_PREP, 1, &scene, &A.point, A.copy.view);
+        run(cb, P_EDGES, 1, &A.copy.view, &A.linear, A.edges.view);
+        VkImageView wi[3] = {A.edges.view, A.area.view, A.search.view};
+        VkSampler ws[3] = {A.linear, A.linear, A.point};
+        run(cb, P_WEIGHTS, 3, wi, ws, A.weights.view);
+        VkImageView bi[2] = {A.copy.view_srgb, A.weights.view};
+        VkSampler bs[2] = {A.linear, A.linear};
+        run(cb, P_BLEND, 2, bi, bs, scene);
+        n += 4 * 5;
     }
-    run(cb, P_PREP, 1, &scene, &A.point, A.copy.view);
-    run(cb, P_EDGES, 1, &A.copy.view, &A.linear, A.edges.view);
-    VkImageView wi[3] = {A.edges.view, A.area.view, A.search.view};
-    VkSampler ws[3] = {A.linear, A.linear, A.point};
-    run(cb, P_WEIGHTS, 3, wi, ws, A.weights.view);
-    VkImageView bi[2] = {A.copy.view_srgb, A.weights.view};
-    VkSampler bs[2] = {A.linear, A.linear};
-    run(cb, P_BLEND, 2, bi, bs, scene);
-    ex->recorded += n + 4 * 5;
+    if (A.want_grade && vk_color_scene_record(cb, scene, A.scene->width, A.scene->height)) {
+        mem_barrier(cb);   // the HUD's draws read what the adjustment wrote
+        n += 4;
+    }
+    ex->recorded += n;
     vk_exec_draw_new_cb(ex);   // the game's bound compute pipeline and descriptors were replaced: bind them again
 }
 
@@ -315,22 +324,24 @@ static void log_draw(VkExec *ex) {
 int vk_aa_draw(VkExec *ex) {
     update_mode();
     if (A.log_frame) log_draw(ex);
-    if (A.mode == AA_GAME) return 0;
+    int grade = vk_color_scene_wanted();   // the colour adjustment before the HUD (TOTK_COLOR_HUD = 0)
+    if (A.mode == AA_GAME && !grade) return 0;
     uint32_t len;
     uint64_t h = vk_exec_fs_hash(ex, &len);
     // The FXAA shader also does the scene-to-output scaling pass when the scene is smaller than the output; that pass
     // has no depth attachment and is the only thing that puts the 3D picture on screen (vk_dlaa.c vk_dlaa_skip_draw).
-    if (h == FS_FXAA_COPY || (h == FS_FXAA && ex->depth.image)) {
+    if (A.mode != AA_GAME && (h == FS_FXAA_COPY || (h == FS_FXAA && ex->depth.image))) {
         if (!A.logged_fxaa)
             A.logged_fxaa = 1, rt_log("vk: the game's FXAA pass is skipped (TOTK_AA=%s)", cfg_value("TOTK_AA"));
         return 1;
     }
-    if (h != FS_TONEMAP || A.mode != AA_SMAA || !A.ok) return 0;
+    int smaa = A.mode == AA_SMAA && A.ok;
+    if (h != FS_TONEMAP || !(smaa || grade)) return 0;
     const VkExecTarget *t = &ex->color[0];
     if (ex->pass_ncolor != 1 || !t->img || t->format != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || t->level ||
         t->width < 640 || !(t->img->usage & VK_IMAGE_USAGE_STORAGE_BIT))
         return 0;
-    A.scene = t->img, A.pending = 1;
+    A.scene = t->img, A.pending = 1, A.want_smaa = smaa, A.want_grade = grade;
     return 0;
 }
 

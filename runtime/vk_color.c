@@ -7,6 +7,8 @@
 // One compute pass (shaders/color_grade.comp) reads the crop rectangle of the game's image and writes an RGBA16F image
 // of its size, which present_image then hands to FSR or the blit in place of the game's image. The HUD is part of that
 // picture and is adjusted with it; the in-game menu is drawn later, straight into the swapchain image, and is not.
+// With TOTK_COLOR_HUD = 0 the adjustment runs earlier instead, on the scene colour right after the game's tonemap draw
+// and before the HUD (vk_color_scene_record, called from vk_aa.c), and the present leaves that frame alone.
 // The source view of slot s is destroyed when slot s records again (present_image has waited for that slot's fence);
 // the output image is shared by all slots, and each frame's first barrier orders it after the previous frame's reads.
 #include "vk.h"
@@ -14,6 +16,7 @@
 #include <string.h>
 
 #include "cfg.h"
+#include "color_grade_scene_spv.h"
 #include "color_grade_spv.h"
 #include "host.h"
 
@@ -33,7 +36,14 @@ static struct {
     VkImageView src_view[SLOTS];   // the source view each slot's last frame read
     unsigned seen;                 // cfg_version the values below were read at
     float adj[4];                  // brightness (added), contrast, saturation, gamma
-} C = {.seen = ~0u};
+    int hud;                       // TOTK_COLOR_HUD: 1 grades the HUD with the picture, 0 grades the scene before it
+    // the scene pass (vk_color_scene_record): the adjustment before the HUD
+    int scene_tried, scene_ok;
+    VkDescriptorSetLayout scene_dsl;
+    VkPipelineLayout scene_layout;
+    VkPipeline scene_pipe;
+    int scene_graded;              // the scene of the frame on its way to the present was adjusted already (atomic)
+} C = {.seen = ~0u, .hud = 1};
 
 static int init(VkCtx *c) {
     C.tried = 1;
@@ -120,6 +130,7 @@ static int adjusting(void) {
         C.adj[1] = (float)cfg_double("TOTK_COLOR_CONTRAST") / 100.0f;
         C.adj[2] = (float)cfg_double("TOTK_COLOR_SATURATION") / 100.0f;
         C.adj[3] = (float)cfg_double("TOTK_COLOR_GAMMA");
+        C.hud = cfg_bool("TOTK_COLOR_HUD");
     }
     return C.adj[0] != 0.0f || C.adj[1] != 1.0f || C.adj[2] != 1.0f || C.adj[3] != 1.0f;
 }
@@ -136,7 +147,11 @@ static void barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkPipel
     vkCmdPipelineBarrier2(cb, &d);
 }
 
+// The scene pass below already adjusted this frame's picture before the HUD was drawn: the present leaves it alone. A
+// frame without that pass (a screen the tonemap draw does not make, a game version whose tonemap is not known) takes
+// the whole picture's adjustment here as before.
 VkImage vk_color_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, const int crop[4]) {
+    if (__atomic_exchange_n(&C.scene_graded, 0, __ATOMIC_ACQ_REL)) return VK_NULL_HANDLE;
     if (!adjusting()) return VK_NULL_HANDLE;
     VkCtx *c = vk_ctx();
     if (!C.tried) init(c);
@@ -174,8 +189,71 @@ VkImage vk_color_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat
     return C.img;
 }
 
+// TOTK_COLOR_HUD = 0 on an SDR output with an adjustment set: the scene is adjusted where the game's tonemap wrote it.
+int vk_color_scene_wanted(void) {
+    return adjusting() && !C.hud && !vk_hdr_wanted();
+}
+
+static int init_scene(VkCtx *c) {
+    C.scene_tried = 1;
+    if (!C.tried) init(c);
+    if (!C.ok) return 0;
+    VkDescriptorSetLayoutBinding b = {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 1,
+                                      .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
+    VkDescriptorSetLayoutCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                           .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
+                                           .bindingCount = 1, .pBindings = &b};
+    VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 32};
+    VkPipelineLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
+                                     .pSetLayouts = &C.scene_dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pr};
+    VkShaderModuleCreateInfo mi = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                                   .codeSize = sizeof color_grade_scene_spv, .pCode = color_grade_scene_spv};
+    VkShaderModule m = VK_NULL_HANDLE;
+    if (vkCreateDescriptorSetLayout(c->device, &dci, NULL, &C.scene_dsl) != VK_SUCCESS ||
+        vkCreatePipelineLayout(c->device, &li, NULL, &C.scene_layout) != VK_SUCCESS ||
+        vkCreateShaderModule(c->device, &mi, NULL, &m) != VK_SUCCESS) {
+        rt_log("vk: colour adjustment before the HUD off: its pipeline could not be created");
+        return 0;
+    }
+    VkComputePipelineCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                                      .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = m, .pName = "main"},
+                                      .layout = C.scene_layout};
+    VkResult r = vkCreateComputePipelines(c->device, VK_NULL_HANDLE, 1, &ci, NULL, &C.scene_pipe);
+    vkDestroyShaderModule(c->device, m, NULL);
+    if (r != VK_SUCCESS) {
+        rt_log("vk: colour adjustment before the HUD off: its pipeline could not be created");
+        return 0;
+    }
+    rt_log("vk: colour adjustment before the HUD (TOTK_COLOR_HUD = 0): the HUD keeps its own colours");
+    return C.scene_ok = 1;
+}
+
+// Adjusts the tonemapped scene colour in place, outside any pass; the caller has made the tonemap's writes visible and
+// orders the HUD's draws after this one. Returns 1 when the dispatch was recorded.
+int vk_color_scene_record(VkCommandBuffer cb, VkImageView scene, uint32_t w, uint32_t h) {
+    VkCtx *c = vk_ctx();
+    if (!C.scene_tried) init_scene(c);
+    if (!C.scene_ok) return 0;
+    VkDescriptorImageInfo oi = {VK_NULL_HANDLE, scene, VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet wr = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = 0, .descriptorCount = 1,
+                               .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .pImageInfo = &oi};
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, C.scene_pipe);
+    rec_push(C.push, cb, VK_PIPELINE_BIND_POINT_COMPUTE, C.scene_layout, 0, 1, &wr);
+    struct { int32_t size[2], pad[2]; float adj[4]; } pc = {{(int32_t)w, (int32_t)h}, {0, 0}, {C.adj[0], C.adj[1], C.adj[2], C.adj[3]}};   // adj sits at 16 as a vec4
+    vkCmdPushConstants(cb, C.scene_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
+    vkCmdDispatch(cb, (w + 7) / 8, (h + 7) / 8, 1);
+    __atomic_store_n(&C.scene_graded, 1, __ATOMIC_RELEASE);
+    return 1;
+}
+
 void vk_color_release(void) {
     VkCtx *c = vk_ctx();
+    if (C.scene_pipe) vkDestroyPipeline(c->device, C.scene_pipe, NULL);
+    if (C.scene_layout) vkDestroyPipelineLayout(c->device, C.scene_layout, NULL);
+    if (C.scene_dsl) vkDestroyDescriptorSetLayout(c->device, C.scene_dsl, NULL);
+    C.scene_pipe = VK_NULL_HANDLE, C.scene_layout = VK_NULL_HANDLE, C.scene_dsl = VK_NULL_HANDLE;
+    C.scene_tried = C.scene_ok = 0;
     for (int i = 0; i < SLOTS; i++)
         if (C.src_view[i]) vkDestroyImageView(c->device, C.src_view[i], NULL), C.src_view[i] = VK_NULL_HANDLE;
     free_image(c);

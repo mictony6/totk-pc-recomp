@@ -1,0 +1,25 @@
+#version 450
+// Colour adjustment on the scene before the HUD (runtime/vk_color.c vk_color_scene_record): the game's tonemapped
+// scene colour (B10G11R11, one pass writes it, the HUD is drawn over it afterwards) adjusted in place, with the maths of
+// color_grade.comp, so the HUD keeps its own colours (TOTK_COLOR_HUD = 0). The scene is linear light here and the
+// present-time adjustment works on the encoded picture, so the values go through the sRGB curve and back.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0, r11f_g11f_b10f) uniform image2D img;
+layout(push_constant) uniform P {
+    ivec2 size;     // the scene's size
+    vec4 adj;       // brightness (added), contrast, saturation, gamma (exponent)
+} pc;
+
+vec3 enc(vec3 x) { return mix(x * 12.92, 1.055 * pow(x, vec3(1.0 / 2.4)) - 0.055, greaterThan(x, vec3(0.0031308))); }
+vec3 dec(vec3 x) { return mix(x / 12.92, pow((x + 0.055) / 1.055, vec3(2.4)), greaterThan(x, vec3(0.04045))); }
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    vec3 c = enc(clamp(imageLoad(img, p).rgb, 0.0, 1.0));
+    c += pc.adj.x;
+    c = (c - 0.5) * pc.adj.y + 0.5;
+    c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, pc.adj.z);
+    c = pow(max(c, vec3(0.0)), vec3(pc.adj.w));
+    imageStore(img, p, vec4(dec(clamp(c, 0.0, 1.0)), 1.0));
+}
