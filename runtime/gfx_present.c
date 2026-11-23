@@ -807,6 +807,7 @@ void gfx_window_release_vk(void) {
         vk_gtao_release();
         vk_lightnorm_release();
         vk_underwater_release();
+        vk_lightfull_release();
         vk_lightao_release();
         vk_shadowblur_release();
         free_capture();

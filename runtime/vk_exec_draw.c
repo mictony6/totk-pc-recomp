@@ -111,7 +111,7 @@ typedef struct {
     uint64_t vgen;
     int vb_valid;
     uint8_t support[SUPPORT_BYTES];      // last support buffer and where it lives
-    float sup_in[4];                     // the support_fill arguments it was filled from
+    float sup_in[5];                     // the support_fill arguments it was filled from
     VkBuffer sup_buf;
     VkDeviceSize sup_off;
     int sup_valid;
@@ -1752,7 +1752,9 @@ static Twin *twin_update(VkExec *ex, const VkTexImage *img) {
 // for its depth twin; the game's AO mask, while GTAO replaces it, for GTAO's (vk_gtao.c); the game's half-size light
 // normals, while averaged ones replace them, for those (vk_lightnorm.c, which also learns here what its candidate draw
 // samples); in a full-size pass, the game's half-size scene behind water, while ours replaces it, for ours
-// (vk_underwater.c, which also learns here which image that is); in a pass larger than it, the game's occlusion
+// (vk_underwater.c, which also learns here which image that is); in a pass larger than it, the game's half-size point
+// light image, while the full-size one replaces it, for that, and in the point lights' passes drawn at full size their
+// half-size depth and normals, for the G-buffer's (vk_lightfull.c); in a pass larger than it, the game's occlusion
 // image, while ours with the point lights' lift replaces it (vk_lightao.c); in a pass larger than it, the scene's light
 // target, once DLSS scaled it this frame, for DLSS's output (vk_dlaa.c); the game's blurred shadow mask, while the
 // depth-aware one replaces it, for that (vk_shadowblur.c).
@@ -1762,6 +1764,7 @@ static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage,
     tex_info_lookup(ex, r, h, storage, separate, out, locked);
     if (h && !storage &&
         (vk_gtao_swap_img || vk_lightnorm_swap_img || vk_lightnorm_watch || vk_underwater_swap_img || vk_underwater_watch ||
+         vk_lightfull_swap_img || ex->pass_lightfull ||
          vk_lightao_swap_img || vk_dlaa_swap_img || vk_shadowblur_swap_img || vk_shadowblur_watch)) {
         tex_lock(locked);
         const VkTexImage *img = vk_texture_by_id_locked((int)(h & 0xfffff), NULL, NULL);
@@ -1771,6 +1774,12 @@ static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage,
             out->imageView = vk_lightnorm_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         else if (img && img == vk_underwater_swap_img && ex->in_pass && ex->pass_w > img->width + 1)
             out->imageView = vk_underwater_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        else if (img && img == vk_lightfull_swap_img && ex->in_pass && ex->pass_w > img->width + 1)
+            out->imageView = vk_lightfull_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        else if (img && ex->pass_lightfull && ex->in_pass) {
+            VkImageView v = vk_lightfull_sampled(ex, img);
+            if (v) out->imageView = v, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        }
         else if (img && img == vk_lightao_swap_img && ex->in_pass && ex->pass_w > img->width + 1)
             out->imageView = vk_lightao_swap_view, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         else if (img && img == vk_dlaa_swap_img && ex->in_pass && ex->pass_w > img->width + 1)
@@ -1855,13 +1864,15 @@ static const float *pcss_params(void) {
     return p;
 }
 
-// what support_fill reads: viewport size, point size, the PCSS factor (pcss_params, live)
-static void support_in(const VkExec *ex, float in[4]) {
+// what support_fill reads: viewport size, point size, the PCSS factor (pcss_params, live), the render scale of the
+// fragment stage (2 in the point lights' passes vk_lightfull.c draws at full size, else 1)
+static void support_in(const VkExec *ex, float in[5]) {
     float k = ex->pass_scale > 1 ? (float)ex->pass_scale : 1.0f;
     in[0] = ex->in_pass && ex->has_vp ? ex->vp[0][2] * k : (float)ex->pass_w;
     in[1] = ex->in_pass && ex->has_vp ? ex->vp[0][3] * k : (float)ex->pass_h;
     in[2] = ex->point_size > 0 ? ex->point_size : 1.0f;
     in[3] = pcss_params()[0];
+    in[4] = ex->in_pass && ex->pass_lightfull ? 2.0f : 1.0f;
 }
 
 // The shadow_spread field of the support buffer: the factor translator patch 0011 applies to the lighting shaders' sun
@@ -1880,7 +1891,10 @@ static const float *shadow_spread_params(void) {
     return p;
 }
 
-static void support_fill(uint8_t *b, float w, float h, float point_size) {
+// frag_scale: the translator's render scale 0, by which fragment shaders divide gl_FragCoord: a pass drawn at twice the
+// game's size reads its textures at the game's coordinates (vk_lightfull.c gives it full-size textures in place of the
+// half-size ones, so the same coordinates land on full-size texels).
+static void support_fill(uint8_t *b, float w, float h, float point_size, float frag_scale) {
     memset(b, 0, SUPPORT_BYTES);
     float inv[4] = {w > 0 ? 2.0f / w : 0, h > 0 ? 2.0f / h : 0, 0, 0}, size[4] = {w, h, 0, 0};
     memcpy(b + 144, inv, 16);
@@ -1890,6 +1904,7 @@ static void support_fill(uint8_t *b, float w, float h, float point_size) {
     memcpy(b + 1408, pcss_params(), 16);   // pcss (translator patch 0010): soft sun shadows in the cascade compares
     memcpy(b + 1424, shadow_spread_params(), 16);    // shadow_spread (translator patch 0011): sun shadow filter width
     for (int i = 0; i < 73; i++) memcpy(b + 192 + 16 * i, &one, 4);   // render scale 1: the host renders at guest size
+    memcpy(b + 192, &frag_scale, 4);
     if (vk_hdr_wanted()) {   // read by the HDR tonemap only (shaders/hdr_tonemap.frag), which declares it past the translator's
         float hdr[4];
         vk_hdr_support(hdr);
@@ -2081,12 +2096,14 @@ static int bind_sig(const VkExec *ex, const VkPipeInfo *info) {
     PUT(vk_mem_gen() + vk_usnap_gen() + ex->drop_n);   // all only grow in a submission; drop_n: copies a chunk passed
     for (int i = 0; i < ex->nfbl && i < 9; i++) PUT((uintptr_t)ex->fbl_img[i]);
     if (l->sup) {
-        float in[4];
+        float in[5];
         support_in(ex, in);
         uint64_t a, ps;
-        memcpy(&a, in, 8), memcpy(&ps, &in[2], 8);
+        uint32_t fs;
+        memcpy(&a, in, 8), memcpy(&ps, &in[2], 8), memcpy(&fs, &in[4], 4);
         PUT(a);
         PUT(ps);
+        PUT(fs);
     }
     if (l->c0) PUT(D->c0_binst);
     for (int i = 0; i < l->np; i++) PUT(ubo_ptr(ex, l->p[i].st, l->p[i].res));
@@ -2192,11 +2209,11 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
         VkDescSlot *o = &d[nd];
         int st = nvn_stage_of(b->stage), kind = 0;   // kind: 0 buffer, 1 image, 2 texel buffer view
         if (b->kind == VK_PIPE_SUPPORT) {
-            float in[4];
+            float in[5];
             support_in(ex, in);
             if (!D->B.sup_valid || MX_NE(in, D->B.sup_in, sizeof in)) {   // support_fill reads only these
                 uint8_t tmp[SUPPORT_BYTES];
-                support_fill(tmp, in[0], in[1], in[2]);
+                support_fill(tmp, in[0], in[1], in[2], in[4]);
                 MX_CPY(D->B.sup_in, in, sizeof in);
                 if (!D->B.sup_valid || MX_NE(tmp, D->B.support, SUPPORT_BYTES)) {   // a new buffer only when the contents changed
                     VkBuffer sb;
@@ -2831,7 +2848,7 @@ static struct {
     uint32_t ndesc, cdesc;
     NVNbufferRange vin[17];      // the vertex ranges MQ.vb[nvb - 1] was resolved from, under vk_mem_gen vgen
     uint64_t vgen;
-    float sup_in[4];             // the support buffer last filled for the list and its inputs
+    float sup_in[5];             // the support buffer last filled for the list and its inputs
     VkDescriptorBufferInfo sup;
     float par_in[4];             // the fragment shader's parameters last written and their inputs
     VkDescriptorBufferInfo par;
@@ -2931,12 +2948,12 @@ static int mo_desc(VkExec *ex, const VkPipeInfo *info, MoDraw *q) {
         VkDescSlot *o = &d[nd];
         int st = nvn_stage_of(b->stage);
         if (b->kind == VK_PIPE_SUPPORT) {
-            float in[4];
+            float in[5];
             support_in(ex, in);
             if (!MQ.sup.buffer || memcmp(in, MQ.sup_in, sizeof in)) {
                 VkBuffer sb;
                 VkDeviceSize so;
-                support_fill(scratch(ex, SUPPORT_BYTES, &sb, &so), in[0], in[1], in[2]);
+                support_fill(scratch(ex, SUPPORT_BYTES, &sb, &so), in[0], in[1], in[2], in[4]);
                 MQ.sup = (VkDescriptorBufferInfo){sb, so, SUPPORT_BYTES};
                 memcpy(MQ.sup_in, in, sizeof in);
             }

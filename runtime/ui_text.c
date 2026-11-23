@@ -194,6 +194,12 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_UNDERWATER_DESC] = "What shallow water and floating things show through the surface is drawn at half "
                                 "resolution. Smooth scales it up to full resolution with one extra pass; Game keeps "
                                 "the game's look.",
+    [UI_MENU_LIGHT_FULL] = "Point light resolution",
+    [UI_MENU_LIGHT_FULL_DESC] = "The game draws point lights such as lightroots and Brightblooms at half resolution, "
+                                "so near the ground they shimmer while the view moves. Full draws them at full "
+                                "resolution, keeping the detail of what they light; Game keeps the game's look. "
+                                "Applies at once.",
+    [UI_MENU_LIGHT_FULL_FULL] = "Full",
     [UI_MENU_CONTACT_SHADOWS] = "Contact shadows",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Small sun shadows the shadow maps miss: at feet, under stones, in grass and creases. "
                                      "Traced on the screen after lighting. Takes effect at the next start.",
@@ -750,6 +756,12 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_UNDERWATER_DESC] = "То, что видно сквозь мелкую воду, игра рисует в половинном разрешении. Сглаженно: "
                                 "увеличение до полного разрешения одним дополнительным проходом; как в игре: без "
                                 "изменений.",
+    [UI_MENU_LIGHT_FULL] = "Разрешение точечного света",
+    [UI_MENU_LIGHT_FULL_DESC] = "Игра рисует точечные источники, например светокорни и светоцветы, в половинном "
+                                "разрешении, поэтому у земли они мерцают при движении камеры. Полное: рисовать их в "
+                                "полном разрешении, сохраняя детали освещённых поверхностей; Как в игре — без "
+                                "изменений. Применяется сразу.",
+    [UI_MENU_LIGHT_FULL_FULL] = "Полное",
     [UI_MENU_CONTACT_SHADOWS] = "Контактные тени",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Мелкие тени от солнца, которых нет на картах теней: у ног, под камнями, в траве и "
                                      "складках. Считаются по экрану после освещения. Действует после перезапуска.",
@@ -1669,6 +1681,12 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_UNDERWATER] = "Água rasa",
     [UI_MENU_UNDERWATER_DESC] = "O que se vê através da água rasa é desenhado na metade da resolução. Suave amplia "
                                 "para a resolução completa com uma passagem extra; Do jogo mantém o visual do jogo.",
+    [UI_MENU_LIGHT_FULL] = "Resolução das luzes pontuais",
+    [UI_MENU_LIGHT_FULL_DESC] = "O jogo desenha luzes pontuais como raízes de luz e Brightblooms na metade da "
+                                "resolução, então perto do chão elas tremulam com a câmera em movimento. Completa as "
+                                "desenha na resolução completa, mantendo os detalhes do que iluminam; Do jogo mantém o "
+                                "visual do jogo. Aplica-se na hora.",
+    [UI_MENU_LIGHT_FULL_FULL] = "Completa",
     [UI_MENU_CONTACT_SHADOWS] = "Sombras de contato",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "Pequenas sombras do sol que os mapas de sombra não pegam: nos pés, sob pedras, "
                                      "na grama e em dobras. Traçadas na tela depois da iluminação. Vale no próximo "
@@ -2350,6 +2368,10 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_BLUR_DEPTH] = "深度感知",
     [UI_MENU_UNDERWATER] = "浅水",
     [UI_MENU_UNDERWATER_DESC] = "透过浅水看到的景物以一半分辨率绘制。平滑以一次额外的渲染放大到全分辨率；游戏保持游戏原样。",
+    [UI_MENU_LIGHT_FULL] = "点光源分辨率",
+    [UI_MENU_LIGHT_FULL_DESC] = "游戏以一半分辨率绘制光根、亮光花等点光源，因此靠近地面时镜头移动会闪烁。"
+                                "完整以全分辨率绘制，保留被照亮表面的细节；游戏保持游戏原样。立即生效。",
+    [UI_MENU_LIGHT_FULL_FULL] = "完整",
     [UI_MENU_CONTACT_SHADOWS] = "接触阴影",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "阴影贴图遗漏的细小太阳阴影：脚下、石头下、草丛和褶皱中。在光照之后于屏幕空间追踪。下次启动时生效。",
     [UI_MENU_PCSS] = "柔和阴影",

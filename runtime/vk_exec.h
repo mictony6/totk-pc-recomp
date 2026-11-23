@@ -90,6 +90,8 @@ typedef struct VkExec {
     uint32_t pass_w, pass_h, pass_layers;            // render area and layer count of the open (or next) pass
     uint32_t pass_scale;                             // its targets' VkTexImage.scale: game viewports and scissors
                                                      // are multiplied by it
+    int pass_lightfull;                               // vk_lightfull.c drew this pass's targets at twice the game's
+                                                      // size: 1 its depth pass, 2 its light pass; 0 any other pass
     int pass_noatt;                                   // the pass has no attachment: its size follows the draws (vk_exec_noatt_dims)
     VkFormat pass_color[8], pass_depth, pass_stencil; // attachment formats of the pass (VkPipelineRenderingCreateInfo);
                                                       // VK_FORMAT_UNDEFINED: none
@@ -333,6 +335,17 @@ extern VkImageView vk_shadowblur_swap_view;
 extern uint32_t vk_shadowblur_swap_hits;
 extern const VkTexImage *vk_underwater_swap_img;
 extern VkImageView vk_underwater_swap_view;
+// vk_lightfull.c: the point lights drawn at full size. vk_lightfull_retarget (resolve of a pass's targets) puts its
+// own full-size images in place of the light pass's and its depth pass's and sets ex->pass_lightfull; in those passes
+// tex_info gives the half-size depth and normals the G-buffer's (vk_lightfull_sampled); while vk_lightfull_swap_img is
+// set, draws in full-size passes sample vk_lightfull_swap_view in its place.
+int vk_lightfull_retarget(VkExec *ex);
+void vk_lightfull_pass_begin(VkExec *ex);
+void vk_lightfull_pass_end(VkExec *ex);
+void vk_lightfull_present(uint64_t frame);
+VkImageView vk_lightfull_sampled(const VkExec *ex, const VkTexImage *img);
+extern const VkTexImage *vk_lightfull_swap_img;
+extern VkImageView vk_lightfull_swap_view;
 // vk_dlaa.c: once DLSS has scaled the scene this frame, passes larger than the scene's light target vk_dlaa_swap_img
 // sample DLSS's output vk_dlaa_swap_view in its place, so the game's scaling draw scales DLSS's picture.
 extern const VkTexImage *vk_dlaa_swap_img;

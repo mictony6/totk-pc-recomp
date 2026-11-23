@@ -44,7 +44,7 @@ static const char *const known[] = {
     "FLUSH_SPAN", "FOV", "FOV_PATCH", "FPS60", "FPS_LIMIT", "FRAME_QUEUE", "FREEZE_IDLE",
     "FREE_CORES", "FULLSCREEN", "FXAA", "GPL", "GPL_DRAW_BUILD", "GPU", "GPU_INDEX", "GPU_NAME", "GRASS_DIST", "GRASS_DIST_PATCH", "HDR",
     "HDR_GAME_NITS", "HDR_HUE", "HDR_PEAK_NITS", "HDR_UI_NITS", "HIGHFPS_FIX", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "KSPIN_US", "LANG",
-    "LIB_PREBUILD", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LIGHT_NORMALS", "LOCALE", "LOD_GUARD", "LOD_STEADY", "LSTICK_DEADZONE", "MEMORY", "MEMX",
+    "LIB_PREBUILD", "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LIGHT_FULL", "LIGHT_NORMALS", "LOCALE", "LOD_GUARD", "LOD_STEADY", "LSTICK_DEADZONE", "MEMORY", "MEMX",
     "MEM_RESERVE_MIB", "MENU_CURSOR", "MENU_CURSOR_LOG", "MENU_LANG", "MENU_TEST", "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MIRROR_GAP",
     "MIRROR_LIST", "MIRROR_RANGE", "MODS_DIR", "MODS_DISABLED", "MODS_ORDER", "MODS_REBUILD", "MOTION", "MOUSE_AIM_SCALE", "MOUSE_DIRECT_PATCH",
     "MOUSE_MODE", "MOUSE_SENS", "MOVIE_ASPECT", "MOVIE_HOST", "MOVIE_PACE", "MVOBJ_ALL", "MVOBJ_BANKS", "MVOBJ_EQUAL", "MVOBJ_EXACT", "MVOBJ_EXEC",
@@ -93,6 +93,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"EFFECTS_UPSAMPLE", "display"},
     {"SHADOW_BLUR", "display"},
     {"UNDERWATER_UPSAMPLE", "display"},
+    {"LIGHT_FULL", "display"},
     {"MODS_DIR", "mods"}, {"MODS_ORDER", "mods"}, {"MODS_DISABLED", "mods"}, {"MODS_REBUILD", "mods"},
     {"TEX_HEAP_EXTRA_MB", "mods"},
     {"MENU_LANG", "language"}, {"LANG", "language"}, {"OPERATION_MODE", "language"},
@@ -144,6 +145,8 @@ static const CfgMeta metas[] = {
     {"EFFECTS_UPSAMPLE", "game", "game|smooth", RESTART},
     // the half-size scene behind water and ice (vk_underwater.c), upsampled when the game writes it; applies at once
     {"UNDERWATER_UPSAMPLE", "game", "game|smooth", LIVE},
+    // the point lights drawn at full resolution (vk_lightfull.c); applies at once
+    {"LIGHT_FULL", "game", "game|full", LIVE},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
     {"DLAA", "0", "0|1", LIVE},   // vk_dlaa.c vk_dlaa_frame
     {"DLSS", "dlaa", "dlaa|quality|balanced|performance|ultra_performance", LIVE},

@@ -592,6 +592,12 @@ static void row_underwater(void) {   // vk_underwater.c; Game and Smooth as for 
     opt_choice_list("TOTK_UNDERWATER_UPSAMPLE", UI_MENU_UNDERWATER, vals, names, 2, UI_MENU_UNDERWATER_DESC);
 }
 
+static void row_light_full(void) {   // vk_lightfull.c
+    static const char *const vals[] = {"game", "full"};
+    const char *names[] = {menu_text(UI_MENU_LIGHT_NORMALS_GAME), menu_text(UI_MENU_LIGHT_FULL_FULL)};
+    opt_choice_list("TOTK_LIGHT_FULL", UI_MENU_LIGHT_FULL, vals, names, 2, UI_MENU_LIGHT_FULL_DESC);
+}
+
 static void row_shadow_blur(void) {   // vk_shadowblur.c
     static const char *const vals[] = {"game", "depth"};
     const char *names[] = {menu_text(UI_MENU_LIGHT_NORMALS_GAME), menu_text(UI_MENU_SHADOW_BLUR_DEPTH)};
@@ -737,6 +743,7 @@ static void tab_screen(float scale) {
     opt_slider("TOTK_CONTACT_SHADOWS", UI_MENU_CONTACT_SHADOWS, 0, 100, UI_MENU_CONTACT_SHADOWS_DESC, 10, "%.0f %%");
     row_ao();
     row_light_normals();
+    row_light_full();
     row_underwater();
     row_shadow_blur();
     opt_toggle("TOTK_DLAA", UI_MENU_DLAA, UI_MENU_DLAA_DESC);

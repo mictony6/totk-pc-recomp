@@ -301,6 +301,12 @@
 # at once.
 # underwater_upsample = game
 
+# Point lights (lightroots, the Brightbloom's light, glowing items): the game draws them at half resolution, and a
+# light near the ground turns its bumps into streaks finer than that, which shimmer while the view moves. full draws
+# them at full resolution, from the full-resolution depth and surface normals, so the lit ground keeps its detail
+# without the shimmer (the point lights cost about four times as much). Changes apply at once.
+# light_full = game
+
 # The game blurs its shadows without looking at depth, which leaves a light strip on shadowed ground beside
 # anything in front of it. depth stops the blur at those edges (two small extra passes); game keeps the original look.
 # Changes apply at once.

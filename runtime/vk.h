@@ -178,6 +178,7 @@ int vk_contact_strength(void);   // percent, 0 = off
 void vk_aa_release(void);        // before the device goes away
 void vk_gtao_release(void);      // before the device goes away
 void vk_underwater_release(void); // before the device goes away
+void vk_lightfull_release(void);   // before the device goes away
 void vk_lightnorm_release(void);  // before the device goes away
 void vk_lightao_release(void);    // before the device goes away
 void vk_shadowblur_release(void); // before the device goes away
