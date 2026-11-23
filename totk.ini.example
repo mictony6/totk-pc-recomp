@@ -254,7 +254,7 @@
 # contact_shadows = 0
 # Soft sun shadows (PCSS), percent of the default penumbra width (0 to 200; 0 = the game's own four-tap filter): sharp
 # where an object meets the ground and softer the further its shadow falls. Done in the translated shaders (translator
-# patch 0010), so the shader cache is rebuilt once after an update. Read at start.
+# patch 0010), so the shader cache is rebuilt once after an update. Changes apply at once.
 # pcss = 0
 # Ambient occlusion (1.4.3): game (its SSAO, a quarter of the screen per axis, mostly thin outlines along edges) or
 # gtao: ground-truth AO (Intel's XeGTAO) at half the screen resolution from the full-resolution depth, which the

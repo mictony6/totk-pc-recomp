@@ -151,7 +151,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                   "sharper shadow edges and leaf shadows. Takes effect at the next start.",
     [UI_MENU_PCSS] = "Soft shadows",
     [UI_MENU_PCSS_DESC] = "Sun shadows sharp where an object meets the ground and softer the further the shadow falls "
-                          "(PCSS). 0 keeps the game's filter. Takes effect at the next start.",
+                          "(PCSS). 0 keeps the game's filter.",
     [UI_MENU_AO] = "Ambient occlusion",
     [UI_MENU_AO_DESC] = "Darkens corners, creases and the ground under objects. Game: the game's SSAO, mostly thin "
                         "outlines. GTAO: ground-truth AO over a wider radius; characters keep the game's.",
@@ -713,7 +713,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                   "самой игры: края теней и тени листвы чётче. Действует после перезапуска.",
     [UI_MENU_PCSS] = "Мягкие тени",
     [UI_MENU_PCSS_DESC] = "Тени от солнца резкие там, где предмет касается земли, и мягче, чем дальше падает тень "
-                          "(PCSS). 0 оставляет фильтр игры. Действует после перезапуска.",
+                          "(PCSS). 0 оставляет фильтр игры.",
     [UI_MENU_AO] = "Фоновое затенение",
     [UI_MENU_AO_DESC] = "Затемняет углы, складки и землю под предметами. Как в игре: SSAO игры, в основном тонкие "
                         "контуры. GTAO: точное затенение в большем радиусе; персонажи остаются как в игре.",
@@ -1675,7 +1675,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                      "início.",
     [UI_MENU_PCSS] = "Sombras suaves",
     [UI_MENU_PCSS_DESC] = "Sombras do sol nítidas onde um objeto toca o chão e mais suaves quanto mais longe a sombra "
-                          "cai (PCSS). 0 mantém o filtro do jogo. Vale no próximo início.",
+                          "cai (PCSS). 0 mantém o filtro do jogo.",
     [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
     [UI_MENU_DLAA_DESC] = "NVIDIA DLSS para a cena 3D (placas NVIDIA RTX; nvngx_dlss.dll ao lado do totk.exe): bordas "
                           "mais suaves e menos cintilação. O HUD não é afetado. O modo abaixo define a resolução de "
@@ -2353,7 +2353,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_CONTACT_SHADOWS] = "接触阴影",
     [UI_MENU_CONTACT_SHADOWS_DESC] = "阴影贴图遗漏的细小太阳阴影：脚下、石头下、草丛和褶皱中。在光照之后于屏幕空间追踪。下次启动时生效。",
     [UI_MENU_PCSS] = "柔和阴影",
-    [UI_MENU_PCSS_DESC] = "物体接触地面处的太阳阴影锐利，阴影投得越远越柔和（PCSS）。0 保留游戏自身的过滤。下次启动时生效。",
+    [UI_MENU_PCSS_DESC] = "物体接触地面处的太阳阴影锐利，阴影投得越远越柔和（PCSS）。0 保留游戏自身的过滤。",
     [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
     [UI_MENU_DLAA_DESC] = "用于 3D 场景的 NVIDIA DLSS（NVIDIA RTX 显卡；nvngx_dlss.dll 放在 totk.exe 旁）：边缘更平滑，闪烁更少。HUD "
                           "不受影响。下方的模式决定它的工作分辨率。",

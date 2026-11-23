@@ -596,6 +596,7 @@ static GfxShader *disk_load_from(const uint8_t key[32], const uint8_t *iid, int 
     if (s->stage == GFX_STAGE_FS) {   // the in-memory copy; the cache keeps its own
         vk_hdr_shader_swap(&s->spirv, &s->words);
         vk_upsample_shader_swap(&s->spirv, &s->words);
+        vk_pcss_shader_turn(&s->spirv, &s->words);
     }
     return s;
 }

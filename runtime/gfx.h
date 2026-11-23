@@ -83,6 +83,7 @@ const GfxShader *gfx_shader_own(const uint32_t *spirv, uint64_t words, const cha
 // vk_hdr.c: with TOTK_HDR=1, replaces a fragment shader's SPIR-V (malloc'd, *words long) by the HDR tonemap when it is
 // the game's tonemap; gfx_shader.c calls it for every fragment shader entering the cache.
 void vk_hdr_shader_swap(uint32_t **spirv, uint64_t *words);
+void vk_pcss_shader_turn(uint32_t **spirv, uint64_t *words);   // vk_pcss.c: patch 0010's disc turned per pixel
 // vk_upsample.c: with TOTK_EFFECTS_UPSAMPLE=smooth, replaces the game's composite of its half-resolution effects by
 // shaders/effects_upsample.frag; gfx_shader.c calls it for every fragment shader entering the cache.
 void vk_upsample_shader_swap(uint32_t **spirv, uint64_t *words);

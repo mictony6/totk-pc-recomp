@@ -111,7 +111,7 @@ typedef struct {
     uint64_t vgen;
     int vb_valid;
     uint8_t support[SUPPORT_BYTES];      // last support buffer and where it lives
-    float sup_in[3];                     // the support_fill arguments it was filled from
+    float sup_in[4];                     // the support_fill arguments it was filled from
     VkBuffer sup_buf;
     VkDeviceSize sup_off;
     int sup_valid;
@@ -1825,30 +1825,43 @@ static VkDescriptorSet alloc_set(VkExec *ex, VkDescriptorSetLayout layout) {
     return VK_NULL_HANDLE;
 }
 
-static void support_in(const VkExec *ex, float in[3]) {   // what support_fill reads: viewport size, point size
-    float k = ex->pass_scale > 1 ? (float)ex->pass_scale : 1.0f;
-    in[0] = ex->in_pass && ex->has_vp ? ex->vp[0][2] * k : (float)ex->pass_w;
-    in[1] = ex->in_pass && ex->has_vp ? ex->vp[0][3] * k : (float)ex->pass_h;
-    in[2] = ex->point_size > 0 ? ex->point_size : 1.0f;
-}
-
-// TOTK_PCSS (percent, 0 = off): the pcss field of the support buffer, which translator patch 0010 reads in every
+// TOTK_PCSS (percent, 0 = off, live): the pcss field of the support buffer, which translator patch 0010 reads in every
 // explicit-LOD compare on a 2D array texture (the sun cascades). x: penumbra width in UV per unit of light-space depth
 // between receiver and blocker (0 keeps the game's single compare), y and z: the narrowest and widest disc radius,
-// w: the blocker search radius, all in UV of the cascade map. Radii are in UV, so they hold at any TOTK_SHADOW_SCALE.
-// TOTK_PCSS_K overrides the depth-to-penumbra factor at 100 percent, for tuning.
+// w: the blocker search radius, all in UV of the cascade map, so they hold at any TOTK_SHADOW_SCALE.
+// TOTK_PCSS_K overrides the depth-to-penumbra factor at 100 percent, for tuning. Read again whenever the settings change
+// (cfg_version): support_in passes x on, so a new value refills the support buffer at the next draw.
 static const float *pcss_params(void) {
-    static float p[4] = {-1, 0, 0, 0};
-    if (p[0] < 0) {
+    static float p[4];
+    static unsigned seen = ~0u;
+    unsigned v = cfg_version();
+    if (v != seen) {
         int pct = cfg_int("TOTK_PCSS");
         pct = pct < 0 ? 0 : pct > 200 ? 200 : pct;
         const char *k = cfg_get("TOTK_PCSS_K");
         float k100 = k && *k ? (float)atof(k) : 0.5f;
-        p[0] = k100 * (float)pct / 100.0f;
-        p[1] = 0.35f / 960.0f, p[2] = 5.0f / 960.0f, p[3] = 4.0f / 960.0f;
-        if (pct) rt_log("vk: soft shadows (PCSS) at %d%% (depth factor %g)", pct, p[0]);
+        float x = k100 * (float)pct / 100.0f;
+        if (x != p[0] || seen == ~0u) rt_log("vk: soft shadows (PCSS) at %d%% (depth factor %g)", pct, x);
+        // The radii in texels of the cascade map shadow_res asks for (else the game's 960): half a texel at contact, at
+        // most three at 100 percent. The widest radius follows the percentage too (at least the half texel): a shadow
+        // usually falls a metre or more from what casts it, so most edges reach the widest radius whatever the depth
+        // factor, and only this cap makes a low percentage a light blur. The earlier fixed 5 / 960 UV was 10.7 texels
+        // of a 2048 map.
+        int res = atoi(cfg_value("TOTK_SHADOW_RES"));
+        float t = 1.0f / (float)(res > 0 ? res : 960), widest = 3.0f * (float)pct / 100.0f;
+        p[0] = x, p[1] = 0.5f * t, p[2] = (widest > 0.5f ? widest : 0.5f) * t, p[3] = 4.0f * t;
+        seen = v;
     }
     return p;
+}
+
+// what support_fill reads: viewport size, point size, the PCSS factor (pcss_params, live)
+static void support_in(const VkExec *ex, float in[4]) {
+    float k = ex->pass_scale > 1 ? (float)ex->pass_scale : 1.0f;
+    in[0] = ex->in_pass && ex->has_vp ? ex->vp[0][2] * k : (float)ex->pass_w;
+    in[1] = ex->in_pass && ex->has_vp ? ex->vp[0][3] * k : (float)ex->pass_h;
+    in[2] = ex->point_size > 0 ? ex->point_size : 1.0f;
+    in[3] = pcss_params()[0];
 }
 
 // The shadow_spread field of the support buffer: the factor translator patch 0011 applies to the lighting shaders' sun
@@ -2068,11 +2081,10 @@ static int bind_sig(const VkExec *ex, const VkPipeInfo *info) {
     PUT(vk_mem_gen() + vk_usnap_gen() + ex->drop_n);   // all only grow in a submission; drop_n: copies a chunk passed
     for (int i = 0; i < ex->nfbl && i < 9; i++) PUT((uintptr_t)ex->fbl_img[i]);
     if (l->sup) {
-        float in[3];
+        float in[4];
         support_in(ex, in);
-        uint64_t a;
-        uint32_t ps;
-        memcpy(&a, in, 8), memcpy(&ps, &in[2], 4);
+        uint64_t a, ps;
+        memcpy(&a, in, 8), memcpy(&ps, &in[2], 8);
         PUT(a);
         PUT(ps);
     }
@@ -2180,7 +2192,7 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
         VkDescSlot *o = &d[nd];
         int st = nvn_stage_of(b->stage), kind = 0;   // kind: 0 buffer, 1 image, 2 texel buffer view
         if (b->kind == VK_PIPE_SUPPORT) {
-            float in[3];
+            float in[4];
             support_in(ex, in);
             if (!D->B.sup_valid || MX_NE(in, D->B.sup_in, sizeof in)) {   // support_fill reads only these
                 uint8_t tmp[SUPPORT_BYTES];
@@ -2819,7 +2831,7 @@ static struct {
     uint32_t ndesc, cdesc;
     NVNbufferRange vin[17];      // the vertex ranges MQ.vb[nvb - 1] was resolved from, under vk_mem_gen vgen
     uint64_t vgen;
-    float sup_in[3];             // the support buffer last filled for the list and its inputs
+    float sup_in[4];             // the support buffer last filled for the list and its inputs
     VkDescriptorBufferInfo sup;
     float par_in[4];             // the fragment shader's parameters last written and their inputs
     VkDescriptorBufferInfo par;
@@ -2919,7 +2931,7 @@ static int mo_desc(VkExec *ex, const VkPipeInfo *info, MoDraw *q) {
         VkDescSlot *o = &d[nd];
         int st = nvn_stage_of(b->stage);
         if (b->kind == VK_PIPE_SUPPORT) {
-            float in[3];
+            float in[4];
             support_in(ex, in);
             if (!MQ.sup.buffer || memcmp(in, MQ.sup_in, sizeof in)) {
                 VkBuffer sb;
