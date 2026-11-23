@@ -1,4 +1,5 @@
-// TOTK_DUMP=<frame>, or TOTK_DUMP=key for the frame after F9 is pressed in the game window: a frame dump for the Vulkan
+// TOTK_DUMP=<frame>, or TOTK_DUMP=key for the frame after each F9 press in the game window (any number, each in its
+// own TOTK_DUMP_DIR/dump_<n> folder): a frame dump for the Vulkan
 // back end, which RenderDoc cannot capture (it hides VK_EXT_external_memory_host). Between presents frame-1 and frame,
 // the replay's command buffers also copy, after each render pass, its colour and depth targets and, after each
 // dispatch, the storage images it writes into host buffers; the completion thread turns them into 8-bit PNGs once the
@@ -6,7 +7,8 @@
 // written in the frame are copied once each, slices side by side. Files in TOTK_DUMP_DIR (default "dump"):
 //   pass_<seq>_t<i>_<w>x<h>_<vkformat>_<name>.png   colour target i (td: depth; img<slot>: storage image; lut<id>: 3D;
 //                                                    a BC target drawn through a block view: its blocks as that view)
-//   ..._tm.png                                       float formats: x/(1+x) of the same image (the plain one clamps)
+//   ..._tm.png                                       float formats: x/(1+x) of the same image (the plain one clamps);
+//                                                    TOTK_DUMP_GAIN=<g> scales x by g first, to see dark scenes
 //   pass_<seq>_<label>_<w>x<h>_<vkformat>_<name>.png  an image of the port's own passes (vk_dump_image; vk_gtao.c:
 //                                                    ao_game_mask and ao_gtao_mask, AO in blue)
 //   passes.txt   per pass or dispatch: targets, draws, each distinct pipeline + texture set with its shaders' SPIR-V
@@ -60,13 +62,15 @@
 int vk_dump_armed;
 static uint64_t dump_frame, log_from;   // log_from: TOTK_DUMP_LOG, first frame logged to passes.txt without images
 static int dump_key;                    // TOTK_DUMP=key: dump_frame stays UINT64_MAX until F9 (vk_dump_present)
-static char dir[400];
+static char dir[400], base_dir[400];    // dir: this dump's folder; key mode: base_dir/dump_<n>
+static int dump_count, f9_down;         // key mode: dumps taken so far; F9 was down at the last present
 static FILE *passes_f, *images_f;
 static int seq, finished, copied;      // copied: passes and dispatches of the dump frame whose images were copied
 static int skip_runs, dump_ubo;        // TOTK_DUMP_SKIP_RUNS, TOTK_DUMP_UBO (vec4 per block, 0 for none)
 static uint32_t want_tex[16][2];       // TOTK_DUMP_TEX: slot id and 0, or width and height
 static int nwant_tex;
 static uint32_t want_layer;            // TOTK_DUMP_TEX_LAYER
+static float dump_gain = 1.0f;          // TOTK_DUMP_GAIN: the _tm PNGs of float targets show x * gain
 static int dump_from;                  // TOTK_DUMP_FROM: passes before this one are listed, not copied
 static uint64_t last_targets;          // targets_sig of the last render pass; 0 after a dispatch
 static const char *pass_skip;          // why the current pass copies nothing, or NULL
@@ -265,7 +269,7 @@ static void write_images(const Job *j) {
                 if (mode == M_SNORM) x = x * .5f + .5f;
                 else if (mode == M_INT) x *= scale;
                 else if (mode == M_DEPTH) x = range > 0 ? (x - lo) / range : 0;
-                else if (mode == M_FLOAT && pass) x = x > 0 ? x / (1 + x) : 0;
+                else if (mode == M_FLOAT && pass) x = x > 0 ? x * dump_gain / (1 + x * dump_gain) : 0;
                 out[4 * i + c] = u8(x);
             }
             out[4 * i + 3] = 255;
@@ -976,8 +980,11 @@ void vk_dump_init(void) {
     }
     const char *wl = cfg_get("TOTK_DUMP_TEX_LAYER");
     want_layer = wl && *wl ? (uint32_t)strtoul(wl, NULL, 10) : 0;
+    const char *gn = cfg_get("TOTK_DUMP_GAIN");
+    dump_gain = gn && *gn && atof(gn) > 0 ? (float)atof(gn) : 1.0f;
     const char *d = cfg_get("TOTK_DUMP_DIR");
-    snprintf(dir, sizeof dir, "%s", d && *d ? d : "dump");
+    snprintf(base_dir, sizeof base_dir, "%s", d && *d ? d : "dump");
+    snprintf(dir, sizeof dir, "%s", base_dir);
     if (!dump_key) open_files();   // key mode: when F9 is pressed, so a run without F9 leaves the last dump alone
     char path[600];
     const char *bf = cfg_get("TOTK_DUMP_BUF");
@@ -991,17 +998,37 @@ void vk_dump_init(void) {
         if (*q == ':') bd_h = (uint32_t)strtoul(q + 1, &q, 0);
         if (!bd_w || !bd_h) bd_stride = 0;
         snprintf(path, sizeof path, "%s/bufs.txt", dir);
-        if (bd_size && !(bufs_f = fopen(path, "w"))) bd_size = 0;
+        if (bd_size && !dump_key && !(bufs_f = fopen(path, "w"))) bd_size = 0;
     }
     vk_dump_armed = 1;
-    if (dump_key) rt_log("vk_dump: the frame after F9 goes to %s", dir);
+    if (dump_key) rt_log("vk_dump: each F9 dumps the next frame to %s/dump_<n>", base_dir);
     else rt_log("vk_dump: frame %llu goes to %s", (unsigned long long)dump_frame, dir);
+}
+
+// Key mode takes any number of dumps in one run, each in its own folder (base_dir/dump_00, dump_01, ...): resets what the
+// previous dump left (pass counter, PNG budget, the 3D textures already copied) and opens the new folder's files.
+static void begin_dump(void) {
+    if (dump_key) {
+        snprintf(dir, sizeof dir, "%s/dump_%02d", base_dir, dump_count++);
+        seq = finished = copied = 0;
+        png_bytes = 0;
+        nluts = nluts_done = nents = 0;
+        last_targets = 0;
+        free(bd_prev), bd_prev = NULL;
+        if (bd_size) {
+            char path[600];
+            make_dirs(dir);
+            snprintf(path, sizeof path, "%s/bufs.txt", dir);
+            if (!(bufs_f = fopen(path, "w"))) bd_size = 0;
+        }
+    }
+    open_files();
 }
 
 // The game's input saw the TOTK_DUMP_ON button go down (input.c input_poll): dump the frame `ahead` frames from now.
 void vk_dump_arm(unsigned ahead) {
     if (!dump_key || __atomic_load_n(&dump_frame, __ATOMIC_ACQUIRE) != UINT64_MAX) return;
-    open_files();
+    begin_dump();
     const char *lf = cfg_get("TOTK_DUMP_LOG");
     if (lf && !strcmp(lf, "press")) log_from = frame_now();   // every frame from the press on is logged
     __atomic_store_n(&dump_frame, frame_now() + ahead, __ATOMIC_RELEASE);
@@ -1014,8 +1041,11 @@ void vk_dump_present(uint64_t frame) {
         DWORD pid = 0;
         HWND fg = GetForegroundWindow();
         if (fg) GetWindowThreadProcessId(fg, &pid);
-        if (pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_F9) & 0x8000)) {
-            open_files();
+        int down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_F9) & 0x8000);
+        int press = down && !f9_down;   // a held key dumps once
+        f9_down = down;
+        if (press) {
+            begin_dump();
             __atomic_store_n(&dump_frame, frame + 1, __ATOMIC_RELEASE);   // the whole next frame
             rt_log("vk_dump: F9 at frame %llu", (unsigned long long)frame);
         }
@@ -1036,4 +1066,8 @@ void vk_dump_present(uint64_t frame) {
     passes_f = NULL;
     rt_log("vk_dump: frame %llu: %d passes and dispatches, about %llu MB of PNGs in %s", (unsigned long long)frame, seq,
            (unsigned long long)(png_bytes >> 20), dir);
+    if (dump_key) {   // ready for the next F9; `finished` stays set until then so active() logs nothing in between
+        f9_down = 1;
+        __atomic_store_n(&dump_frame, UINT64_MAX, __ATOMIC_RELEASE);
+    }
 }
