@@ -698,7 +698,8 @@ static void host_cap(uint64_t used, uint64_t *budget) {
                "%.0f MiB (logged once)", used / 1048576.0, room / 1048576.0, room_reserve / 1048576.0);
 }
 
-int vk_mem_vram(uint64_t *used, uint64_t *budget, int *exact) {
+// cap: also limit the budget by the system memory left (host_cap); 0 gives the card's own budget.
+static int vram_query(uint64_t *used, uint64_t *budget, int *exact, int cap) {
     VkCtx *c = vk_ctx();
     *used = *budget = 0, *exact = 0;
     if (!c) return 0;
@@ -713,7 +714,7 @@ int vk_mem_vram(uint64_t *used, uint64_t *budget, int *exact) {
                 *used += b.heapUsage[h], *budget += b.heapBudget[h];
         *exact = 1;
         if (limit && *budget > limit) *budget = limit;
-        if (*budget) host_cap(*used, budget);
+        if (*budget && cap) host_cap(*used, budget);
         return *budget != 0;
     }
     VmaBudget vb[VK_MAX_MEMORY_HEAPS];
@@ -722,9 +723,11 @@ int vk_mem_vram(uint64_t *used, uint64_t *budget, int *exact) {
         if (mp->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
             *used += vb[h].statistics.blockBytes, *budget += mp->memoryHeaps[h].size;
     if (limit && *budget > limit) *budget = limit;
-    if (*budget) host_cap(*used, budget);
+    if (*budget && cap) host_cap(*used, budget);
     return *budget != 0;
 }
+
+int vk_mem_vram(uint64_t *used, uint64_t *budget, int *exact) { return vram_query(used, budget, exact, 1); }
 
 // ---------------------------------------------------------------- page write generations
 // Two-level table over the guest address space (below 2^39): 256 MiB chunks of 65,536 page generations, allocated
@@ -1619,8 +1622,8 @@ static void dirty_frame(uint64_t frame) {
 //   submission, exact byte ranges, before the fence signals (vk_mem_mirror_end).
 // - TOTK_MEMORY=verify: every submission also copies up to VERIFY_BYTES of mirror pages, round robin, into host memory;
 //   at its fence the pages the CPU has not written since their sync are compared with guest memory.
-// A pool stays imported when its mirror would not fit the VRAM budget, its range is not write-watched, it overlaps
-// another pool or the allocation fails.
+// A pool stays imported when its mirror would not fit the VRAM budget (for small pools see mirror_hot_fits), its range
+// is not write-watched, it overlaps another pool or the allocation fails.
 #define VERIFY_BYTES (4u << 20)
 #define VERIFY_SAMPLES 64
 #define VERIFY_LOG 16
@@ -1769,6 +1772,30 @@ static void refuse(PoolRec *r, int why, const char *what) {
     plat_add64(&m_refused_bytes[why], (int64_t)n);
 }
 
+// A small pool whose mirror the budget refuses still gets one when the card itself has room and all mirrors stay within
+// MIRROR_HOT_ALLOW. The pools first used as buffers while the game loads (about 60 pools, 106 MiB on 1.4.3) are read by
+// most draws; imported, the GPU reads them over PCIe and a frame takes twice as long (RTX 4060 Laptop at 2560x1440:
+// 31 fps against 58 on the same save). The budget's cap by system memory (host_cap) depends on what other programs
+// hold at that moment, and a refused pool stays imported for the whole run, so a launch while a browser held a few
+// GB more ran at half speed throughout. The allowance comes out of TOTK_MEM_RESERVE_MIB, which is far larger, and the
+// texture release under VRAM pressure counts these mirrors as used, so textures give way to them instead.
+#define MIRROR_HOT_MAX (16ull << 20)
+#define MIRROR_HOT_ALLOW (256ull << 20)
+static volatile int64_t m_hot_n, m_hot_bytes;   // mirrors given by mirror_hot_fits
+
+static int mirror_hot_fits(uint64_t n) {
+    if (n > MIRROR_HOT_MAX || (uint64_t)__atomic_load_n(&m_live_bytes, __ATOMIC_RELAXED) + n > MIRROR_HOT_ALLOW)
+        return 0;
+    uint64_t used, budget;
+    int exact;
+    if (vram_query(&used, &budget, &exact, 0) && used + n + budget / 16 > budget) return 0;
+    if (!__atomic_load_n(&m_hot_n, __ATOMIC_RELAXED))
+        rt_log("mem: mirrors of small pools beyond the budget's system-memory cap, up to %llu MiB of mirrors in all "
+               "(the card has room: %.0f of %.0f MiB in use)", (unsigned long long)(MIRROR_HOT_ALLOW >> 20),
+               used / 1048576.0, budget / 1048576.0);
+    return 1;
+}
+
 // Replay thread: the pool's mirror on its first buffer use.
 static void mirror_create(PoolRec *r) {
     VkCtx *c = vk_ctx();
@@ -1792,8 +1819,8 @@ static void mirror_create(PoolRec *r) {
     uint64_t r0 = r->import_lo >> SNAP_SHIFT, r1 = (r->import_hi - 1) >> SNAP_SHIFT;
     if (r1 >= SNAP_REGIONS) return refuse(r, MR_UNTRACKED, "outside the write-watched address space");
     uint64_t used, budget;
-    int exact;
-    if (vk_mem_vram(&used, &budget, &exact) && used + n + budget / 8 > budget) {
+    int exact, hot = 0;
+    if (vk_mem_vram(&used, &budget, &exact) && used + n + budget / 8 > budget && !(hot = mirror_hot_fits(n))) {
         char why[128];
         snprintf(why, sizeof why, "its %.1f MiB mirror does not fit the VRAM budget (%.0f of %.0f MiB in use)",
                  n / 1048576.0, used / 1048576.0, budget / 1048576.0);
@@ -1830,6 +1857,7 @@ static void mirror_create(PoolRec *r) {
     __atomic_store_n(&r->acc_sub, msub, __ATOMIC_RELEASE);
     __atomic_store_n(&r->mstate, MS_ON, __ATOMIC_RELEASE);
     mrep.first_n++, mrep.first_bytes += n;
+    if (hot) plat_inc64(&m_hot_n), plat_add64(&m_hot_bytes, (int64_t)n);
     plat_inc64(&m_live_n);
     plat_add64(&m_live_bytes, (int64_t)n);
 }
@@ -2560,12 +2588,13 @@ static void mirror_log(uint64_t frame) {
         snprintf(ver, sizeof ver, "; verify: pages compared %lld, skipped %lld (written since), mismatches %lld",
                  (long long)plat_xchg64(&v_pages, 0), (long long)plat_xchg64(&v_skipped, 0),
                  (long long)plat_xchg64(&v_mismatch, 0));
-    rt_log("mem: mirror frame %llu: pools %lld, %.1f MiB device-local; stay imported: budget %lld (%.1f MiB), untracked "
-           "%lld, overlapping %lld, failed %lld; per frame: submits %.2f, syncs %.1f, upload %.3f MiB in %.1f ranges, "
+    rt_log("mem: mirror frame %llu: pools %lld, %.1f MiB device-local (%lld, %.1f MiB beyond the system-memory cap); "
+           "stay imported: budget %lld (%.1f MiB), untracked %lld, overlapping %lld, failed %lld; per frame: submits %.2f, syncs %.1f, upload %.3f MiB in %.1f ranges, "
            "first use %.2f pools %.3f MiB, write-back %.3f MiB in %.1f ranges, merge %.3f MiB in %.1f dispatches "
            "(snapshots %.3f MiB, new buffers %.2f), flush calls %.1f (%.3f MiB), queries "
            "%.1f pre-snap (%.1f MiB) + %.1f sync, prologues %.2f, tracking cpu %.3f ms (pre-snap %.3f, syncs %.3f)%s",
-           (unsigned long long)frame, (long long)m_live_n, m_live_bytes / M, (long long)m_refused_n[MR_BUDGET],
+           (unsigned long long)frame, (long long)m_live_n, m_live_bytes / M, (long long)m_hot_n, m_hot_bytes / M,
+           (long long)m_refused_n[MR_BUDGET],
            m_refused_bytes[MR_BUDGET] / M, (long long)m_refused_n[MR_UNTRACKED], (long long)m_refused_n[MR_OVERLAP],
            (long long)m_refused_n[MR_ALLOC], a.subs / f, a.syncs / f, a.upload_bytes / f / M, a.upload_copies / f,
            a.first_n / f, a.first_bytes / f / M, a.wb_bytes / f / M, a.wb_copies / f, a.merge_bytes / f / M,
