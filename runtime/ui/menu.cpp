@@ -741,6 +741,12 @@ static void tab_screen(float scale) {
     row_shadow_range();
     opt_slider("TOTK_PCSS", UI_MENU_PCSS, 0, 200, UI_MENU_PCSS_DESC, 10, "%.0f %%");
     opt_slider("TOTK_CONTACT_SHADOWS", UI_MENU_CONTACT_SHADOWS, 0, 100, UI_MENU_CONTACT_SHADOWS_DESC, 10, "%.0f %%");
+    static const UiTextId water_refl[] = {UI_MENU_REFLECTIONS_OFF, UI_MENU_WATER_REFLECTIONS_NATURAL,
+                                          UI_MENU_WATER_REFLECTIONS_CLEAR};
+    opt_choice("TOTK_WATER_REFLECTIONS", UI_MENU_WATER_REFLECTIONS, water_refl, 3, UI_MENU_WATER_REFLECTIONS_DESC);
+    static const UiTextId surf_refl[] = {UI_MENU_REFLECTIONS_OFF, UI_MENU_SURFACE_REFLECTIONS_SOFT,
+                                         UI_MENU_SURFACE_REFLECTIONS_SHARP};
+    opt_choice("TOTK_SURFACE_REFLECTIONS", UI_MENU_SURFACE_REFLECTIONS, surf_refl, 3, UI_MENU_SURFACE_REFLECTIONS_DESC);
     row_ao();
     row_light_normals();
     row_light_full();

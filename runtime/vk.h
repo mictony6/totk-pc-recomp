@@ -183,6 +183,11 @@ void vk_lightnorm_release(void);  // before the device goes away
 void vk_lightao_release(void);    // before the device goes away
 void vk_shadowblur_release(void); // before the device goes away
 void vk_contact_release(void);   // before the device goes away
+// vk_ssr.c: screen-space reflections on water and smooth surfaces (TOTK_WATER_REFLECTIONS, TOTK_SURFACE_REFLECTIONS).
+// vk_ssr_frame reads the settings at each present; vk_ssr_wanted: one is on and the pass can run on this device.
+void vk_ssr_frame(void);
+int vk_ssr_wanted(void);
+void vk_ssr_release(void);       // before the device goes away
 void vk_present_flip(void);
 // Every submission to ctx->gfx_queue (and xfer_queue when shared) takes this lock; vk_present_image and the swapchain
 // rebuild do. Recursive.

@@ -1,0 +1,204 @@
+#version 450
+// Screen-space reflections (runtime/vk_ssr.c): the world mirrored on TotK's water and on its smooth surfaces (polished
+// stone, ice, metal). The game's water mirrors nothing: under a lit pillar it shows a glow that keeps none of the
+// pillar's shape. After the game has composed its lighting into the scene colour, each reflecting pixel traces its
+// mirrored view ray through the linear depth and mixes in the colour it hits, by Fresnel (Schlick: little looking
+// down, much at a glancing angle). A ray that hits nothing leaves the game's picture as it is.
+//
+// What reflects, read from the G-buffer (measured in frame dumps of 1.4.3 at Zora's Domain and on the surface):
+//   - Water: target 0 (RGBA8, an object class per pixel) holds 51 / 255 in red on water and nowhere else; green over
+//     0.3 is a character or what one holds, blue over 0.3 the Depths' gloom, and neither reflects. Water's F0 is 0.02.
+//   - Smooth surfaces: target 3 (RGBA8, the normal) keeps a smoothness in alpha: water about 250 / 255, Zora's Domain's
+//     luminous stone 140 to 190, rock, grass, wood and terrain below 100, the sky 0. Surfaces reflect from pc.surf.y
+//     on, fully 0.2 above it, with F0 pc.surf.z.
+// The normal: from the depth (the nearer neighbour each way), which is exact on flat water and floors. On water the
+// game's own normal (game_normal: target 3 as its light shaders read it), which carries the ripples, is mixed in by
+// pc.water.z; other surfaces keep the depth's normal alone.
+// Soft surfaces (pc.blur.x > 0): the Fresnel rise at a glancing angle is damped by roughness and the colour comes from
+// the scene copy's blurred mips, blurrier the rougher the surface and the longer the ray.
+// The ray: in screen space, pc.ray.x steps that grow with distance, from the pixel to where the ray leaves the picture
+// or comes too near the camera; 1 / distance is linear along it. A hit is where the ray passes behind the depth by
+// less than a thickness, refined by six halvings.
+// Only what is on screen can be reflected, and only from the side the camera sees: a reflection fades out toward the
+// picture's edges, and what is behind the camera or above the picture is not there.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D scene_tex;    // the lit scene, a copy with blurred mips (linear filter)
+layout(binding = 1) uniform sampler2D lin_depth;    // the game's linear depth: view distance / far
+layout(binding = 2) uniform sampler2D class_tex;    // G-buffer target 0
+layout(binding = 3) uniform sampler2D normal_tex;   // G-buffer target 3
+layout(binding = 4, rgba16f) uniform writeonly image2D dst;
+layout(push_constant) uniform P {
+    vec4 proj;    // projection x scale, y scale, far plane, near plane
+    vec4 size;    // the scene's width and height; 1 / the copy's width and height
+    vec4 ray;     // steps, debug view (1: what reflects, 2: the reflections alone), noise offset, longest ray (m)
+    vec4 water;   // strength (0: off), F0, the G-buffer normal's share (the ripples), edge fade
+    vec4 surf;    // strength (0: off), the smoothness surfaces reflect from, F0, the blur's last mip
+    vec4 blur;    // x: the blur's scale on surfaces (0: sharp); y: the mip water's reflections are blurred to
+} pc;
+
+ivec2 clamp_px(ivec2 q) { return clamp(q, ivec2(0), ivec2(pc.size.xy) - 1); }
+float dist_at(ivec2 q) { return texelFetch(lin_depth, clamp_px(q), 0).r * pc.proj.z; }   // metres in front of the camera
+
+vec3 view_at(vec2 px, float z) {
+    vec2 ndc = px / pc.size.xy * 2.0 - 1.0;
+    return vec3(ndc.x * z / pc.proj.x, -ndc.y * z / pc.proj.y, -z);
+}
+
+// pixel x, y and 1 / distance of a view-space point
+vec3 to_screen(vec3 v) {
+    float iw = -1.0 / v.z;
+    return vec3((0.5 + 0.5 * v.x * pc.proj.x * iw) * pc.size.x, (0.5 - 0.5 * v.y * pc.proj.y * iw) * pc.size.y, iw);
+}
+
+// Target 3 as TotK's own light shaders decode it (1.4.3 point light fs 9b1af94d1cc8e81f): red and green the sizes
+// of x and y, blue's bit 1 the sign of y and bit 2 that of x (its other bits the material), z = 1 - 2 (x^2 + y^2).
+// Already in this shader's view space: debug views 3 (this) and 4 (the depth's normal) show the same colours on
+// water, ground and walls (lake save, 2026-11-24). The 12-bit octahedral reading this shader had before was wrong,
+// so the ripples that bent the reflections were not the ones the game shades.
+vec3 game_normal(vec4 c) {
+    int bits = int(c.b * 255.0 + 0.5);
+    float r2 = c.r * c.r + c.g * c.g, s = sqrt(max(0.0, 1.0 - r2));
+    return vec3(c.r * s * ((bits & 2) != 0 ? 2.0 : -2.0), c.g * s * ((bits & 1) != 0 ? 2.0 : -2.0), 1.0 - 2.0 * r2);
+}
+
+// interleaved gradient noise (Jimenez, "Next Generation Post Processing in Call of Duty: Advanced Warfare", 2014)
+float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+
+// The reflected colour and its weight at pixel q; weight 0: nothing to mix in.
+vec4 reflection(ivec2 q, vec2 fp) {
+    vec4 o = texelFetch(class_tex, q, 0);
+    if (o.g > 0.3 || o.b > 0.3) return vec4(0.0);   // characters, the gloom
+    bool water = abs(o.r - 0.2) < 0.035;
+    vec4 nt = texelFetch(normal_tex, q, 0);
+    float gloss = nt.a;
+    float surf_w = 0.0;
+    if (water) {
+        if (pc.water.x <= 0.0) return vec4(0.0);
+    } else {
+        if (pc.surf.x <= 0.0) return vec4(0.0);
+        surf_w = smoothstep(pc.surf.y, pc.surf.y + 0.2, gloss);
+        if (surf_w <= 0.0) return vec4(0.0);
+    }
+    float d = texelFetch(lin_depth, q, 0).r;
+    if (d <= 0.0 || d >= 0.999) return vec4(0.0);   // nothing drawn, or the sky
+    if (pc.ray.y == 1.0) return water ? vec4(1.0, 0.0, 1.0, 0.5) : vec4(0.0, 1.0, 1.0, surf_w * 0.7);
+    float z = d * pc.proj.z;
+    vec3 p = view_at(fp, z);
+    vec3 v = normalize(p);
+    // the surface's normal from the depth: toward the nearer neighbour each way, so an edge does not bend it
+    vec3 pl = view_at(fp - vec2(1.0, 0.0), dist_at(q - ivec2(1, 0)));
+    vec3 pr = view_at(fp + vec2(1.0, 0.0), dist_at(q + ivec2(1, 0)));
+    vec3 pu = view_at(fp - vec2(0.0, 1.0), dist_at(q - ivec2(0, 1)));
+    vec3 pd = view_at(fp + vec2(0.0, 1.0), dist_at(q + ivec2(0, 1)));
+    vec3 dx = abs(pr.z - p.z) < abs(p.z - pl.z) ? pr - p : p - pl;
+    vec3 dy = abs(pd.z - p.z) < abs(p.z - pu.z) ? pd - p : p - pu;
+    vec3 c = cross(dy, dx);
+    float cl = length(c);
+    vec3 ng = cl > 1e-12 ? c / cl : -v;
+    if (dot(ng, -p) < 0.0) ng = -ng;
+    vec3 n = water ? normalize(mix(ng, normalize(game_normal(nt)), pc.water.z)) : ng;
+    vec3 r = reflect(v, n);
+    // Fresnel from the normal the ray reflects off (on water with its ripples), as the Godot shader takes it from
+    // ssrNormal: each ripple reflects by its own angle. From the flat normal the strength was one smooth gradient over
+    // the whole surface, which reads as polished metal.
+    float cosv = clamp(dot(-v, n), 0.0, 1.0);
+    float rough = 1.0 - clamp(gloss, 0.0, 1.0);
+    float fres = pc.water.y + (1.0 - pc.water.y) * pow(1.0 - cosv, 5.0);
+    if (!water) {
+        // Soft: the rise toward a glancing angle stops at the surface's smoothness, the usual damping of Schlick's
+        // term on rough surfaces; Sharp: as if polished
+        float top = pc.blur.x > 0.0 ? max(gloss, pc.surf.z) : 1.0;
+        fres = pc.surf.z + (top - pc.surf.z) * pow(1.0 - cosv, 5.0);
+    }
+    // Only rays that leave the surface reflect: one that dips under it would show what lies beneath (the lakebed
+    // through the water). The flat normal stands for "up" on water and floors.
+    if (dot(r, ng) <= 0.0) return vec4(0.0);
+    // The ray in view space, in even steps of a fixed length from a per-pixel offset that stays the same from frame
+    // to frame (interleaved gradient noise), as the water shader of the user's Godot project marches it: a step that
+    // passes behind the depth is refined by five halvings, and the hit counts only where the ray is less than a
+    // thickness behind the surface it found; otherwise the ray went behind a foreground object and marches on. The
+    // earlier march, in screen space with a thickness that grew along the ray, accepted hits far behind objects, and
+    // they jumped as the ripples and the camera moved: the reflections stretched out and snapped back.
+    float steps = max(pc.ray.x, 1.0), step_len = pc.ray.w / steps;
+    float t_prev = 0.0, t = step_len * ign(fp), th = 0.0;
+    bool hit = false;
+    vec3 sh = vec3(0.0);
+    for (int i = 0; i < int(steps); i++) {
+        t += step_len;
+        vec3 pt = p + r * t;
+        if (-pt.z < pc.proj.w * 1.5) break;   // at the camera
+        vec3 s = to_screen(pt);
+        if (any(lessThan(s.xy, vec2(0.0))) || any(greaterThanEqual(s.xy, pc.size.xy))) break;   // off the picture
+        if (-pt.z > dist_at(ivec2(s.xy))) {   // behind what the pixel shows
+            float lo = t_prev, hi = t;
+            for (int k = 0; k < 5; k++) {
+                float mid = (lo + hi) * 0.5;
+                vec3 pm = p + r * mid;
+                if (-pm.z > dist_at(ivec2(to_screen(pm).xy))) hi = mid;
+                else lo = mid;
+            }
+            vec3 ph = p + r * hi;
+            sh = to_screen(ph);
+            float sd = dist_at(ivec2(sh.xy));
+            // 0.15 m: an object lying on the water or just in front of it (a lily pad, a weapon on Link's back) is
+            // thinner than 0.5 m, and rays passing under or behind it were taken for hits that repeated it downward
+            if (-ph.z - sd <= max(0.15, sd * 0.005)) {
+                hit = true, th = hi;
+                break;
+            }
+        }
+        t_prev = t;
+    }
+    // A ray that found nothing within its length: the sky, if the sky is what the picture shows where the ray's
+    // direction meets the screen at infinity (the game fills the sky before its lighting composite, so the copy holds
+    // it with its haze). The Godot shader falls back to its sky probe the same way. Without this, every reflection of
+    // the sky kept the game's own water and the reflected objects stood cut out against it.
+    bool sky = false;
+    if (!hit) {
+        if (r.z >= -0.01) return vec4(0.0);   // toward the camera: the point at infinity is behind it
+        sh = to_screen(p + r * pc.proj.z);
+        if (any(lessThan(sh.xy, vec2(0.0))) || any(greaterThanEqual(sh.xy, pc.size.xy))) return vec4(0.0);
+        if (texelFetch(lin_depth, ivec2(sh.xy), 0).r < 0.999) return vec4(0.0);   // something stands there
+        sky = true, th = pc.ray.w;
+    }
+    // fades: toward the picture's edges (the last tenth), and over the last 40 % of the ray's length (not the sky's)
+    vec2 hu = sh.xy / pc.size.xy;
+    vec2 e2 = smoothstep(vec2(0.0), vec2(0.1), hu) * smoothstep(vec2(0.0), vec2(0.1), 1.0 - hu);
+    float edge = e2.x * e2.y * (sky ? 1.0 : 1.0 - smoothstep(0.6, 1.0, th / pc.ray.w));
+    // The colour from the blurred mips: on water by pc.blur.y, more the farther the reflected point is from the
+    // water (the Godot shader's ssr_blur); on rougher surfaces by the cone's footprint at the hit. Four taps half a
+    // texel apart at that mip smooth out its blocks.
+    vec2 s0 = to_screen(p).xy;
+    float lod = water ? pc.blur.y * mix(0.3, 1.0, clamp(th / pc.ray.w * 3.0, 0.0, 1.0))
+                      : log2(1.0 + length(sh.xy - s0) * rough * rough * pc.blur.x);
+    lod = clamp(lod, 0.0, pc.surf.w);
+    vec2 uv = sh.xy * pc.size.zw, tx = exp2(lod) * 0.5 * pc.size.zw;
+    vec3 col = lod <= 0.0 ? textureLod(scene_tex, uv, 0.0).rgb
+                          : 0.25 * (textureLod(scene_tex, uv + vec2(tx.x, tx.y), lod).rgb +
+                                    textureLod(scene_tex, uv + vec2(-tx.x, tx.y), lod).rgb +
+                                    textureLod(scene_tex, uv + vec2(tx.x, -tx.y), lod).rgb +
+                                    textureLod(scene_tex, uv + vec2(-tx.x, -tx.y), lod).rgb);
+    float facing = clamp(1.0 - r.z * 2.0, 0.0, 1.0);   // a ray back toward the camera sees the unseen side: none
+    float w = fres * edge * facing * (water ? pc.water.x : surf_w * pc.surf.x);
+    return vec4(col, pc.ray.y == 2.0 ? 1.0 : clamp(w, 0.0, 1.0));
+}
+
+void main() {
+    ivec2 q = ivec2(gl_GlobalInvocationID.xy);
+    if (q.x >= int(pc.size.x) || q.y >= int(pc.size.y)) return;
+    if (pc.ray.y >= 3.0) {   // DEBUG 3: the game's normal (game_normal), 4: the depth's normal, both as colour
+        vec2 fp = vec2(q) + 0.5;
+        float z = dist_at(q);
+        vec3 p = view_at(fp, z);
+        vec3 dx = view_at(fp + vec2(1.0, 0.0), dist_at(q + ivec2(1, 0))) - p;
+        vec3 dy = view_at(fp + vec2(0.0, 1.0), dist_at(q + ivec2(0, 1))) - p;
+        vec3 ng = normalize(cross(dy, dx));
+        if (dot(ng, -p) < 0.0) ng = -ng;
+        vec3 n = pc.ray.y == 3.0 ? game_normal(texelFetch(normal_tex, q, 0)) : ng;
+        imageStore(dst, q, vec4(n * 0.5 + 0.5, 1.0));
+        return;
+    }
+    vec3 c0 = texelFetch(scene_tex, q, 0).rgb;
+    vec4 res = reflection(q, vec2(q) + 0.5);
+    imageStore(dst, q, vec4(mix(c0, res.rgb, res.a), 1.0));
+}
