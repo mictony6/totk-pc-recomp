@@ -18,7 +18,7 @@ extern "C" {
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 }
 
-static_assert(UI_BIND_SHAKE - UI_BIND_A == ACTION_COUNT - 1 && B_SHAKE == ACTION_COUNT - 1, "UI_BIND_* follow the actions");
+static_assert(UI_BIND_TURBO_A - UI_BIND_A == ACTION_COUNT - 1 && B_TURBO_A == ACTION_COUNT - 1, "UI_BIND_* follow the actions");
 static_assert(UI_BIND_DESC_MINUS - UI_BIND_DESC_A == B_MINUS, "UI_BIND_DESC_* follow the actions");
 static_assert(UI_KEY_PAGEDOWN - UI_KEY_SPACE == KEY_PAGEDOWN - KEY_SPACE, "UI_KEY_* follow the key ids");
 static_assert(UI_PAD_RPADDLE2 - UI_PAD_SOUTH == PAD_RPADDLE2 - PAD_SOUTH && PAD_RPADDLE2 == PAD_COUNT - 1,
@@ -49,6 +49,7 @@ static UiTextId action_desc(int a) {
     if (a <= B_MINUS) return (UiTextId)(UI_BIND_DESC_A + a);
     if (a <= B_DOWN) return UI_BIND_DESC_DPAD;
     if (a == B_SHAKE) return UI_BIND_DESC_SHAKE;
+    if (a == B_TURBO_A) return UI_BIND_DESC_TURBO_A;
     return a <= B_SL_DOWN ? UI_BIND_DESC_MOVE : UI_BIND_DESC_CAMERA;
 }
 
@@ -163,13 +164,14 @@ static void reset_binds(void) {
 static void row_action(int a, const InputMap &m, int layout) {
     uint8_t k[INPUT_BINDING_MAX], p[INPUT_PAD_BINDING_MAX];
     int nk = input_map_keys_of(&m, a, k, INPUT_BINDING_MAX);
-    int np = a < B_SL_LEFT ? input_map_pads_of(&m, a, layout, p, INPUT_PAD_BINDING_MAX) : 0;
+    bool pad = input_action_takes_pad(a);
+    int np = pad ? input_map_pads_of(&m, a, layout, p, INPUT_PAD_BINDING_MAX) : 0;
     char b0[48], b1[48];
     const char *cells[3] = {nk > 0 ? key_label(k[0], b0, sizeof b0) : "", nk > 1 ? key_label(k[1], b1, sizeof b1) : "",
-                            a >= B_SL_LEFT ? menu_text(a <= B_SL_DOWN ? UI_PAD_LSTICK : UI_PAD_RSTICK)
-                            : np           ? pad_label(p[0])
-                                           : ""};
-    const bool enabled[3] = {true, true, a < B_SL_LEFT};   // the sticks stay sticks (and the shake is the right stick's)
+                            !pad ? menu_text(a <= B_SL_DOWN ? UI_PAD_LSTICK : UI_PAD_RSTICK)
+                            : np ? pad_label(p[0])
+                                 : ""};
+    const bool enabled[3] = {true, true, pad};   // the sticks stay sticks (and the shake is the right stick's)
     char key[32];
     snprintf(key, sizeof key, "BIND_%s", input_action_name(a));
     const char *note = g_note_action == a && plat_now_ns() < g_note_until ? g_note : nullptr;
@@ -233,6 +235,7 @@ void binds_rows(float scale) {
     opt_text(UI_BINDS_HELP);
     opt_bind_header(UI_BINDS_COL_KEY1, UI_BINDS_COL_KEY2, UI_BINDS_COL_PAD);
     for (int a : kButtons) row_action(a, m, layout);
+    row_action(B_TURBO_A, m, layout);
     opt_group(UI_BINDS_GROUP_MOVE);
     for (int a : kMove) row_action(a, m, layout);
     opt_group(UI_BINDS_GROUP_CAMERA);

@@ -459,7 +459,8 @@
 # input_record = input.txt
 # Remap buttons: the Controls tab of the settings menu (F1) writes these lines. One line per Switch button or stick
 # direction: bind_<A B X Y L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN LCLICK RCLICK> or bind_<LSTICK RSTICK>_<LEFT UP RIGHT
-# DOWN>, or bind_SHAKE (G: shakes the right stick, which detaches a fused part from what Ultrahand holds) = comma
+# DOWN>, or bind_SHAKE (G: shakes the right stick, which detaches a fused part from what Ultrahand holds), or
+# bind_TURBO_A (rapid-fire A: while held, A is pressed about 10 times a second; unbound by default) = comma
 # separated pad:<name> and key:<name> entries, key:default / pad:default for that part's defaults, or none.
 # A line replaces that button's defaults (pad and keyboard); buttons without a line keep them. Stick directions and
 # SHAKE take keys only. Invalid entries are logged and skipped. Changes while the game runs take effect at once.

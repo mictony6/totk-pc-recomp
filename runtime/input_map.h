@@ -9,12 +9,18 @@
 // Actions are the bit numbers of libnx HidNpadButton (input.h); 16..23 are the stick directions, which keys drive as
 // stick deflection. B_SHAKE is a key of its own, never a button bit: a press shakes the right stick left and right for
 // the game (input.c shake_stick), which detaches a fused part held with Ultrahand. A pad shakes its own stick.
+// B_TURBO_A, a key or a gamepad button, is never a button bit either: while it is held the game gets A pressed and
+// released in turn (input.c turbo_a); A's own bindings stay as they are. No input has it by default.
 enum {
     B_A = 0, B_B, B_X, B_Y, B_STICK_L, B_STICK_R, B_L, B_R, B_ZL, B_ZR, B_PLUS, B_MINUS, B_LEFT, B_UP, B_RIGHT, B_DOWN,
     B_SL_LEFT = 16, B_SL_UP, B_SL_RIGHT, B_SL_DOWN, B_SR_LEFT, B_SR_UP, B_SR_RIGHT, B_SR_DOWN,
     B_SHAKE = 24,
-    ACTION_COUNT = 25
+    B_TURBO_A = 25,
+    ACTION_COUNT = 26
 };
+// The actions a gamepad button can have: the Switch buttons and rapid-fire A (the sticks stay sticks, the pad shakes
+// its own).
+static inline int input_action_takes_pad(int action) { return action < B_SL_LEFT || action == B_TURBO_A; }
 
 // Keys and mouse buttons. F1, F10, F11 and Esc belong to the menu and the window, F8 to the flight recorder: no ids.
 enum {
@@ -69,7 +75,7 @@ extern InputMap input_map;
 void input_map_reset(void);
 // The script and totk.ini names, any case when parsed; NULL for an id without one. Actions: A B X Y LCLICK RCLICK L R ZL
 // ZR PLUS MINUS LEFT UP RIGHT DOWN, then LSTICK_LEFT LSTICK_UP LSTICK_RIGHT LSTICK_DOWN and the same for RSTICK (the
-// stick directions the keys drive), then SHAKE. Keys: a-z 0-9 space tab lshift ... (key_names in input_map.c). Pads: south east ...
+// stick directions the keys drive), then SHAKE and TURBO_A. Keys: a-z 0-9 space tab lshift ... (key_names in input_map.c). Pads: south east ...
 const char *input_action_name(int action);
 const char *input_key_name(int key);
 const char *input_pad_name(int pad);
@@ -103,7 +109,8 @@ int input_prompts_pick(const char *prompts, const char *pad_layout);
 // prompts follow no pad: romfs-patches-pc whatever the layout (romfs.c overlay_init serves romfs-patches-pc-<w>x<h>
 // under that name at a game resolution of another shape).
 const char *input_prompts_folder(int prompts, const char *pad_layout);
-// down[pad] != 0 for the gamepad inputs held. Returns the Switch button bits (0..15) the layout's pad table presses.
+// down[pad] != 0 for the gamepad inputs held. Returns the Switch button bits (0..15) the layout's pad table presses,
+// and B_TURBO_A's bit for a button bound to rapid-fire A (input.c takes it off before the game sees the bits).
 uint64_t input_map_pad_buttons(const uint8_t down[PAD_COUNT], int layout);
 
 // down[key] != 0 for the keys held. Returns the Switch button bits (0..15) the table presses.

@@ -355,6 +355,19 @@ int probe_cfg(void) {
     input_map_reset();
     CHECK(input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_RPADDLE1] = 1}, PAD_LAYOUT_XBOX) == 0,
           "pad layout: a back paddle is unbound by default");
+    {
+        InputMap tm = input_map;   // rapid-fire A on a paddle: its own bit, in both layouts, A untouched
+        char line[64];
+        CHECK(input_map_set_pad(&tm, B_TURBO_A, PAD_LAYOUT_XBOX, PAD_RPADDLE1) < 0 &&
+                  (input_map_line(&tm, B_TURBO_A, line, sizeof line), !strcmp(line, "key:default, pad:rpaddle1")),
+              "turbo: a paddle bound in the menu stays bound (not taken for the defaults) and writes its line");
+        CHECK(input_map_bind("TURBO_A", "pad:rpaddle1") &&
+                  input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_RPADDLE1] = 1}, PAD_LAYOUT_NINTENDO) ==
+                      1ull << B_TURBO_A &&
+                  input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_EAST] = 1}, PAD_LAYOUT_NINTENDO) == 1ull << B_A,
+              "turbo: bind_TURBO_A takes a pad button and leaves A's");
+        input_map_reset();
+    }
     CHECK(input_map_bind("ZL", "pad:default, pad:rpaddle1") &&
               input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_RPADDLE1] = 1}, PAD_LAYOUT_NINTENDO) == 1ull << B_ZL &&
               input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_ZL] = 1}, PAD_LAYOUT_NINTENDO) == 1ull << B_ZL,

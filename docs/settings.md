@@ -86,7 +86,7 @@ Many rows below are developer tools that only act together with another setting 
 
 | Setting | What it does | Effect of changing it | Safety |
 | --- | --- | --- | --- |
-| `bind_<button>` | Remaps one Switch button or stick direction to `pad:<name>` or `key:<name>` entries; covers `bind_a`, `bind_b`, `bind_x`, `bind_y`, `bind_l`, `bind_r`, `bind_zl`, `bind_zr`, `bind_plus`, `bind_minus`, `bind_left`, `bind_up`, `bind_right`, `bind_down`, `bind_lclick`, `bind_rclick`, `bind_lstick_left`, `bind_lstick_up`, `bind_lstick_right`, `bind_lstick_down`, `bind_rstick_left`, `bind_rstick_up`, `bind_rstick_right`, `bind_rstick_down` and `bind_shake`. | A line replaces every default of that button; button prompts in the game still show the default layout. The Controls tab of the menu writes these lines; `docs/controls.md` lists the entry names. | Safe |
+| `bind_<button>` | Remaps one Switch button or stick direction to `pad:<name>` or `key:<name>` entries; covers `bind_a`, `bind_b`, `bind_x`, `bind_y`, `bind_l`, `bind_r`, `bind_zl`, `bind_zr`, `bind_plus`, `bind_minus`, `bind_left`, `bind_up`, `bind_right`, `bind_down`, `bind_lclick`, `bind_rclick`, `bind_lstick_left`, `bind_lstick_up`, `bind_lstick_right`, `bind_lstick_down`, `bind_rstick_left`, `bind_rstick_up`, `bind_rstick_right`, `bind_rstick_down`, `bind_shake` and `bind_turbo_a` (rapid-fire A: while held, A is pressed about 10 times a second; unbound by default). | A line replaces every default of that button; button prompts in the game still show the default layout. The Controls tab of the menu writes these lines; `docs/controls.md` lists the entry names. | Safe |
 
 ## Paths and files
 

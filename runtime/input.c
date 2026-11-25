@@ -610,10 +610,12 @@ int input_pad_stick_percent(double pct[2]) {
 }
 
 static uint64_t g_buttons_last;   // the merged buttons of the last poll (input_buttons_last)
+static int g_turbo;               // the rapid-fire A input is held (poll_merged; turbo_a below)
 
 static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     uint64_t b = 0;
     int32_t sl[2] = {0, 0}, sr[2] = {0, 0};
+    int turbo = 0;
     plat_mutex_lock(&lock);
     if (!state) start();
     if (state > 0) {
@@ -643,6 +645,7 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
             }
             was_captured = cap;
             b |= input_map_buttons(down);
+            turbo = input_map_held(down, B_TURBO_A);
             int32_t k[2];
             walk_get();
             int walk = walk_key != KEY_NONE && down[walk_key];
@@ -678,7 +681,10 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
         // A press or a full-way stick on the pad wins over keys held in the same poll: the player picked it up
         if (pad_used) __atomic_store_n(&g_kbm_last, 0, __ATOMIC_RELAXED);
         else if (kbm_used) __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
+        turbo |= (b >> B_TURBO_A & 1) != 0;   // a gamepad button bound to rapid-fire A (input_map_pad_buttons)
+        b &= ~(1ull << B_TURBO_A);
     }
+    __atomic_store_n(&g_turbo, turbo, __ATOMIC_RELAXED);
     script_apply(&b, sl, sr);
     rec_apply(b, sl, sr);
     // Minus and Plus held together (gamepad or keys) open or close the menu and never reach the game
@@ -767,6 +773,22 @@ static void dump_on_press(uint64_t b) {
     if (edge >> bit & 1) vk_dump_arm(ahead);
 }
 
+// Rapid-fire A (B_TURBO_A, bind_TURBO_A: a key or a gamepad button, none by default): while it is held the game sees A
+// pressed and released in turn, starting pressed, TURBO_HALF_NS each, for dialogue and other repeated presses. A's own
+// bindings keep working, so a held A still holds. poll_merged reads the input (g_turbo) and keeps its bit away from
+// everything else; only the game's polls get the presses, not the menu, a recording or the Minus+Plus gate.
+#define TURBO_HALF_NS 50000000ull   // 10 presses a second; each half outlasts a 30 fps frame, so the game reads both
+static void turbo_a(uint64_t *b) {
+    static uint64_t since;          // when the rapid-fire input went down, 0 while it is up
+    if (!__atomic_load_n(&g_turbo, __ATOMIC_RELAXED)) {
+        __atomic_store_n(&since, 0, __ATOMIC_RELAXED);
+        return;
+    }
+    uint64_t now = plat_now_ns(), t0 = __atomic_load_n(&since, __ATOMIC_RELAXED);
+    if (!t0) __atomic_store_n(&since, t0 = now, __ATOMIC_RELAXED);
+    if ((now - t0) / TURBO_HALF_NS % 2 == 0) *b |= 1ull << B_A;
+}
+
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     poll_merged(buttons, lx, ly, rx, ry);
     if (!g_block && !g_menu) menu_cursor_poll(buttons);
@@ -774,6 +796,7 @@ void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_
     int text = blocked(&g_block, &g_block_closed, "text entry", *buttons, axes),
         menu = blocked(&g_menu, &g_menu_closed, "menu", *buttons, axes);
     if (!text && !menu) {
+        turbo_a(buttons);
         dump_on_press(*buttons);
         return;
     }

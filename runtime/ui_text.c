@@ -414,6 +414,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_BIND_SHAKE] = "Shake the camera stick",
     [UI_BIND_DESC_SHAKE] = "Swings the right stick left and right for the game: detaches a fused part from what "
                            "Ultrahand holds. Holding the key keeps shaking.",
+    [UI_BIND_TURBO_A] = "Rapid-fire A",
+    [UI_BIND_DESC_TURBO_A] = "While held, presses A about 10 times a second, for example to skip through dialogue. "
+                             "A itself stays a normal A. Unbound by default.",
     [UI_KEY_SPACE] = "Space", [UI_KEY_TAB] = "Tab", [UI_KEY_LSHIFT] = "Left Shift", [UI_KEY_LCTRL] = "Left Ctrl",
     [UI_KEY_UP] = "Up arrow", [UI_KEY_DOWN] = "Down arrow", [UI_KEY_LEFT] = "Left arrow",
     [UI_KEY_RIGHT] = "Right arrow",
@@ -983,6 +986,9 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_BIND_SHAKE] = "Встряхнуть стик камеры",
     [UI_BIND_DESC_SHAKE] = "Качает правый стик влево-вправо: отцепляет приклеенную деталь от того, что держит "
                            "Ультрарука. Пока клавиша зажата, тряска продолжается.",
+    [UI_BIND_TURBO_A] = "Турбо-нажатие A",
+    [UI_BIND_DESC_TURBO_A] = "Пока зажата, нажимает A примерно 10 раз в секунду, например чтобы пролистывать диалоги. "
+                             "Сама A остаётся обычной. По умолчанию не назначена.",
     [UI_KEY_SPACE] = "Пробел", [UI_KEY_TAB] = "Tab", [UI_KEY_LSHIFT] = "Левый Shift", [UI_KEY_LCTRL] = "Левый Ctrl",
     [UI_KEY_UP] = "Стрелка вверх", [UI_KEY_DOWN] = "Стрелка вниз", [UI_KEY_LEFT] = "Стрелка влево",
     [UI_KEY_RIGHT] = "Стрелка вправо",
@@ -1377,6 +1383,9 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_BIND_SHAKE] = "Sacudir o analógico da câmera",
     [UI_BIND_DESC_SHAKE] = "Balança o analógico direito para os lados: solta uma peça fundida do que a Ultramão segura. "
                            "Segurar a tecla continua sacudindo.",
+    [UI_BIND_TURBO_A] = "A em disparo rápido",
+    [UI_BIND_DESC_TURBO_A] = "Enquanto segurado, pressiona A cerca de 10 vezes por segundo, por exemplo para passar os "
+                             "diálogos. O próprio A continua normal. Sem atribuição por padrão.",
     [UI_KEY_SPACE] = "Espaço", [UI_KEY_TAB] = "Tab", [UI_KEY_LSHIFT] = "Shift esquerdo",
     [UI_KEY_LCTRL] = "Ctrl esquerdo",
     [UI_KEY_UP] = "Seta para cima", [UI_KEY_DOWN] = "Seta para baixo", [UI_KEY_LEFT] = "Seta para a esquerda",
@@ -2050,6 +2059,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_BIND_DESC_CAMERA] = "像右摇杆一样转动视角。鼠标和手柄的右摇杆始终可用。",
     [UI_BIND_SHAKE] = "晃动视角摇杆",
     [UI_BIND_DESC_SHAKE] = "让右摇杆左右晃动：把究极手抓着的物体上粘着的零件拆下。按住该键会一直晃动。",
+    [UI_BIND_TURBO_A] = "A 键连发",
+    [UI_BIND_DESC_TURBO_A] = "按住时每秒约按 A 10 次，例如用来快速跳过对话。A 键本身保持正常。默认未绑定。",
     [UI_KEY_SPACE] = "空格",
     [UI_KEY_TAB] = "Tab",
     [UI_KEY_LSHIFT] = "左 Shift",
